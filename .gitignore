@@ -1,0 +1,14 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+
+.idea
+.ipynb_checkpoints
+*html
+*ipynb
+
+test_data/
+pipeline_dx/
+logs/
+tools/
+
+dev/archive/
