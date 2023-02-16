@@ -5,7 +5,7 @@ from scipy import sparse as sp
 import numpy as np
 
 
-def extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos, prot_graph, feat_data, feat_stats):
+def extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos, prot_graph, feat_data, feat_stats, patch_radius=None):
     """
     Extract variant sub-graph from protein structure graph (target site at position 0)
     Args:
@@ -16,6 +16,7 @@ def extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos, prot
         prot_graph:
         feat_data:
         feat_stats:
+        patch_radius:
 
     Returns:
 
@@ -32,9 +33,21 @@ def extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos, prot
     except ValueError:
         return dgl.graph([]), None
 
-    nodes = torch.cat([torch.tensor([node_idx]), prot_graph.predecessors(node_idx)])
+    coords = prot_graph.ndata['coords']
+    center = coords[node_idx]
+    pdist = torch.nn.PairwiseDistance(p=2)
+    dists = pdist(coords, center)
+    nodes = [node_idx]
+    if patch_radius:
+        selected_idx = torch.where(dists <= patch_radius)[0]
+        selected_idx = selected_idx[selected_idx != node_idx].tolist()
+        nodes.extend(selected_idx)
+        # nodes = torch.cat([torch.tensor([node_idx]), selected_idx[selected_idx != node_idx]])
+    else:
+        nodes.extend(prot_graph.predecessors(node_idx).tolist())
+        # nodes = torch.cat([torch.tensor([node_idx]), prot_graph.predecessors(node_idx)])
 
-    res_in_vargraph = [chain_res_list[i] for i in nodes.detach().tolist()]
+    res_in_vargraph = [chain_res_list[i] for i in nodes]
     res_mappable = set(':'.join([chain, i]) for i in seq2struct_pos.values())  # E.g. 'A:10'
     node_remain = []
     seq_pos_remain = []

@@ -16,10 +16,12 @@ class GraphData(object):
 class VariantGraphDataSet(Dataset):
     def __init__(self, df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir, sift_map, lap_pos_enc=True, wl_pos_enc=False, pos_enc_dim=None,
                  cov_thres=0.5, num_neighbors=10, distance_type='centroid', method='radius', radius=10, df_ires=None, save=False,
-                 anno_ires=False, coord_option=None, feat_stats=None, var_db=None, seq2struct_all=None, **kwargs):
+                 anno_ires=False, coord_option=None, feat_stats=None, var_db=None, seq2struct_all=None, var_graph_radius=None, **kwargs):
         super(VariantGraphDataSet, self).__init__()
 
         self.data = []
+        self.n_nodes = []
+        self.n_edges = []
         # self.aa_idx = []
         # self.aa_mask = []
         self.lap_pos_enc = lap_pos_enc
@@ -87,7 +89,7 @@ class VariantGraphDataSet(Dataset):
             feat_data = load_features(uprot, feat_path)
             # feat_data = normalize_data(feat_data, feat_stats)
             var_graph, seq_pos_remain = extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos,
-                                                              prot_graph, feat_data, feat_stats)
+                                                              prot_graph, feat_data, feat_stats, patch_radius=var_graph_radius)
 
             if var_graph.num_nodes() == 0:
                 logging.warning('Empty graph for {}:{}'.format(uprot, uprot_pos))
@@ -124,6 +126,8 @@ class VariantGraphDataSet(Dataset):
             # ref_aa = aa_to_index(record['REF_AA'])
             alt_aa = aa_to_index(protein_letters_1to3_extended[record['ALT_AA']].upper())
             self.data.append((var_graph, record['label'], alt_aa, record['prot_var_id']))
+            self.n_nodes.append(var_graph.num_nodes())
+            self.n_edges.append(var_graph.num_edges())
             # self.data.append(GraphData(var_graph, record['label', alt_aa, record['prot_var_id']]))
             # aa_idx_cur = []
             # aa_mask_cur = torch.zeros(20, dtype=torch.bool)
@@ -148,6 +152,9 @@ class VariantGraphDataSet(Dataset):
 
     def get_seq_struct_map(self):
         return self.seq2struct_dict
+
+    def dataset_summary(self):
+        return np.mean(self.n_nodes), np.mean(self.n_edges)
 
     def get_var_db(self):
         return self.var_db

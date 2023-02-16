@@ -1,8 +1,8 @@
 import os
 import sys
 
-# sys.path.append('/fs/cbsuhyfs1/storage/yl986/3d_vip/')
-sys.path.append('..')
+# sys.path.append('..')
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import random
 import logging
 
@@ -376,6 +376,7 @@ def main():
                                         seq2struct_all=seq_struct_dict, **data_params)
     seq_struct_dict.update(train_dataset.seq2struct_dict)
     var_ref = train_dataset.get_var_db()
+    logging.info('Training data summary (average) nodes: {}; edges: {}'.format(*train_dataset.dataset_summary()))
 
     validation_dataset = VariantGraphDataSet(df_val, sift_map=sift_map, feat_stats=feat_stats,
                                              seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)
