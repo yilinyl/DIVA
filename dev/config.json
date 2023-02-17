@@ -3,7 +3,7 @@
         "use": true,
         "id": 0
     },
-    "experiment": "gtn_r15_d64",
+    "experiment": "gtn_r10ext_d64",
     "mode": "train",
     "exp_dir": "./output",
     "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/dataset",

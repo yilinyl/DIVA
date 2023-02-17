@@ -20,7 +20,7 @@ def load_prot_graph(record, g_data_dir, **kwargs):
         with open(f_graph, 'rb') as f_pkl:
             prot_graph, res_idx_dict = pickle.load(f_pkl)
     else:
-        prot_graph, res_idx_dict = build_single_graph(record, **kwargs)  # TODO: check arguments
+        prot_graph, res_idx_dict = build_struct_graph(record, **kwargs)  # TODO: check arguments
     # f_graph = '{}_{}_graph.gml.gz'.format(model, struct_id)
     # prot_graph = nx.read_gml(os.path.join(g_data_dir, f_graph))
 

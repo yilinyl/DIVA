@@ -16,7 +16,8 @@ class GraphData(object):
 class VariantGraphDataSet(Dataset):
     def __init__(self, df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir, sift_map, lap_pos_enc=True, wl_pos_enc=False, pos_enc_dim=None,
                  cov_thres=0.5, num_neighbors=10, distance_type='centroid', method='radius', radius=10, df_ires=None, save=False,
-                 anno_ires=False, coord_option=None, feat_stats=None, var_db=None, seq2struct_all=None, var_graph_radius=None, **kwargs):
+                 anno_ires=False, coord_option=None, feat_stats=None, var_db=None, seq2struct_all=None,
+                 var_graph_radius=None, seq_dict=dict(), window_size=None, **kwargs):
         super(VariantGraphDataSet, self).__init__()
 
         self.data = []
@@ -30,6 +31,8 @@ class VariantGraphDataSet(Dataset):
         if not seq2struct_all:
             seq2struct_all = dict()
         self.seq2struct_dict = seq2struct_all
+        self.window_size = window_size
+        self.seq_dict = seq_dict
 
         feat_root = Path(feat_dir)
         graph_cache_path = Path(graph_cache)
@@ -76,7 +79,7 @@ class VariantGraphDataSet(Dataset):
                 with open(f_graph, 'rb') as f_pkl:
                     prot_graph, chain_res_list = pickle.load(f_pkl)
             else:
-                new_graph = build_single_graph(record, model, pdb_root_dir, af_root_dir, graph_cache,
+                new_graph = build_struct_graph(record, model, pdb_root_dir, af_root_dir, graph_cache,
                                                num_neighbors, distance_type, method, radius, df_ires,
                                                save, anno_ires, coord_option)
 
@@ -88,6 +91,7 @@ class VariantGraphDataSet(Dataset):
             feat_path = feat_root / feat_version / 'sequence_features'
             feat_data = load_features(uprot, feat_path)
             # feat_data = normalize_data(feat_data, feat_stats)
+            # Extract structure-based variant graph
             var_graph, seq_pos_remain = extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos,
                                                               prot_graph, feat_data, feat_stats, patch_radius=var_graph_radius)
 
@@ -159,6 +163,31 @@ class VariantGraphDataSet(Dataset):
     def get_var_db(self):
         return self.var_db
 
+    def add_seq_edges(self, uprot, uprot_pos, max_dist=1, inverse=True):
+        # TODO: reorder nodes to make sure variant has idx 0
+        w = self.window_size // 2
+        if uprot not in self.seq_dict:
+            self.seq_dict[uprot] = fetch_prot_seq(uprot)
+        seq = self.seq_dict[uprot]
+        seq_array = np.array(list(map(aa_to_index, list(seq))))
+        start = max(uprot_pos - w - 1, 0)
+        end = min(uprot_pos + w, len(seq) - 1)
+        g_size = end - start + 1
+        nodes = list(range(g_size))
+
+        node_in = []
+        node_out = []
+        for d in range(1, max_dist+1):
+            node_in.extend(nodes[:-d])
+            node_out.extend(nodes[d:])
+            # node_in = torch.arange(start, end+1-d)
+            # node_out = torch.arange(start+d, end+1)
+        if inverse:
+            nodes_r = nodes[::-1]
+            for d in range(1, max_dist+1):
+                node_in.extend(nodes_r[:-d])
+                node_out.extend(nodes_r[d:])
+        return node_in, node_out, start, end
 
 # def collate(samples):
 #     # The input `samples` is a list of pairs

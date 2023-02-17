@@ -376,7 +376,7 @@ def main():
                                         seq2struct_all=seq_struct_dict, **data_params)
     seq_struct_dict.update(train_dataset.seq2struct_dict)
     var_ref = train_dataset.get_var_db()
-    logging.info('Training data summary (average) nodes: {}; edges: {}'.format(*train_dataset.dataset_summary()))
+    logging.info('Training data summary (average) nodes: {:.0f}; edges: {:.0f}'.format(*train_dataset.dataset_summary()))
 
     validation_dataset = VariantGraphDataSet(df_val, sift_map=sift_map, feat_stats=feat_stats,
                                              seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)

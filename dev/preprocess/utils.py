@@ -308,7 +308,7 @@ def uprot2pdb_pos(record):
     return pos_dict[str(record['Position'])]
 
 
-def build_single_graph(record, model, pdb_root_dir, af_root_dir, save_dir, num_neighbors=10,
+def build_struct_graph(record, model, pdb_root_dir, af_root_dir, save_dir, num_neighbors=10,
                        distance_type='centroid', method='radius', radius=10, df_ires=None, save=False,
                        anno_ires=False, coord_option=None):
     uprot = record['UniProt']

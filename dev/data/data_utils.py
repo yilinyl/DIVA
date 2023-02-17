@@ -185,3 +185,41 @@ def wl_positional_encoding(g):
         iteration_count += 1
 
     return torch.LongTensor(list(node_color_dict.values()))
+
+
+def fetch_struct_edges(start, end, chain, struct_graph, chain_res_list, seq2struct_pos):
+    struct_src = []
+    struct_dst = []
+    struct2seq_pos = {':'.join([chain, v]): k for k, v in seq2struct_pos.items()}
+    for pos in range(start, end+1):
+        if pos in seq2struct_pos:
+            struct_pos = seq2struct_pos[pos]
+            struct_node_idx = chain_res_list.index(f'{chain}:{struct_pos}')
+            nodes = [struct_node_idx] + struct_graph.predecessors(struct_node_idx).tolist()
+            subgraph = dgl.node_subgraph(struct_graph, nodes)
+            src, dst = struct_graph.find_edges(subgraph.edata['_ID'])
+            struct_src.append(src)  # node index from structure graph
+            struct_dst.append(dst)
+    # if len(struct_src) == 0:
+    #     return
+
+    struct_src = torch.cat(struct_src)
+    struct_dst = torch.cat(struct_dst)
+    n_edges = struct_src.shape[0]
+    # nodes_all = torch.cat([struct_src, struct_dst]).unique().tolist()
+    #
+    # for node_idx in nodes_all:
+    #     seq_pos = struct2seq_pos[chain_res_list[node_idx]]
+    # Structural nodes on sequence basis
+    src_mapped = []
+    dst_mapped = []
+    for i in range(n_edges):
+        try:
+            src_seq_pos = struct2seq_pos[chain_res_list[struct_src[i].item()]]
+            dst_seq_pos = struct2seq_pos[chain_res_list[struct_dst[i].item()]]
+            src_mapped.append(src_seq_pos)
+            dst_mapped.append(dst_mapped)
+        except KeyError:  # structural residue not mappable to sequence
+            continue
+
+    return src_mapped, dst_mapped
