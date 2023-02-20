@@ -4,6 +4,8 @@ from pathlib import Path
 from scipy import sparse as sp
 import numpy as np
 
+from dev.preprocess.utils import aa_to_index, fetch_prot_seq
+
 
 def extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos, prot_graph, feat_data, feat_stats, patch_radius=None):
     """
@@ -188,38 +190,44 @@ def wl_positional_encoding(g):
 
 
 def fetch_struct_edges(start, end, chain, struct_graph, chain_res_list, seq2struct_pos):
-    struct_src = []
-    struct_dst = []
     struct2seq_pos = {':'.join([chain, v]): k for k, v in seq2struct_pos.items()}
+    nodes_mapped = []
     for pos in range(start, end+1):
         if pos in seq2struct_pos:
             struct_pos = seq2struct_pos[pos]
             struct_node_idx = chain_res_list.index(f'{chain}:{struct_pos}')
-            nodes = [struct_node_idx] + struct_graph.predecessors(struct_node_idx).tolist()
-            subgraph = dgl.node_subgraph(struct_graph, nodes)
-            src, dst = struct_graph.find_edges(subgraph.edata['_ID'])
-            struct_src.append(src)  # node index from structure graph
-            struct_dst.append(dst)
-    # if len(struct_src) == 0:
-    #     return
+            nodes_mapped.append(struct_node_idx)
+            nodes_mapped.extend(struct_graph.predecessors(struct_node_idx).tolist())
+            # nodes = [struct_node_idx] + struct_graph.predecessors(struct_node_idx).tolist()
+    nodes_mapped = list(set(nodes_mapped))
+    subgraph = dgl.node_subgraph(struct_graph, nodes_mapped)
+    struct_src, struct_dst = struct_graph.find_edges(subgraph.edata['_ID'])
+    src_mapped = []
+    dst_mapped = []
 
-    struct_src = torch.cat(struct_src)
-    struct_dst = torch.cat(struct_dst)
-    n_edges = struct_src.shape[0]
+    # struct_edges = list(set(zip(struct_src, struct_dst)))
+    # struct_src = torch.cat(struct_src)
+    # struct_dst = torch.cat(struct_dst)
+    n_edges = subgraph.num_edges()
     # nodes_all = torch.cat([struct_src, struct_dst]).unique().tolist()
     #
     # for node_idx in nodes_all:
     #     seq_pos = struct2seq_pos[chain_res_list[node_idx]]
     # Structural nodes on sequence basis
-    src_mapped = []
-    dst_mapped = []
+    # TODO: map node & edge features
+    edge_remain_idx = []
     for i in range(n_edges):
         try:
             src_seq_pos = struct2seq_pos[chain_res_list[struct_src[i].item()]]
             dst_seq_pos = struct2seq_pos[chain_res_list[struct_dst[i].item()]]
-            src_mapped.append(src_seq_pos)
-            dst_mapped.append(dst_mapped)
+            # if src_seq_pos >= start and dst_seq_pos <= end:  # only keep residues within sequential neighborhood?
+            if src_seq_pos in range(start, end+1) and dst_seq_pos in range(start, end+1):
+                src_mapped.append(src_seq_pos - start)
+                dst_mapped.append(dst_seq_pos - start)
+                edge_remain_idx.append(i)
         except KeyError:  # structural residue not mappable to sequence
             continue
 
-    return src_mapped, dst_mapped
+    angle = subgraph.edata['angle'][edge_remain_idx]
+    dist = subgraph.edata['dist'][edge_remain_idx]
+    return src_mapped, dst_mapped, angle, dist

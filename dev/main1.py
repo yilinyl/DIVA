@@ -4,6 +4,7 @@ import sys
 # sys.path.append('..')
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import random
+import gzip
 import logging
 
 from datetime import datetime
@@ -13,6 +14,7 @@ from graphtransformer import GraphTransformer
 from torch.utils.tensorboard import SummaryWriter
 from metrics import *
 from utils import str2bool, setup_logger
+from preprocess.utils import parse_fasta
 from hooks import register_inf_check_hooks
 import argparse
 
@@ -54,6 +56,7 @@ def train_epoch(model, optimizer, device, data_loader):
         batch_graphs = batch_data[0].to(device)
         batch_labels = batch_data[1].to(device)
         batch_alt_aa = batch_data[2].to(device)
+        batch_var_idx = batch_data[3].to(device)
         # batch_aa_indice = batch_data[3].to(device)
         # batch_aa_mask = batch_data[4].to(device)
 
@@ -103,7 +106,8 @@ def evaluation_epoch(model, device, data_loader):
             batch_graphs = batch_data[0].to(device)
             batch_labels = batch_data[1].to(device)
             batch_alt_aa = batch_data[2].to(device)
-            batch_vars = batch_data[3]  # TODO: add var_id
+            batch_var_idx = batch_data[3].to(device)
+            batch_vars = batch_data[-1]  # TODO: add var_id
 
             if model.lap_pos_enc:
                 batch_lap_pos_enc = batch_graphs.ndata['lap_pos_enc'].to(device)
@@ -362,6 +366,11 @@ def main():
             seq_struct_dict = pickle.load(f_pkl)
     else:
         seq_struct_dict = dict()
+
+    try:
+        data_params['seq_dict'] = parse_fasta(data_params['seq_fasta'])
+    except FileNotFoundError:
+        pass
 
     # Graph cache config
     graph_cache_root = Path(data_params['graph_cache_root'])
