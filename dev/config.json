@@ -5,6 +5,7 @@
     },
     "experiment": "hetero_debug",
     "mode": "train",
+    "model_name": "han",
     "exp_dir": "./output",
     "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/sample",
     "data_params": {

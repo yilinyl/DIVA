@@ -134,7 +134,6 @@ class HGTLayer(nn.Module):
 class HGT(nn.Module):
     def __init__(
         self,
-        G,
         node_dict,
         edge_dict,
         n_inp,

@@ -10,6 +10,7 @@ import logging
 from datetime import datetime
 import torch.optim as optim
 from data.datasets import *
+from models import VariantEncoder
 from graphtransformer import GraphTransformer
 from torch.utils.tensorboard import SummaryWriter
 from metrics import *
@@ -57,8 +58,6 @@ def train_epoch(model, optimizer, device, data_loader):
         batch_labels = batch_data[1].to(device)
         batch_alt_aa = batch_data[2].to(device)
         batch_var_idx = batch_data[3].to(device)
-        # batch_aa_indice = batch_data[3].to(device)
-        # batch_aa_mask = batch_data[4].to(device)
 
         if model.lap_pos_enc:
             # sign flip as in Bresson et al. for laplacian PE
@@ -69,11 +68,6 @@ def train_epoch(model, optimizer, device, data_loader):
             batch_lap_pos_enc = batch_lap_pos_enc * sign_flip.unsqueeze(0)
         else:
             batch_lap_pos_enc = None
-
-        # try:
-        #     batch_wl_pos_enc = batch_graphs.ndata['wl_pos_enc'].to(device)
-        # except:
-        #     batch_wl_pos_enc = None
             
         optimizer.zero_grad()
 
