@@ -8,13 +8,14 @@ class VariantEncoder(nn.Module):
     def __init__(self,
                  ndata_dim_in,
                  ndata_dim_out,
+                 device,
                  n_labels=20,
                  to_onehot=True,
                  embed_aa=False,
                  aa_embed_dim=None):
 
         super(VariantEncoder, self).__init__()
-
+        self.device = device
         self.ndata_dim_in = ndata_dim_in
         self.ndata_dim_out = ndata_dim_out
         self.n_labels = n_labels
@@ -42,11 +43,13 @@ class VariantEncoder(nn.Module):
         var_mask = torch.ones(g.num_nodes(), dtype=torch.bool)
         var_mask[var_idx] = False
 
-        h_var = self.variant_encoder(torch.cat([h_alt, h_aa[var_idx], h[var_idx, :]]).unsqueeze(0))  # check dim
+        h_var = self.variant_encoder(torch.cat([h_alt, h_aa[var_idx], h[var_idx, :]], dim=1))  # check dim
         h_nbr = self.neighbor_encoder(torch.cat([h_aa, h], dim=1)[var_mask, :])
 
-        h = torch.cat([h_nbr[:var_idx], h_var, h_nbr[var_idx+1:]], dim=0)
+        h_out = torch.zeros((g.num_nodes(), self.ndata_dim_out), device=self.device)
+        h_out[var_idx] = h_var
+        h_out[var_mask] = h_nbr
 
-        return h
+        return h_out
 
 

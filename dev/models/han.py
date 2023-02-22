@@ -16,7 +16,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from dgl.nn.pytorch import GATConv
 
-from VariantEncoder import VariantEncoder
+from .VariantEncoder import VariantEncoder
 
 
 class SemanticAttention(nn.Module):
@@ -107,41 +107,46 @@ class HANLayer(nn.Module):
 
 class HAN(nn.Module):
     def __init__(self,
-                 meta_paths,
-                 hidden_size,
-                 out_size,
-                 num_heads,
+                 meta_paths,  # Metapath in the form of a list of edge types
+                 hidden_size,  # hidden size for each attention head
+                 n_classes,
+                 n_heads,
+                 n_layers,
                  dropout,
                  readout,
                  ndata_dim_in,
                  ndata_dim_out,
+                 device,
                  n_labels=20,
                  to_onehot=True,
                  embed_aa=False,
                  aa_embed_dim=None,
+                 use_weight_in_loss=False,
                  **kwargs
                  ):
         super(HAN, self).__init__()
-        self.variant_processor = VariantEncoder(ndata_dim_in, ndata_dim_out, n_labels,
+        self.device = device
+        self.variant_processor = VariantEncoder(ndata_dim_in, ndata_dim_out, self.device, n_labels,
                                                 to_onehot, embed_aa, aa_embed_dim)
         self.readout = readout
+        self.use_weight_in_loss = use_weight_in_loss
 
         in_size = self.variant_processor.ndata_dim_out
         self.layers = nn.ModuleList()
         self.layers.append(
-            HANLayer(meta_paths, in_size, hidden_size, num_heads[0], dropout)
+            HANLayer(meta_paths, in_size, hidden_size, n_heads, dropout)
         )
-        for l in range(1, len(num_heads)):
+        for l in range(1, n_layers):
             self.layers.append(
                 HANLayer(
                     meta_paths,
-                    hidden_size * num_heads[l - 1],
+                    hidden_size * n_heads,
                     hidden_size,
-                    num_heads[l],
+                    n_heads,
                     dropout,
                 )
             )
-        self.out_layer = nn.Linear(hidden_size * num_heads[-1], out_size)
+        self.out_layer = nn.Linear(hidden_size * n_heads, n_classes)
         self.predict = nn.Sigmoid()
 
     def forward(self, g, alt_aa, var_idx, ref_aa_key='ref_aa', feat_key='feat'):
@@ -151,9 +156,24 @@ class HAN(nn.Module):
             h = gnn(g, h)
 
         g.ndata['h'] = h
-        hg = dgl.readout_nodes(g, 'h', op=self.readout)
+        hg = dgl.readout_nodes(g, 'h', op=self.readout)  # TODO: check dim
 
         return self.out_layer(hg)
 
 
+    def loss(self, logits, label):
+        if self.use_weight_in_loss:
+            V = label.size(0)
+            label_count = torch.bincount(label.long())
+            cluster_sizes = torch.zeros(label_count.size(0)).long().to(self.device)
+            cluster_sizes[torch.arange(label_count.size(0)).long()] = label_count
+            weight = (V - cluster_sizes).float() / V
+            weight *= (cluster_sizes>0).float()
 
+            criterion = nn.BCEWithLogitsLoss(weight=weight[label.long()])
+        else:
+            criterion = nn.BCEWithLogitsLoss()
+
+        loss = criterion(logits, label.float())
+
+        return loss

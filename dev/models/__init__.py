@@ -1,4 +1,4 @@
-from han import HAN
+from .han import HAN
 
 __model_lib = {
     'han': HAN

@@ -107,9 +107,13 @@ class VariantGraphDataSet(Dataset):
                     list(map(lambda x: aa_to_index(protein_letters_1to3_extended[x].upper()), list(seq))))
 
                 seq_src, seq_dst, start_idx, end_idx = self.add_seq_edges(uprot, uprot_pos, len(seq))
-                struct_src, struct_dst, angle, dist = fetch_struct_edges(start_idx, end_idx, chain, prot_graph,
+                try:
+                    struct_src, struct_dst, angle, dist = fetch_struct_edges(start_idx, end_idx, chain, prot_graph,
                                                                          chain_res_list, seq2struct_pos)
-                var_idx = uprot_pos - start_idx
+                except ValueError:
+                    logging.warning('Exception in building structural graph for {}-{}'.format(model, record['prot_var_id']))
+                    continue
+                var_idx = uprot_pos - start_idx - 1
                 edge_dict = {
                     ('residue', 'seq', 'residue'): (seq_src, seq_dst),
                     ('residue', 'struct', 'residue'): (struct_src, struct_dst)
@@ -159,15 +163,20 @@ class VariantGraphDataSet(Dataset):
             self.n_edges.append(var_graph.num_edges())
 
     def __getitem__(self, index):
-        graph, label, alt_aa, var_id = self.data[index]
+        graph, label, alt_aa, target_idx, var_id = self.data[index]
 
-        return graph, label, alt_aa, var_id
+        return graph, label, alt_aa, target_idx, var_id
 
     def __len__(self):
         return len(self.data)
 
     def get_seq_struct_map(self):
         return self.seq2struct_dict
+
+    def get_ndata_dim(self, feat_name='feat'):
+        g = self.data[0][0]
+
+        return g.ndata[feat_name].shape[1]
 
     def dataset_summary(self):
         return np.mean(self.n_nodes), np.mean(self.n_edges)

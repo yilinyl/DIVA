@@ -31,8 +31,11 @@ def train_epoch(model, optimizer, device, data_loader):
         batch_graphs = batch_data[0].to(device)
         batch_labels = batch_data[1].to(device)
         batch_alt_aa = batch_data[2].to(device)
-        batch_var_idx = batch_data[3].to(device)
-            
+        batch_n_nodes = torch.cumsum(batch_data[0].batch_num_nodes(), 0)
+        batch_n_nodes = torch.cat((torch.tensor([0]), batch_n_nodes), 0)
+        batch_var_idx = batch_data[3] + batch_n_nodes[:-1]
+        batch_var_idx = batch_var_idx.to(device)
+
         optimizer.zero_grad()
 
         batch_logits = model.forward(batch_graphs, batch_alt_aa, batch_var_idx)
@@ -64,7 +67,10 @@ def evaluation_epoch(model, device, data_loader):
             batch_graphs = batch_data[0].to(device)
             batch_labels = batch_data[1].to(device)
             batch_alt_aa = batch_data[2].to(device)
-            batch_var_idx = batch_data[3].to(device)
+            batch_n_nodes = torch.cumsum(batch_data[0].batch_num_nodes(), 0)
+            batch_n_nodes = torch.cat((torch.tensor([0]), batch_n_nodes), 0)
+            batch_var_idx = batch_data[3] + batch_n_nodes[:-1]
+            batch_var_idx = batch_var_idx.to(device)
             batch_vars = batch_data[-1]  # TODO: add var_id
 
             batch_logits = model.forward(batch_graphs, batch_alt_aa, batch_var_idx)
@@ -96,7 +102,7 @@ def evaluation_epoch(model, device, data_loader):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', default='./config.json', help="Config file path (.json)")
+    parser.add_argument('--config', default='./configs/config_hetero.json', help="Config file path (.json)")
     parser.add_argument('--gpu_id', type=int, help="GPU device ID")
     parser.add_argument('--tensorboard', type=str2bool, default=False,
                         help='Option to write log information in tensorboard')
@@ -192,7 +198,8 @@ def pipeline():
         result_path.mkdir(parents=True)
 
     # --------------- Build Model ---------------
-
+    net_params['ndata_dim_in'] = train_dataset.get_ndata_dim('feat')
+    net_params['meta_paths'] = ['seq', 'struct']
     model = build_model(config['model_name'], **net_params)
     total_param = sum([p.numel() for p in model.parameters()])
     logging.info(f'Number of model parameters: {total_param}')
@@ -209,7 +216,7 @@ def pipeline():
                                                      verbose=True)
 
     train_loader = dgl.dataloading.GraphDataLoader(train_dataset, batch_size=net_params['batch_size'],
-                                                   shuffle=True, pin_memory=True, drop_last=False)
+                                                   shuffle=False, pin_memory=True, drop_last=False)
     validation_loader = dgl.dataloading.GraphDataLoader(validation_dataset, batch_size=net_params['batch_size'],
                                                         shuffle=False, pin_memory=True, drop_last=False)
     test_loader = dgl.dataloading.GraphDataLoader(test_dataset, batch_size=net_params['batch_size'],
