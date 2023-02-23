@@ -14,7 +14,7 @@ import dgl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from dgl.nn.pytorch import GATConv
+from dgl.nn.pytorch import GATConv, EGATConv
 
 from .VariantEncoder import VariantEncoder
 
@@ -44,31 +44,60 @@ class HANLayer(nn.Module):
     Arguments
     ---------
     meta_paths : list of metapaths, each as a list of edge types
-    in_size : input feature dimension
-    out_size : output feature dimension
+    in_node_feats : input feature dimension
+    out_node_feats : output feature dimension
     layer_num_heads : number of attention heads
     dropout : Dropout probability
     """
 
-    def __init__(self, meta_paths, in_size, out_size, layer_num_heads, dropout):
+    def __init__(self,
+                 meta_paths,
+                 in_node_feats,
+                 out_node_feats,
+                 layer_num_heads,
+                 dropout,
+                 use_efeats=False,
+                 in_edge_feats=None,
+                 out_edge_feats=None):
         super(HANLayer, self).__init__()
 
+        if use_efeats:
+            self.gat_unit = EGATConv(
+                in_node_feats,
+                in_edge_feats,
+                out_node_feats,
+                out_edge_feats,
+                num_heads=layer_num_heads
+            )
+        else:
+            self.gat_unit = GATConv(
+                in_node_feats,
+                out_node_feats,
+                layer_num_heads,
+                dropout,
+                dropout,
+                activation=F.elu,
+                allow_zero_in_degree=True,
+            )
         # One GAT layer for each meta path based adjacency matrix
         self.gat_layers = nn.ModuleList()
         for i in range(len(meta_paths)):
-            self.gat_layers.append(
-                GATConv(
-                    in_size,
-                    out_size,
-                    layer_num_heads,
-                    dropout,
-                    dropout,
-                    activation=F.elu,
-                    allow_zero_in_degree=True,
-                )
-            )
+            self.gat_layers.append(self.gat_unit)
+
+        # for i in range(len(meta_paths)):
+        #     self.gat_layers.append(
+        #         GATConv(
+        #             in_node_feats,
+        #             out_node_feats,
+        #             layer_num_heads,
+        #             dropout,
+        #             dropout,
+        #             activation=F.elu,
+        #             allow_zero_in_degree=True,
+        #         )
+        #     )
         self.semantic_attention = SemanticAttention(
-            in_size=out_size * layer_num_heads
+            in_size=out_node_feats * layer_num_heads
         )
         # self.meta_paths = list(tuple(meta_path) for meta_path in meta_paths)
         self.meta_paths = list(meta_paths)
