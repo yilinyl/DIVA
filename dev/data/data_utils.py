@@ -1,13 +1,16 @@
 import copy
 import pickle, hashlib, torch, dgl
 from pathlib import Path
+
+import pandas as pd
 from scipy import sparse as sp
 import numpy as np
 
 from dev.preprocess.utils import aa_to_index, fetch_prot_seq
 
 
-def extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos, prot_graph, feat_data, feat_stats, patch_radius=None):
+def extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos, prot_graph, feat_data, feat_stats,
+                          patch_radius=None, normalize=False):
     """
     Extract variant sub-graph from protein structure graph (target site at position 0)
     Args:
@@ -19,6 +22,7 @@ def extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos, prot
         feat_data:
         feat_stats:
         patch_radius:
+        normalize:
 
     Returns:
 
@@ -62,15 +66,18 @@ def extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos, prot
             node_remain.append(chain_res_list.index(':'.join([chain, seq2struct_pos[pos]])))
 
     var_graph = dgl.node_subgraph(prot_graph, node_remain)
-    var_feats = torch.tensor(feat_data.iloc[map(lambda x: x - 1, seq_pos_remain), :].values)
-    var_feats = normalize_data(var_feats, feat_stats)
+    if isinstance(feat_data, pd.DataFrame):
+        feat_data = feat_data.values
+
+    var_feats = torch.tensor(feat_data[list(map(lambda x: x - 1, seq_pos_remain)), :])
+    var_feats = impute_and_normalize(var_feats, feat_stats, normalize=normalize)
     var_graph.ndata['feat'] = var_feats
-    var_graph.edata['angle'] = normalize_data(var_graph.edata['angle'])
-    var_graph.edata['dist'] = normalize_data(var_graph.edata['dist'])
+    var_graph.edata['angle'] = impute_and_normalize(var_graph.edata['angle'], normalize=normalize)
+    var_graph.edata['dist'] = impute_and_normalize(var_graph.edata['dist'], normalize=normalize)
     return var_graph, seq_pos_remain
 
 
-def normalize_data(feat_raw, feat_stats=None):
+def impute_and_normalize(feat_raw, feat_stats=None, normalize=False):
     # target_idx = []
     # for col in feat_cols:
     #     if col in target_cols:
@@ -89,10 +96,14 @@ def normalize_data(feat_raw, feat_stats=None):
         na_idx = torch.where(torch.isnan(feat_raw))
         feat_raw[na_idx] = torch.take(feat_stats['mean'], na_idx[1])
 
-    return (feat_raw - feat_stats['min']) / (feat_stats['max'] - feat_stats['min'])
+    if normalize:
+        return (feat_raw - feat_stats['min']) / (feat_stats['max'] - feat_stats['min'])
+
+    return feat_raw
 
 
-def load_features(uprot, feat_path):
+def load_pio_features(uprot, feat_path):
+    # load pre-computed PIONEER features (.pkl file)
 
     feat_cols = ['expasy_ACCE', 'expasy_AREA', 'expasy_BULK', 'expasy_COMP',
                  'expasy_HPHO', 'expasy_POLA', 'expasy_TRAN', 'expasy_ACCE_norm',
@@ -107,6 +118,27 @@ def load_features(uprot, feat_path):
     feat_data = pair_feat[idx][feat_cols].reset_index(drop=True)
 
     return feat_data
+
+
+def load_expasy_feats(uprot, feat_root, feat_dir):
+    if isinstance(feat_root, str):
+        feat_root = Path(feat_root)
+
+    with open(feat_root / feat_dir / f'{uprot}.pkl', 'rb') as f_pkl:
+        feat_dict = pickle.load(f_pkl)
+
+    return np.stack(list(feat_dict.values())).T
+
+
+def load_pssm(uprot, feat_root, feat_dir, option='ori'):
+    if isinstance(feat_root, str):
+        feat_root = Path(feat_root)
+
+    with open(feat_root / feat_dir / f'{uprot}_{option}.pkl', 'rb') as f_pkl:
+        pssm = pickle.load(f_pkl)
+
+    return pssm.values
+
 
 # Adapted from Dwivedi, Vijay Prakash, and Xavier Bresson.
 # "A generalization of transformer networks to graphs." https://arxiv.org/abs/2012.09699

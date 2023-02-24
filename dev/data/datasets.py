@@ -1,4 +1,5 @@
 import dgl
+import numpy as np
 import torch
 import logging
 from torch.utils.data import Dataset
@@ -52,7 +53,9 @@ class VariantGraphDataSet(Dataset):
         for i, record in df_in.iterrows():
             uprot = record['UniProt']
             uprot_pos = record['Protein_position']
-
+            if uprot not in self.seq_dict:
+                self.seq_dict[uprot] = fetch_prot_seq(uprot)
+            seq = self.seq_dict[uprot]
             if record['PDB_coverage'] >= cov_thres:
                 model = 'PDB'
                 struct_id = record['PDB']
@@ -66,6 +69,9 @@ class VariantGraphDataSet(Dataset):
                     self.seq2struct_dict[key] = dict(zip(seq_pos, struct_pos))
 
                 seq2struct_pos = self.seq2struct_dict[key]
+                if max(seq2struct_pos.keys()) > len(seq):
+                    logging.warning('Inconsistent sequence length for {}'.format(uprot))
+                    continue
 
             else:
                 model = 'AF'
@@ -90,10 +96,16 @@ class VariantGraphDataSet(Dataset):
                 if not new_graph:  # fail to build protein graph
                     continue
                 prot_graph, chain_res_list = new_graph
-            feat_version = record['feat_version']
-            feat_path = feat_root / feat_version / 'sequence_features'
-            feat_data = load_features(uprot, feat_path)
+            # feat_version = record['feat_version']
+            # feat_path = feat_root / feat_version / 'sequence_features'
+            # feat_data = load_pio_features(uprot, feat_path)
             # feat_data = normalize_data(feat_data, feat_stats)
+
+            bio_feats = load_expasy_feats(uprot, feat_root, '3dvip_expasy')
+            pssm_feats = load_pssm(uprot, feat_root, '3dvip_pssm')
+
+            feat_data = np.hstack([bio_feats, pssm_feats])
+
             if self.graph_type == 'struct':
                 # Extract structure-based variant graph
                 var_graph, seq_pos_remain = extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos,
@@ -102,14 +114,14 @@ class VariantGraphDataSet(Dataset):
                 struct_g = var_graph
                 var_idx = 0
             else:
-                seq = self.seq_dict[uprot]
+
                 seq_array = np.array(
                     list(map(lambda x: aa_to_index(protein_letters_1to3_extended[x].upper()), list(seq))))
 
                 seq_src, seq_dst, start_idx, end_idx = self.add_seq_edges(uprot, uprot_pos, len(seq))
                 try:
                     struct_src, struct_dst, angle, dist = fetch_struct_edges(start_idx, end_idx, chain, prot_graph,
-                                                                         chain_res_list, seq2struct_pos)
+                                                                             chain_res_list, seq2struct_pos)
                 except ValueError:
                     logging.warning('Exception in building structural graph for {}-{}'.format(model, record['prot_var_id']))
                     continue
@@ -120,10 +132,10 @@ class VariantGraphDataSet(Dataset):
                 }
 
                 var_graph = dgl.heterograph(edge_dict)
-                var_graph.edges['struct'].data['angle'] = normalize_data(angle, feat_stats)
-                var_graph.edges['struct'].data['dist'] = normalize_data(dist, feat_stats)
+                var_graph.edges['struct'].data['angle'] = impute_and_normalize(angle, feat_stats, normalize=False)
+                var_graph.edges['struct'].data['dist'] = impute_and_normalize(dist, feat_stats, normalize=False)
 
-                var_graph.ndata['feat'] = torch.tensor(feat_data[start_idx: end_idx + 1].values)
+                var_graph.ndata['feat'] = torch.tensor(feat_data[start_idx: end_idx + 1])
                 var_graph.ndata['ref_aa'] = torch.tensor(seq_array[start_idx:(end_idx+1)], dtype=torch.int64)
                 seq_pos_remain = list(range(start_idx+1, end_idx+2))  # convert index to 1-based sequential positions
                 struct_etype = 'struct'
