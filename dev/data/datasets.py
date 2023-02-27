@@ -2,6 +2,7 @@ import dgl
 import numpy as np
 import torch
 import logging
+from tqdm import *
 from torch.utils.data import Dataset
 from dev.preprocess.utils import *
 from .data_utils import *
@@ -19,7 +20,7 @@ class VariantGraphDataSet(Dataset):
     def __init__(self, df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir, sift_map, lap_pos_enc=True, wl_pos_enc=False, pos_enc_dim=None,
                  cov_thres=0.5, num_neighbors=10, distance_type='centroid', method='radius', radius=10, df_ires=None, save=False,
                  anno_ires=False, coord_option=None, feat_stats=None, var_db=None, seq2struct_all=None,
-                 var_graph_radius=None, seq_dict=None, window_size=None, graph_type='hetero', **kwargs):
+                 var_graph_radius=None, seq_dict=None, window_size=None, graph_type='hetero', norm_feat=True, **kwargs):
         super(VariantGraphDataSet, self).__init__()
 
         self.data = []
@@ -49,8 +50,11 @@ class VariantGraphDataSet(Dataset):
             var_db = df_in
             self.var_db = var_db.groupby(['UniProt', 'Protein_position'])['label'].any().reset_index()
             self.var_db = self.var_db.rename(columns={'label': 'any_patho'}).query('any_patho == True').reset_index(drop=True)
+        uprot_prev = ''
+        model_prev = ''
+        struct_prev = ''
 
-        for i, record in df_in.iterrows():
+        for i, record in tqdm(df_in.iterrows(), total=df_in.shape[0]):
             uprot = record['UniProt']
             uprot_pos = record['Protein_position']
             if uprot not in self.seq_dict:
@@ -85,31 +89,34 @@ class VariantGraphDataSet(Dataset):
 
             f_graph = graph_cache_path / '{}_{}_graph.pkl'.format(model, struct_id)
             # f_graph = os.path.join(g_data_dir, '{}_{}_graph.pkl'.format(model, struct_id))
-            if f_graph.exists():
-                with open(f_graph, 'rb') as f_pkl:
-                    prot_graph, chain_res_list = pickle.load(f_pkl)
-            else:
-                new_graph = build_struct_graph(record, model, pdb_root_dir, af_root_dir, graph_cache,
-                                               num_neighbors, distance_type, method, radius, df_ires,
-                                               save, anno_ires, coord_option)
+            if model != model_prev or struct_id != struct_prev:
+                if f_graph.exists():
+                    with open(f_graph, 'rb') as f_pkl:
+                        prot_graph, chain_res_list = pickle.load(f_pkl)
+                else:
+                    new_graph = build_struct_graph(record, model, pdb_root_dir, af_root_dir, graph_cache,
+                                                   num_neighbors, distance_type, method, radius, df_ires,
+                                                   save, anno_ires, coord_option)
 
-                if not new_graph:  # fail to build protein graph
-                    continue
-                prot_graph, chain_res_list = new_graph
+                    if not new_graph:  # fail to build protein graph
+                        continue
+                    prot_graph, chain_res_list = new_graph
             # feat_version = record['feat_version']
             # feat_path = feat_root / feat_version / 'sequence_features'
             # feat_data = load_pio_features(uprot, feat_path)
             # feat_data = normalize_data(feat_data, feat_stats)
+            if uprot != uprot_prev:
+                bio_feats = load_expasy_feats(uprot, feat_root, '3dvip_expasy')
+                pssm_feats = load_pssm(uprot, feat_root, '3dvip_pssm')
+                coev_feat_df = load_coev_feats(uprot, feat_root, '3dvip_sca', '3dvip_dca')
 
-            bio_feats = load_expasy_feats(uprot, feat_root, '3dvip_expasy')
-            pssm_feats = load_pssm(uprot, feat_root, '3dvip_pssm')
-
-            feat_data = np.hstack([bio_feats, pssm_feats])
+                feat_data = np.hstack([bio_feats, pssm_feats])
 
             if self.graph_type == 'struct':
                 # Extract structure-based variant graph
                 var_graph, seq_pos_remain = extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos,
-                                                                  prot_graph, feat_data, feat_stats, patch_radius=var_graph_radius)
+                                                                  prot_graph, feat_data, feat_stats, coev_feat_df,
+                                                                  patch_radius=var_graph_radius, normalize=norm_feat)
                 struct_etype = '_E'
                 struct_g = var_graph
                 var_idx = 0
@@ -173,6 +180,7 @@ class VariantGraphDataSet(Dataset):
             self.data.append((var_graph, record['label'], alt_aa, var_idx, record['prot_var_id']))
             self.n_nodes.append(var_graph.num_nodes())
             self.n_edges.append(var_graph.num_edges())
+            uprot_prev = uprot
 
     def __getitem__(self, index):
         graph, label, alt_aa, target_idx, var_id = self.data[index]
@@ -189,6 +197,11 @@ class VariantGraphDataSet(Dataset):
         g = self.data[0][0]
 
         return g.ndata[feat_name].shape[1]
+
+    def get_edata_dim(self, feat_name='feat'):
+        g = self.data[0][0]
+
+        return g.edata[feat_name].shape[1]
 
     def dataset_summary(self):
         return np.mean(self.n_nodes), np.mean(self.n_edges)

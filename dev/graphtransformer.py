@@ -305,7 +305,7 @@ class GraphTransformer(nn.Module):
         # h = self.embedding_h(g.ndata['feat']) + h_aa
         # h = self.embedding_h(g.ndata['feat'])
         # h = torch.cat([h_seq.unsqueeze(1), h], dim=1)
-        g.edata['feat'] = torch.cat([g.edata['dist'], g.edata['angle']], dim=1)
+        # g.edata['feat'] = torch.cat([g.edata['dist'], g.edata['angle']], dim=1)
         assert not g.edata['feat'].detach().cpu().isnan().any()
         e = self.edge_linear(g.edata['feat'])
         assert not e.detach().cpu().isnan().any()

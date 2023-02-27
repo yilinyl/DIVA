@@ -3,7 +3,7 @@
         "use": true,
         "id": 1
     },
-    "experiment": "gtn_evol",
+    "experiment": "gtn_evol_full_norm",
     "mode": "train",
     "model_name": "gtn",
     "exp_dir": "./output",
@@ -23,9 +23,10 @@
         "distance_type": "centroid",
         "method": "radius",
         "radius": 10,
-        "var_graph_radius": 25,
+        "var_graph_radius": 18,
         "save": true,
         "anno_ires": false,
+        "norm_feat": true,
         "coord_option": "mass",
         "lap_pos_enc": true,
         "pos_enc_dim": 3,
@@ -34,7 +35,7 @@
 
     "net_params": {
         "seed": 2023,
-        "epochs": 20,
+        "epochs": 30,
         "batch_size": 16,
         "init_lr": 0.001,
         "lr_reduce_factor": 0.5,
@@ -48,13 +49,13 @@
         "n_heads": 4,
         "aa_emb_dim": 20,
         "in_dim1_node": 27,
-        "in_dim1_edge": 2,
+        "in_dim1_edge": 5,
         "hidden_dim1": 64,
         "out_dim1": 64,
         "residual": true,
         "readout": "mean",
         "in_feat_dropout": 0.0,
-        "dropout": 0.0,
+        "dropout": 0.1,
         "layer_norm": true,
         "batch_norm": false
     }

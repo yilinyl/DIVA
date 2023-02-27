@@ -394,6 +394,8 @@ def main():
     logging.info('Test set: {}'.format(len(test_dataset)))
     logging.info('Validation set: {}'.format(len(validation_dataset)))
 
+    net_params['in_dim1_node'] = train_dataset.get_ndata_dim('feat')
+    net_params['in_dim1_edge'] = train_dataset.get_edata_dim('feat')
     run_pipeline(net_params, train_dataset, validation_dataset, test_dataset, save_freq=args.save_freq,
                  inf_check=args.inf_check, tb_writer=tb_writer)
 
