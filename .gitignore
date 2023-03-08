@@ -3,9 +3,11 @@ __pycache__/
 
 .idea
 .ipynb_checkpoints
+.vscode
 *html
 *ipynb
 
+figures/
 test_data/
 pipeline_dx/
 logs/

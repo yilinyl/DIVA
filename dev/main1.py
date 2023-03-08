@@ -279,7 +279,7 @@ def run_pipeline(net_params, train_dataset, validation_dataset, test_dataset, sa
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', default='./config.json', help="Config file path (.json)")
+    parser.add_argument('--config', default='./configs/config.json', help="Config file path (.json)")
     parser.add_argument('--gpu_id', type=int, help="GPU device ID")
     parser.add_argument('--tensorboard', type=str2bool, default=False,
                         help='Option to write log information in tensorboard')
@@ -350,10 +350,10 @@ def main():
     sift_map = pd.read_csv(data_params['sift_file'], sep='\t').dropna().reset_index(drop=True)
     sift_map = sift_map.merge(var_prot_df, how='inner').drop_duplicates().reset_index(drop=True)
 
-    with open(data_params['feat_stats_file'], 'rb') as f_pkl:
-        feat_stats, feat_cols = pickle.load(f_pkl)
-        for key in feat_stats:
-            feat_stats[key] = torch.tensor(feat_stats[key])
+    # with open(data_params['feat_stats_file'], 'rb') as f_pkl:
+    #     feat_stats, feat_cols = pickle.load(f_pkl)
+    #     for key in feat_stats:
+    #         feat_stats[key] = torch.tensor(feat_stats[key])
 
     if Path(data_params['seq2struct_cache']).exists():
         with open(data_params['seq2struct_cache'], 'rb') as f_pkl:
@@ -375,19 +375,16 @@ def main():
 
     data_params['graph_cache'] = os.fspath(graph_cache)
 
-    train_dataset = VariantGraphDataSet(df_train, sift_map=sift_map, feat_stats=feat_stats,
-                                        seq2struct_all=seq_struct_dict, **data_params)
+    train_dataset = VariantGraphDataSet(df_train, sift_map=sift_map, seq2struct_all=seq_struct_dict, **data_params)
     seq_struct_dict.update(train_dataset.seq2struct_dict)
     var_ref = train_dataset.get_var_db()
     logging.info('Training data summary (average) nodes: {:.0f}; edges: {:.0f}'.format(*train_dataset.dataset_summary()))
 
-    validation_dataset = VariantGraphDataSet(df_val, sift_map=sift_map, feat_stats=feat_stats,
-                                             seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)
+    validation_dataset = VariantGraphDataSet(df_val, sift_map=sift_map, seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)
     seq_struct_dict.update(validation_dataset.seq2struct_dict)
     var_ref = pd.concat([var_ref, validation_dataset.get_var_db()])
 
-    test_dataset = VariantGraphDataSet(df_test, sift_map=sift_map, feat_stats=feat_stats,
-                                       seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)
+    test_dataset = VariantGraphDataSet(df_test, sift_map=sift_map, seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)
     seq_struct_dict.update(test_dataset.seq2struct_dict)
 
     with open(data_params['seq2struct_cache'], 'wb') as f_pkl:
@@ -397,6 +394,8 @@ def main():
     logging.info('Test set: {}'.format(len(test_dataset)))
     logging.info('Validation set: {}'.format(len(validation_dataset)))
 
+    net_params['in_dim1_node'] = train_dataset.get_ndata_dim('feat')
+    net_params['in_dim1_edge'] = train_dataset.get_edata_dim('feat')
     run_pipeline(net_params, train_dataset, validation_dataset, test_dataset, save_freq=args.save_freq,
                  inf_check=args.inf_check, tb_writer=tb_writer)
 
