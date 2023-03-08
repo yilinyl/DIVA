@@ -1,3 +1,5 @@
+import pickle
+
 import dgl
 import numpy as np
 import torch
@@ -20,7 +22,8 @@ class VariantGraphDataSet(Dataset):
     def __init__(self, df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir, sift_map, lap_pos_enc=True, wl_pos_enc=False, pos_enc_dim=None,
                  cov_thres=0.5, num_neighbors=10, distance_type='centroid', method='radius', radius=10, df_ires=None, save=False,
                  anno_ires=False, coord_option=None, feat_stats=None, var_db=None, seq2struct_all=None,
-                 var_graph_radius=None, seq_dict=None, window_size=None, graph_type='hetero', norm_feat=True, **kwargs):
+                 var_graph_radius=None, seq_dict=None, window_size=None, graph_type='hetero', norm_feat=True,
+                 save_var_graph=False, var_graph_cache='./var_graph_cache', **kwargs):
         super(VariantGraphDataSet, self).__init__()
 
         self.data = []
@@ -44,6 +47,11 @@ class VariantGraphDataSet(Dataset):
         graph_cache_path = Path(graph_cache)
         if not graph_cache_path.exists():
             graph_cache_path.mkdir(parents=True)
+
+        var_graph_path = Path(var_graph_cache) / self.graph_type
+        if save_var_graph:
+            if not var_graph_path.exists():
+                var_graph_path.mkdir(parents=True)
 
         self.var_db = var_db
         if isinstance(var_db, type(None)):
@@ -88,6 +96,8 @@ class VariantGraphDataSet(Dataset):
                 seq2struct_pos = self.seq2struct_dict[key]
 
             f_graph = graph_cache_path / '{}_{}_graph.pkl'.format(model, struct_id)
+            f_var_graph = var_graph_path / f'{model}-{struct_id}_{uprot_pos}.pkl'
+
             # f_graph = os.path.join(g_data_dir, '{}_{}_graph.pkl'.format(model, struct_id))
             if model != model_prev or struct_id != struct_prev:
                 if f_graph.exists():
@@ -101,10 +111,7 @@ class VariantGraphDataSet(Dataset):
                     if not new_graph:  # fail to build protein graph
                         continue
                     prot_graph, chain_res_list = new_graph
-            # feat_version = record['feat_version']
-            # feat_path = feat_root / feat_version / 'sequence_features'
-            # feat_data = load_pio_features(uprot, feat_path)
-            # feat_data = normalize_data(feat_data, feat_stats)
+
             if uprot != uprot_prev:
                 bio_feats = load_expasy_feats(uprot, feat_root, '3dvip_expasy')
                 pssm_feats = load_pssm(uprot, feat_root, '3dvip_pssm')
@@ -112,16 +119,31 @@ class VariantGraphDataSet(Dataset):
 
                 feat_data = np.hstack([bio_feats, pssm_feats])
 
+            # feat_version = record['feat_version']
+            # feat_path = feat_root / feat_version / 'sequence_features'
+            # feat_data = load_pio_features(uprot, feat_path)
+            # feat_data = normalize_data(feat_data, feat_stats)
             if self.graph_type == 'struct':
-                # Extract structure-based variant graph
-                var_graph, seq_pos_remain = extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos,
-                                                                  prot_graph, feat_data, feat_stats, coev_feat_df,
-                                                                  patch_radius=var_graph_radius, normalize=norm_feat)
-                struct_etype = '_E'
-                struct_g = var_graph
                 var_idx = 0
-            else:
+                struct_etype = '_E'
+                if f_var_graph.exists():
+                    with open(f_var_graph, 'rb') as f_pkl:
+                        var_graph, seq_pos_remain = pickle.load(f_pkl)  # TODO: modify for heterograph
 
+                    # if self.graph_type == 'struct':
+                    # struct_etype = '_E'
+                    struct_g = var_graph
+
+                else:
+                    # Extract structure-based variant graph
+                    var_graph, seq_pos_remain = extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos,
+                                                                      prot_graph, feat_data, feat_stats, coev_feat_df,
+                                                                      patch_radius=var_graph_radius, normalize=norm_feat)
+                    # struct_etype = '_E'
+                    struct_g = var_graph
+                    # var_idx = 0
+            else:
+                # TODO: incorporate new feature for heterograph
                 seq_array = np.array(
                     list(map(lambda x: aa_to_index(protein_letters_1to3_extended[x].upper()), list(seq))))
 
@@ -159,6 +181,10 @@ class VariantGraphDataSet(Dataset):
             if struct_g.edata['dist'].isnan().any():
                 logging.warning('NA in dist data for {}-{}'.format(model, record['prot_var_id']))
                 continue
+
+            if not f_var_graph.exists() and save_var_graph:
+                with open(f_var_graph, 'wb') as f_pkl:
+                    pickle.dump((var_graph, seq_pos_remain), f_pkl)
 
             if self.lap_pos_enc:
                 lap = laplacian_positional_encoding(struct_g, pos_enc_dim)
