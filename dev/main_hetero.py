@@ -159,10 +159,13 @@ def pipeline():
     else:
         seq_struct_dict = dict()
 
-    try:
-        data_params['seq_dict'] = parse_fasta(data_params['seq_fasta'])
-    except FileNotFoundError:
-        pass
+    seq_dict = dict()
+    for fname in data_params['seq_fasta']:
+        try:
+            seq_dict.update(parse_fasta(data_params['seq_fasta']))
+        except FileNotFoundError:
+            pass
+    data_params['seq_dict'] = seq_dict
 
     train_dataset = VariantGraphDataSet(df_train, sift_map=sift_map, feat_stats=feat_stats,
                                         seq2struct_all=seq_struct_dict, **data_params)

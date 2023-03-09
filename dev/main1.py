@@ -360,11 +360,14 @@ def main():
             seq_struct_dict = pickle.load(f_pkl)
     else:
         seq_struct_dict = dict()
-
-    try:
-        data_params['seq_dict'] = parse_fasta(data_params['seq_fasta'])
-    except FileNotFoundError:
-        pass
+    
+    seq_dict = dict()
+    for fname in data_params['seq_fasta']:
+        try:
+            seq_dict.update(parse_fasta(data_params['seq_fasta']))
+        except FileNotFoundError:
+            pass
+    data_params['seq_dict'] = seq_dict
 
     # Graph cache config
     graph_cache_root = Path(data_params['graph_cache_root'])
