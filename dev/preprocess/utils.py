@@ -349,7 +349,12 @@ def build_struct_graph(record, model, pdb_root_dir, af_root_dir, save_dir, num_n
     pdb_array = load_pdbarray(f_path)
 
     pdb_array = pdb_array[pdb_array[:, 0] == 'ATOM', :]  # only keep standard AA residues
-    prot_graph, chain_res_list = structure_to_graph(pdb_array, num_neighbors, distance_type, method, radius, coord_option)
+    try:
+        prot_graph, chain_res_list = structure_to_graph(pdb_array, num_neighbors, distance_type, method, radius,
+                                                        coord_option)
+    except:
+        logging.warning('Error for building structural graph for {}-{} UniProt {}'.format(model, struct_id, uprot))
+        return
 
     n_residue = prot_graph.num_nodes()
     res_sorted = sorted(chain_res_list)

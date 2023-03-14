@@ -295,7 +295,7 @@ def parse_args():
     parser.add_argument('--train_data', default='train.csv', help='Training data file')
     parser.add_argument('--test_data', default='test.csv', help='Testing data file')
     parser.add_argument('--val_data', default='val.csv', help='Validation data file')
-    parser.add_argument('--save_freq', type=int, default=1, help='Frequency to save models')
+    parser.add_argument('--save_freq', type=int, default=100, help='Frequency to save models')
     args = parser.parse_args()
 
     return args
@@ -313,11 +313,16 @@ def main():
         config['gpu']['use'] = True
     device = gpu_setup(config['gpu']['use'], config['gpu']['id'])
 
+    now = datetime.now()
+    date_time = now.strftime("%Y-%m-%d-%H-%M-%S")
+
     if args.exp_dir is not None:
         config['exp_dir'] = args.exp_dir
     if args.experiment is not None:
         config['experiment'] = args.experiment
-    config['exp_dir'] = '{exp_root}/{name}'.format(exp_root=config['exp_dir'], name=config['experiment'])
+    config['exp_dir'] = '{exp_root}/{name}/{date_time}'.format(exp_root=config['exp_dir'],
+                                                               name=config['experiment'],
+                                                               date_time=date_time)
     # Set up logging file
     setup_logger(config['exp_dir'], log_prefix=config['mode'], log_level=args.log_level)
     logging.info(json.dumps(config, indent=4))
@@ -364,7 +369,7 @@ def main():
     seq_dict = dict()
     for fname in data_params['seq_fasta']:
         try:
-            seq_dict.update(parse_fasta(data_params['seq_fasta']))
+            seq_dict.update(parse_fasta(fname))
         except FileNotFoundError:
             pass
     data_params['seq_dict'] = seq_dict
@@ -378,24 +383,40 @@ def main():
 
     data_params['graph_cache'] = os.fspath(graph_cache)
 
-    train_dataset = VariantGraphDataSet(df_train, sift_map=sift_map, seq2struct_all=seq_struct_dict, **data_params)
+    if data_params['cache_only']:
+        train_dataset = VariantGraphCacheDataSet(df_train, sift_map=sift_map,
+                                                 seq2struct_all=seq_struct_dict, **data_params)
+    else:
+        train_dataset = VariantGraphDataSet(df_train, sift_map=sift_map,
+                                            seq2struct_all=seq_struct_dict, **data_params)
+
     seq_struct_dict.update(train_dataset.seq2struct_dict)
     var_ref = train_dataset.get_var_db()
     logging.info('Training data summary (average) nodes: {:.0f}; edges: {:.0f}'.format(*train_dataset.dataset_summary()))
 
-    validation_dataset = VariantGraphDataSet(df_val, sift_map=sift_map, seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)
+    if data_params['cache_only']:
+        validation_dataset = VariantGraphCacheDataSet(df_val, sift_map=sift_map, seq2struct_all=seq_struct_dict,
+                                                      var_db=var_ref, **data_params)
+    else:
+        validation_dataset = VariantGraphDataSet(df_val, sift_map=sift_map, seq2struct_all=seq_struct_dict,
+                                                 var_db=var_ref, **data_params)
     seq_struct_dict.update(validation_dataset.seq2struct_dict)
     var_ref = pd.concat([var_ref, validation_dataset.get_var_db()])
 
-    test_dataset = VariantGraphDataSet(df_test, sift_map=sift_map, seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)
+    if data_params['cache_only']:
+        test_dataset = VariantGraphCacheDataSet(df_test, sift_map=sift_map, seq2struct_all=seq_struct_dict,
+                                                var_db=var_ref, **data_params)
+    else:
+        test_dataset = VariantGraphDataSet(df_test, sift_map=sift_map, seq2struct_all=seq_struct_dict,
+                                           var_db=var_ref, **data_params)
     seq_struct_dict.update(test_dataset.seq2struct_dict)
 
     with open(data_params['seq2struct_cache'], 'wb') as f_pkl:
         pickle.dump(seq_struct_dict, f_pkl)
 
-    logging.info('Training set: {}'.format(len(train_dataset)))
-    logging.info('Test set: {}'.format(len(test_dataset)))
-    logging.info('Validation set: {}'.format(len(validation_dataset)))
+    logging.info('Training set: {}; Positive: {}'.format(len(train_dataset), train_dataset.count_positive()))
+    logging.info('Test set: {}; Positive: {}'.format(len(test_dataset), test_dataset.count_positive()))
+    logging.info('Validation set: {}; Positive: {}'.format(len(validation_dataset), validation_dataset.count_positive()))
 
     net_params['in_dim1_node'] = train_dataset.get_ndata_dim('feat')
     net_params['in_dim1_edge'] = train_dataset.get_edata_dim('feat')
