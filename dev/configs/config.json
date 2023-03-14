@@ -1,13 +1,13 @@
 {
     "gpu": {
         "use": true,
-        "id": 1
+        "id": 0
     },
     "experiment": "gtn_evol_full_norm",
     "mode": "train",
     "model_name": "gtn",
     "exp_dir": "./output",
-    "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/dataset",
+    "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/dataset/by_gene50k",
     "data_params": {
         "graph_cache_root": "./graph_cache_dir",
         "pdb_root_dir": "/fs/cbsuhyfs1/storage/resources/pdb/data",
@@ -24,29 +24,31 @@
         "distance_type": "centroid",
         "method": "radius",
         "radius": 10,
-        "var_graph_radius": 18,
+        "var_graph_radius": 20,
         "save": true,
+        "save_var_graph": true,
+        "cache_only": false,
         "anno_ires": false,
         "norm_feat": true,
         "coord_option": "mass",
         "lap_pos_enc": true,
-        "pos_enc_dim": 3,
+        "pos_enc_dim": 4,
         "wl_pos_enc": false
     },
 
     "net_params": {
         "seed": 2023,
-        "epochs": 30,
+        "epochs": 100,
         "batch_size": 16,
         "init_lr": 0.001,
         "lr_reduce_factor": 0.5,
-        "lr_schedule_patience": 10,
+        "lr_schedule_patience": 20,
         "min_lr": 1e-6,
         "weight_decay": 0.0,
         "print_epoch_interval": 5,
         "use_weight_in_loss": false,
         "n_classes": 1,
-        "L": 2,
+        "L": 4,
         "n_heads": 4,
         "aa_emb_dim": 20,
         "in_dim1_node": 27,

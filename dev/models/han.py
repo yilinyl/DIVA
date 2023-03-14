@@ -146,7 +146,7 @@ class HAN(nn.Module):
                  ndata_dim_in,
                  ndata_dim_out,
                  device,
-                 n_labels=20,
+                 n_labels=21,
                  to_onehot=True,
                  embed_aa=False,
                  aa_embed_dim=None,

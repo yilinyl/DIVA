@@ -2,6 +2,7 @@ import copy
 import pickle, hashlib, torch, dgl
 from pathlib import Path
 
+import networkx as nx
 import pandas as pd
 from scipy import sparse as sp
 import numpy as np
@@ -83,12 +84,23 @@ def extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos, prot
             coev_feats.append(coev_feat_dict[(src_seq, dst_seq)])
         except KeyError:
             coev_feats.append(coev_feat_dict[(dst_seq, src_seq)])
+    angle_stats = {'mean': torch.nanmean(prot_graph.edata['angle']),
+                   'min': torch.tensor(np.nanmin(prot_graph.edata['angle'].numpy())),
+                   'max': torch.tensor(np.nanmax(prot_graph.edata['angle'].numpy()))}
+
+    dist_stats = {'mean': torch.nanmean(prot_graph.edata['dist']),
+                  'min': torch.tensor(np.nanmin(prot_graph.edata['dist'].numpy())),
+                  'max': torch.tensor(np.nanmax(prot_graph.edata['dist'].numpy()))}
+
+    feat_stats = {'mean': torch.tensor(np.nanmean(feat_data)),
+                  'min': torch.tensor(np.nanmin(feat_data)),
+                  'max': torch.tensor(np.nanmax(feat_data))}
 
     var_feats = torch.tensor(feat_data[list(map(lambda x: x - 1, seq_pos_remain)), :])
     var_feats = impute_and_normalize(var_feats, feat_stats, normalize=normalize)
-    var_graph.ndata['feat'] = var_feats
-    var_graph.edata['angle'] = impute_and_normalize(var_graph.edata['angle'], normalize=normalize)
-    var_graph.edata['dist'] = impute_and_normalize(var_graph.edata['dist'], normalize=normalize)
+    var_graph.ndata['expasy'] = var_feats
+    var_graph.edata['angle'] = impute_and_normalize(var_graph.edata['angle'], feat_stats=angle_stats, normalize=normalize)
+    var_graph.edata['dist'] = impute_and_normalize(var_graph.edata['dist'], feat_stats=dist_stats, normalize=normalize)
     var_graph.edata['coev'] = torch.tensor(coev_feats)
     var_graph.edata['feat'] = torch.cat([var_graph.edata['angle'], var_graph.edata['dist'], var_graph.edata['coev']], dim=1)
 
@@ -171,6 +183,14 @@ def load_coev_feats(uprot, feat_root, sca_dir, dca_dir):
     return df_coev
 
 
+def add_coev_edges(df_coev, feat_names, nlargest=20, src_name='pos1', dst_name='pos2'):
+    df_top = df_coev.sort_values(feat_names, ascending=False).groupby(src_name).head(nlargest)
+    if not isinstance(feat_names, list):
+        feat_names = [feat_names]
+    g_coev = dgl.from_networkx(nx.from_pandas_edgelist(df_top, src_name, dst_name, edge_attr=True).to_directed(),
+                               edge_attrs=feat_names)
+    return g_coev
+
 # Adapted from Dwivedi, Vijay Prakash, and Xavier Bresson.
 # "A generalization of transformer networks to graphs." https://arxiv.org/abs/2012.09699
 
@@ -195,7 +215,7 @@ def laplacian_positional_encoding(g, pos_enc_dim):
     try:
         EigVal, EigVec = sp.linalg.eigs(L, k=pos_enc_dim + 1, which='SR', tol=1e-2)  # for 40 PEs
         EigVec = EigVec[:, EigVal.argsort()]  # increasing order
-    except TypeError:
+    except:
         return None
     # g.ndata['lap_pos_enc'] = torch.from_numpy(EigVec[:, 1:pos_enc_dim + 1].real).float()
 
@@ -253,44 +273,47 @@ def wl_positional_encoding(g):
 
 
 def fetch_struct_edges(start, end, chain, struct_graph, chain_res_list, seq2struct_pos):
-    struct2seq_pos = {':'.join([chain, v]): k for k, v in seq2struct_pos.items()}
+    # struct2seq_pos = {':'.join([chain, v]): k for k, v in seq2struct_pos.items()}
     nodes_mapped = []
     for pos in range(start, end+1):
         if pos in seq2struct_pos:
             struct_pos = seq2struct_pos[pos]
             struct_node_idx = chain_res_list.index(f'{chain}:{struct_pos}')
             nodes_mapped.append(struct_node_idx)
-            nodes_mapped.extend(struct_graph.predecessors(struct_node_idx).tolist())
+            # nodes_mapped.extend(struct_graph.predecessors(struct_node_idx).tolist())
             # nodes = [struct_node_idx] + struct_graph.predecessors(struct_node_idx).tolist()
     nodes_mapped = list(set(nodes_mapped))
     subgraph = dgl.node_subgraph(struct_graph, nodes_mapped)
-    struct_src, struct_dst = struct_graph.find_edges(subgraph.edata['_ID'])
-    src_mapped = []
-    dst_mapped = []
+
+    return subgraph
+
+    # struct_src, struct_dst = struct_graph.find_edges(subgraph.edata['_ID'])
+    # src_mapped = []
+    # dst_mapped = []
 
     # struct_edges = list(set(zip(struct_src, struct_dst)))
     # struct_src = torch.cat(struct_src)
     # struct_dst = torch.cat(struct_dst)
-    n_edges = subgraph.num_edges()
+    # n_edges = subgraph.num_edges()
     # nodes_all = torch.cat([struct_src, struct_dst]).unique().tolist()
     #
     # for node_idx in nodes_all:
     #     seq_pos = struct2seq_pos[chain_res_list[node_idx]]
     # Structural nodes on sequence basis
     # TODO: map node & edge features
-    edge_remain_idx = []
-    for i in range(n_edges):
-        try:
-            src_seq_pos = struct2seq_pos[chain_res_list[struct_src[i].item()]]
-            dst_seq_pos = struct2seq_pos[chain_res_list[struct_dst[i].item()]]
-            # if src_seq_pos >= start and dst_seq_pos <= end:  # only keep residues within sequential neighborhood?
-            if src_seq_pos in range(start, end+1) and dst_seq_pos in range(start, end+1):
-                src_mapped.append(src_seq_pos - start)
-                dst_mapped.append(dst_seq_pos - start)
-                edge_remain_idx.append(i)
-        except KeyError:  # structural residue not mappable to sequence
-            continue
+    # edge_remain_idx = []
+    # for i in range(n_edges):
+    #     try:
+    #         src_seq_pos = struct2seq_pos[chain_res_list[struct_src[i].item()]]
+    #         dst_seq_pos = struct2seq_pos[chain_res_list[struct_dst[i].item()]]
+    #         # if src_seq_pos >= start and dst_seq_pos <= end:  # only keep residues within sequential neighborhood?
+    #         if src_seq_pos in range(start, end+1) and dst_seq_pos in range(start, end+1):
+    #             src_mapped.append(src_seq_pos - start)
+    #             dst_mapped.append(dst_seq_pos - start)
+    #             edge_remain_idx.append(i)
+    #     except KeyError:  # structural residue not mappable to sequence
+    #         continue
 
-    angle = subgraph.edata['angle'][edge_remain_idx]
-    dist = subgraph.edata['dist'][edge_remain_idx]
-    return src_mapped, dst_mapped, angle, dist
+    # angle = subgraph.edata['angle'][edge_remain_idx]
+    # dist = subgraph.edata['dist'][edge_remain_idx]
+    # return src_mapped, dst_mapped, angle, dist

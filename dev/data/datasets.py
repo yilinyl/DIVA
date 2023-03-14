@@ -20,10 +20,12 @@ class VariantGraphDataSet(Dataset):
     def __init__(self, df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir, sift_map, lap_pos_enc=True, wl_pos_enc=False, pos_enc_dim=None,
                  cov_thres=0.5, num_neighbors=10, distance_type='centroid', method='radius', radius=10, df_ires=None, save=False,
                  anno_ires=False, coord_option=None, feat_stats=None, var_db=None, seq2struct_all=None,
-                 var_graph_radius=None, seq_dict=None, window_size=None, graph_type='hetero', norm_feat=True, **kwargs):
+                 var_graph_radius=None, seq_dict=None, window_size=None, graph_type='hetero', norm_feat=True,
+                 save_var_graph=False, var_graph_cache='./var_graph_cache', **kwargs):
         super(VariantGraphDataSet, self).__init__()
 
         self.data = []
+        self.label = []
         self.n_nodes = []
         self.n_edges = []
         # self.aa_idx = []
@@ -44,6 +46,11 @@ class VariantGraphDataSet(Dataset):
         graph_cache_path = Path(graph_cache)
         if not graph_cache_path.exists():
             graph_cache_path.mkdir(parents=True)
+
+        var_graph_path = Path(var_graph_cache) / self.graph_type
+        if save_var_graph:
+            if not var_graph_path.exists():
+                var_graph_path.mkdir(parents=True)
 
         self.var_db = var_db
         if isinstance(var_db, type(None)):
@@ -88,6 +95,7 @@ class VariantGraphDataSet(Dataset):
                 seq2struct_pos = self.seq2struct_dict[key]
 
             f_graph = graph_cache_path / '{}_{}_graph.pkl'.format(model, struct_id)
+            f_var_graph = var_graph_path / f'{model}-{struct_id}_{uprot_pos}.pkl'
             # f_graph = os.path.join(g_data_dir, '{}_{}_graph.pkl'.format(model, struct_id))
             if model != model_prev or struct_id != struct_prev:
                 if f_graph.exists():
@@ -101,6 +109,15 @@ class VariantGraphDataSet(Dataset):
                     if not new_graph:  # fail to build protein graph
                         continue
                     prot_graph, chain_res_list = new_graph
+
+            angle_stats = {'mean': torch.nanmean(prot_graph.edata['angle']),
+                           'min': torch.tensor(np.nanmin(prot_graph.edata['angle'].numpy())),
+                           'max': torch.tensor(np.nanmax(prot_graph.edata['angle'].numpy()))}
+
+            dist_stats = {'mean': torch.nanmean(prot_graph.edata['dist']),
+                          'min': torch.tensor(np.nanmin(prot_graph.edata['dist'].numpy())),
+                          'max': torch.tensor(np.nanmax(prot_graph.edata['dist'].numpy()))}
+
             # feat_version = record['feat_version']
             # feat_path = feat_root / feat_version / 'sequence_features'
             # feat_data = load_pio_features(uprot, feat_path)
@@ -112,46 +129,71 @@ class VariantGraphDataSet(Dataset):
 
                 feat_data = np.hstack([bio_feats, pssm_feats])
 
-            if self.graph_type == 'struct':
-                # Extract structure-based variant graph
-                var_graph, seq_pos_remain = extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos,
-                                                                  prot_graph, feat_data, feat_stats, coev_feat_df,
-                                                                  patch_radius=var_graph_radius, normalize=norm_feat)
-                struct_etype = '_E'
-                struct_g = var_graph
-                var_idx = 0
+            if f_var_graph.exists():
+                with open(f_var_graph, 'rb') as f_pkl:
+                    var_graph, seq_pos_remain, var_idx = pickle.load(f_pkl)
+                struct_etype = '_E' if self.graph_type == 'struct' else 'struct'
+
             else:
+                if self.graph_type == 'struct':
+                    # Extract structure-based variant graph
+                    var_graph, seq_pos_remain = extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos,
+                                                                      prot_graph, feat_data, feat_stats, coev_feat_df,
+                                                                      patch_radius=var_graph_radius, normalize=norm_feat)
+                    struct_etype = '_E'
+                    var_idx = 0
+                else:
 
-                seq_array = np.array(
-                    list(map(lambda x: aa_to_index(protein_letters_1to3_extended[x].upper()), list(seq))))
+                    seq_array = np.array(
+                        list(map(lambda x: aa_to_index(protein_letters_1to3_extended[x].upper()), list(seq))))
 
-                seq_src, seq_dst, start_idx, end_idx = self.add_seq_edges(uprot, uprot_pos, len(seq))
-                try:
-                    struct_src, struct_dst, angle, dist = fetch_struct_edges(start_idx, end_idx, chain, prot_graph,
-                                                                             chain_res_list, seq2struct_pos)
-                except ValueError:
-                    logging.warning('Exception in building structural graph for {}-{}'.format(model, record['prot_var_id']))
-                    continue
-                var_idx = uprot_pos - start_idx - 1
-                edge_dict = {
-                    ('residue', 'seq', 'residue'): (seq_src, seq_dst),
-                    ('residue', 'struct', 'residue'): (struct_src, struct_dst)
-                }
+                    seq_src, seq_dst, start_idx, end_idx = self.add_seq_edges(uprot, uprot_pos, len(seq))
+                    seq_nodes = list(range(start_idx, end_idx+1))
 
-                var_graph = dgl.heterograph(edge_dict)
-                var_graph.edges['struct'].data['angle'] = impute_and_normalize(angle, feat_stats, normalize=False)
-                var_graph.edges['struct'].data['dist'] = impute_and_normalize(dist, feat_stats, normalize=False)
+                    g_sca = add_coev_edges(coev_feat_df, 'sca', nlargest=10)
+                    g_dca = add_coev_edges(coev_feat_df, ['di', 'mi'], nlargest=20)
+                    g_sca_sub = dgl.node_subgraph(g_sca, seq_nodes)
+                    g_dca_sub = dgl.node_subgraph(g_dca, seq_nodes)
 
-                var_graph.ndata['feat'] = torch.tensor(feat_data[start_idx: end_idx + 1])
-                var_graph.ndata['ref_aa'] = torch.tensor(seq_array[start_idx:(end_idx+1)], dtype=torch.int64)
-                seq_pos_remain = list(range(start_idx+1, end_idx+2))  # convert index to 1-based sequential positions
-                struct_etype = 'struct'
-                struct_g = dgl.edge_type_subgraph(var_graph, etypes=['struct'])
+                    try:
+                        struct_g = fetch_struct_edges(start_idx, end_idx, chain, prot_graph, chain_res_list, seq2struct_pos)
+                    except ValueError:
+                        logging.warning('Exception in building structural graph for {}-{}'.format(model, record['prot_var_id']))
+                        continue
+                    var_idx = uprot_pos - start_idx - 1
+                    edge_dict = {
+                        ('residue', 'seq', 'residue'): (seq_src, seq_dst),
+                        ('residue', 'sca', 'residue'): g_sca_sub.edges(),
+                        ('residue', 'dca', 'residue'): g_dca_sub.edges(),
+                        ('residue', 'struct', 'residue'): struct_g.edges()
+                    }
+
+                    var_graph = dgl.heterograph(edge_dict)
+                    var_graph.edges['struct'].data['angle'] = impute_and_normalize(struct_g.edata['angle'], angle_stats, normalize=norm_feat)
+                    var_graph.edges['struct'].data['dist'] = impute_and_normalize(struct_g.edata['dist'], dist_stats, normalize=norm_feat)
+                    var_graph.edges['sca'].data['sca'] = g_sca_sub.edata['sca'].unsqueeze(1)
+                    var_graph.edges['dca'].data['dca'] = torch.cat([g_dca_sub.edata['di'].unsqueeze(1),
+                                                                      g_dca_sub.edata['mi'].unsqueeze(1)], dim=-1)
+
+                    var_graph.ndata['ref_aa'] = torch.tensor(seq_array[start_idx:(end_idx+1)], dtype=torch.int64)
+                    var_graph.ndata['expasy'] = torch.tensor(feat_data[start_idx: end_idx + 1])
+
+                    # TODO: automatically get all ndata names and concat
+                    seq_pos_remain = list(range(start_idx+1, end_idx+2))  # convert index to 1-based sequential positions
+                    struct_etype = 'struct'
 
             if var_graph.num_nodes() == 0:
                 logging.warning('Empty graph for {}:{}'.format(uprot, uprot_pos))
                 continue
+            if self.graph_type == 'struct':
+                struct_g = var_graph
+            else:
+                struct_g = dgl.edge_type_subgraph(var_graph, etypes=['struct'])
 
+            # var_graph.edges[struct_etype].data['angle'] = impute_and_normalize(struct_g.edata['angle'], angle_stats,
+            #                                                                    normalize=norm_feat)
+            # var_graph.edges[struct_etype].data['dist'] = impute_and_normalize(struct_g.edata['dist'], dist_stats,
+            #                                                                   normalize=norm_feat)
             # Operations on structual subgraph
             if struct_g.edata['angle'].isnan().any():
                 logging.warning('NA in angle data for {}-{}'.format(model, record['prot_var_id']))
@@ -159,6 +201,10 @@ class VariantGraphDataSet(Dataset):
             if struct_g.edata['dist'].isnan().any():
                 logging.warning('NA in dist data for {}-{}'.format(model, record['prot_var_id']))
                 continue
+
+            if not f_var_graph.exists() and save_var_graph:
+                with open(f_var_graph, 'wb') as f_pkl:  # Update: also save var_idx
+                    pickle.dump((var_graph, seq_pos_remain, var_idx), f_pkl)
 
             if self.lap_pos_enc:
                 lap = laplacian_positional_encoding(struct_g, pos_enc_dim)
@@ -173,11 +219,22 @@ class VariantGraphDataSet(Dataset):
 
             prot_patho_pos = self.var_db.query('UniProt == @uprot')
             patho_tag = list(map(lambda x: x in prot_patho_pos['Protein_position'], seq_pos_remain))
-            var_graph.ndata['patho_tag'] = torch.tensor(patho_tag, dtype=torch.float64)
+            var_graph.ndata['patho_tag'] = torch.tensor(patho_tag, dtype=torch.float64).unsqueeze(1)
+            nfeat_all = list(var_graph.node_attr_schemes().keys())
+            if '_ID' in nfeat_all:
+                nfeat_all.pop(nfeat_all.index('_ID'))
 
+            if 'ref_aa' in nfeat_all:
+                nfeat_all.pop(nfeat_all.index('ref_aa'))  # process primary sequence separately
+            if self.graph_type == 'hetero':
+                nfeat_comb = list(map(lambda x: var_graph.ndata[x], nfeat_all))
+                var_graph.ndata['feat'] = torch.cat(nfeat_comb, dim=-1)
+            else:
+                var_graph.ndata['feat'] = torch.cat([var_graph.ndata['expasy'], var_graph.ndata['patho_tag']], dim=-1)
             # ref_aa = aa_to_index(record['REF_AA'])
             alt_aa = aa_to_index(protein_letters_1to3_extended[record['ALT_AA']].upper())
             self.data.append((var_graph, record['label'], alt_aa, var_idx, record['prot_var_id']))
+            self.label.append(record['label'])
             self.n_nodes.append(var_graph.num_nodes())
             self.n_edges.append(var_graph.num_edges())
             uprot_prev = uprot
@@ -189,6 +246,9 @@ class VariantGraphDataSet(Dataset):
 
     def __len__(self):
         return len(self.data)
+
+    def count_positive(self):
+        return sum(self.label)
 
     def get_seq_struct_map(self):
         return self.seq2struct_dict
@@ -242,5 +302,174 @@ class VariantGraphDataSet(Dataset):
 #     return batched_graph, torch.tensor(labels)
 
 
+class VariantGraphCacheDataSet(Dataset):
+    def __init__(self, df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir, sift_map, lap_pos_enc=True, wl_pos_enc=False, pos_enc_dim=None,
+                 cov_thres=0.5, var_db=None, seq2struct_all=None, seq_dict=None, window_size=None, graph_type='hetero', norm_feat=True,
+                 save_var_graph=False, var_graph_cache='./var_graph_cache', **kwargs):
+        super(VariantGraphCacheDataSet, self).__init__()
+
+        self.data = []
+        self.label = []
+        self.n_nodes = []
+        self.n_edges = []
+        # self.aa_idx = []
+        # self.aa_mask = []
+        self.lap_pos_enc = lap_pos_enc
+        self.wl_pos_enc = wl_pos_enc
+        self.pos_enc_dim = pos_enc_dim
+        if not seq2struct_all:
+            seq2struct_all = dict()
+        self.seq2struct_dict = seq2struct_all
+        self.graph_type = graph_type
+        self.window_size = window_size
+        if not seq_dict:
+            seq_dict = dict()
+        self.seq_dict = seq_dict
+
+        feat_root = Path(feat_dir)
+        graph_cache_path = Path(graph_cache)
+        if not graph_cache_path.exists():
+            graph_cache_path.mkdir(parents=True)
+
+        var_graph_path = Path(var_graph_cache) / self.graph_type
+        if save_var_graph:
+            if not var_graph_path.exists():
+                var_graph_path.mkdir(parents=True)
+
+        self.var_db = var_db
+        if isinstance(var_db, type(None)):
+            var_db = df_in
+            self.var_db = var_db.groupby(['UniProt', 'Protein_position'])['label'].any().reset_index()
+            self.var_db = self.var_db.rename(columns={'label': 'any_patho'}).query('any_patho == True').reset_index(drop=True)
+
+        for i, record in tqdm(df_in.iterrows(), total=df_in.shape[0]):
+            uprot = record['UniProt']
+            uprot_pos = record['Protein_position']
+            if uprot not in self.seq_dict:
+                self.seq_dict[uprot] = fetch_prot_seq(uprot)
+            seq = self.seq_dict[uprot]
+            if record['PDB_coverage'] >= cov_thres:
+                model = 'PDB'
+                struct_id = record['PDB']
+                chain = record['Chain']
+                key = ':'.join([uprot, struct_id, chain])
+
+                if key not in self.seq2struct_dict:
+                    struct_info = sift_map.query('UniProt == @uprot & PDB == @struct_id & Chain == @chain').iloc[0]
+                    seq_pos = list(map(int, unzip_res_range(struct_info['MappableResInPDBChainOnUniprotBasis'])))
+                    struct_pos = unzip_res_range(struct_info['MappableResInPDBChainOnPDBBasis'])
+                    self.seq2struct_dict[key] = dict(zip(seq_pos, struct_pos))
+
+                seq2struct_pos = self.seq2struct_dict[key]
+                if max(seq2struct_pos.keys()) > len(seq):
+                    logging.warning('Inconsistent sequence length for {}'.format(uprot))
+                    continue
+
+            else:
+                model = 'AF'
+                struct_id = uprot
+                chain = 'A'
+                key = ':'.join([uprot, model, chain])
+                seq_pos = list(range(1, record['prot_length']+1))
+                struct_pos = list(map(str, seq_pos))
+                self.seq2struct_dict[key] = dict(zip(seq_pos, struct_pos))
+                seq2struct_pos = self.seq2struct_dict[key]
+
+            f_graph = graph_cache_path / '{}_{}_graph.pkl'.format(model, struct_id)
+            f_var_graph = var_graph_path / f'{model}-{struct_id}_{uprot_pos}.pkl'
+            # f_graph = os.path.join(g_data_dir, '{}_{}_graph.pkl'.format(model, struct_id))
+
+            # try:
+            #     with open(f_var_graph, 'rb') as f_pkl:
+            #         cache_load = pickle.load(f_pkl)
+            # except FileNotFoundError:
+            #     continue
+            if not f_var_graph.exists():
+                continue
+
+            with open(f_var_graph, 'rb') as f_pkl:
+                var_graph, seq_pos_remain, var_idx = pickle.load(f_pkl)
+
+            if self.graph_type == 'struct':
+                struct_g = var_graph
+                struct_etype = '_E'
+            else:
+                struct_g = dgl.edge_type_subgraph(var_graph, etypes=['struct'])
+                struct_etype = 'struct'
+
+            if var_graph.num_nodes() == 0:
+                logging.warning('Empty graph for {}:{}'.format(uprot, uprot_pos))
+                continue
+
+            # var_graph.edges[struct_etype].data['angle'] = impute_and_normalize(struct_g.edata['angle'], angle_stats,
+            #                                                                    normalize=norm_feat)
+            # var_graph.edges[struct_etype].data['dist'] = impute_and_normalize(struct_g.edata['dist'], dist_stats,
+            #                                                                   normalize=norm_feat)
+            # Operations on structual subgraph
+            if struct_g.edata['angle'].isnan().any():
+                logging.warning('NA in angle data for {}-{}'.format(model, record['prot_var_id']))
+                continue
+            if struct_g.edata['dist'].isnan().any():
+                logging.warning('NA in dist data for {}-{}'.format(model, record['prot_var_id']))
+                continue
+
+            if self.lap_pos_enc:
+                lap = laplacian_positional_encoding(struct_g, pos_enc_dim)
+                if isinstance(lap, type(None)):
+                    logging.warning('Laplacian position encoding not applicable for variant {}'.format(record['prot_var_id']))
+                    # print('Variant graph: {} nodes'.format(var_graph.num_nodes()))
+                    continue
+                else:
+                    var_graph.ndata['lap_pos_enc'] = lap
+            if self.wl_pos_enc:
+                var_graph.ndata['wl_pos_enc'] = wl_positional_encoding(struct_g)
+
+            prot_patho_pos = self.var_db.query('UniProt == @uprot')
+            patho_tag = list(map(lambda x: x in prot_patho_pos['Protein_position'], seq_pos_remain))
+            var_graph.ndata['patho_tag'] = torch.tensor(patho_tag, dtype=torch.float64).unsqueeze(1)
+            if self.graph_type == 'hetero':
+                nfeat_all = list(var_graph.node_attr_schemes().keys())
+                if '_ID' in nfeat_all:
+                    nfeat_all.pop(nfeat_all.index('_ID'))  # process primary sequence separately
+
+                if 'ref_aa' in nfeat_all:
+                    nfeat_all.pop(nfeat_all.index('ref_aa'))  # process primary sequence separately
+                nfeat_comb = list(map(lambda x: var_graph.ndata[x], nfeat_all))
+                var_graph.ndata['feat'] = torch.cat(nfeat_comb, dim=-1)
+            # ref_aa = aa_to_index(record['REF_AA'])
+            alt_aa = aa_to_index(protein_letters_1to3_extended[record['ALT_AA']].upper())
+            self.data.append((var_graph, record['label'], alt_aa, var_idx, record['prot_var_id']))
+            self.label.append(record['label'])
+            self.n_nodes.append(var_graph.num_nodes())
+            self.n_edges.append(var_graph.num_edges())
 
 
+    def __getitem__(self, index):
+        graph, label, alt_aa, target_idx, var_id = self.data[index]
+
+        return graph, label, alt_aa, target_idx, var_id
+
+    def __len__(self):
+        return len(self.data)
+
+    def count_positive(self):
+        return sum(self.label)
+
+    def get_seq_struct_map(self):
+        return self.seq2struct_dict
+
+    def get_ndata_dim(self, feat_name='feat'):
+        g = self.data[0][0]
+
+        return g.ndata[feat_name].shape[1]
+
+    def get_edata_dim(self, feat_name='feat'):
+        g = self.data[0][0]
+
+        return g.edata[feat_name].shape[1]
+
+    def dataset_summary(self):
+        return np.mean(self.n_nodes), np.mean(self.n_edges)
+
+    def get_var_db(self):
+        return self.var_db
