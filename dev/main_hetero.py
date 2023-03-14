@@ -129,7 +129,7 @@ def pipeline():
 
     with open(args.config) as f:
         config = json.load(f)
-        
+
     net_params, data_params = env_setup(args, config)
 
     if args.tensorboard:
@@ -148,10 +148,13 @@ def pipeline():
     sift_map = pd.read_csv(data_params['sift_file'], sep='\t').dropna().reset_index(drop=True)
     sift_map = sift_map.merge(var_prot_df, how='inner').drop_duplicates().reset_index(drop=True)
 
-    with open(data_params['feat_stats_file'], 'rb') as f_pkl:
-        feat_stats, feat_cols = pickle.load(f_pkl)
-        for key in feat_stats:
-            feat_stats[key] = torch.tensor(feat_stats[key])
+    if 'feat_stats_file' in data_params and Path(data_params['feat_stats_file']).exists():
+        with open(data_params['feat_stats_file'], 'rb') as f_pkl:
+            feat_stats, feat_cols = pickle.load(f_pkl)
+            for key in feat_stats:
+                feat_stats[key] = torch.tensor(feat_stats[key])
+    else:
+        feat_stats = None
 
     if Path(data_params['seq2struct_cache']).exists():
         with open(data_params['seq2struct_cache'], 'rb') as f_pkl:
@@ -162,32 +165,45 @@ def pipeline():
     seq_dict = dict()
     for fname in data_params['seq_fasta']:
         try:
-            seq_dict.update(parse_fasta(data_params['seq_fasta']))
+            seq_dict.update(parse_fasta(fname))
         except FileNotFoundError:
             pass
     data_params['seq_dict'] = seq_dict
+    if data_params['cache_only']:
+        train_dataset = VariantGraphCacheDataSet(df_train, sift_map=sift_map, feat_stats=feat_stats,
+                                                 seq2struct_all=seq_struct_dict, **data_params)
+    else:
+        train_dataset = VariantGraphDataSet(df_train, sift_map=sift_map, feat_stats=feat_stats,
+                                            seq2struct_all=seq_struct_dict, **data_params)
 
-    train_dataset = VariantGraphDataSet(df_train, sift_map=sift_map, feat_stats=feat_stats,
-                                        seq2struct_all=seq_struct_dict, **data_params)
     seq_struct_dict.update(train_dataset.seq2struct_dict)
     var_ref = train_dataset.get_var_db()
     logging.info('Training data summary (average) nodes: {:.0f}; edges: {:.0f}'.format(*train_dataset.dataset_summary()))
 
-    validation_dataset = VariantGraphDataSet(df_val, sift_map=sift_map, feat_stats=feat_stats,
-                                             seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)
+    if data_params['cache_only']:
+        validation_dataset = VariantGraphCacheDataSet(df_val, sift_map=sift_map, feat_stats=feat_stats,
+                                                      seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)
+    else:
+        validation_dataset = VariantGraphDataSet(df_val, sift_map=sift_map, feat_stats=feat_stats,
+                                                 seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)
+
     seq_struct_dict.update(validation_dataset.seq2struct_dict)
     var_ref = pd.concat([var_ref, validation_dataset.get_var_db()])
 
-    test_dataset = VariantGraphDataSet(df_test, sift_map=sift_map, feat_stats=feat_stats,
-                                       seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)
+    if data_params['cache_only']:
+        test_dataset = VariantGraphCacheDataSet(df_test, sift_map=sift_map, feat_stats=feat_stats,
+                                                seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)
+    else:
+        test_dataset = VariantGraphDataSet(df_test, sift_map=sift_map, feat_stats=feat_stats,
+                                           seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)
     seq_struct_dict.update(test_dataset.seq2struct_dict)
 
-    with open(data_params['seq2struct_cache'], 'wb') as f_pkl:
-        pickle.dump(seq_struct_dict, f_pkl)
+    # with open(data_params['seq2struct_cache'], 'wb') as f_pkl:
+    #     pickle.dump(seq_struct_dict, f_pkl)
 
-    logging.info('Training set: {}'.format(len(train_dataset)))
-    logging.info('Test set: {}'.format(len(test_dataset)))
-    logging.info('Validation set: {}'.format(len(validation_dataset)))
+    logging.info('Training set: {}; Positive: {}'.format(len(train_dataset), train_dataset.count_positive()))
+    logging.info('Test set: {}; Positive: {}'.format(len(test_dataset), test_dataset.count_positive()))
+    logging.info('Validation set: {}; Positive: {}'.format(len(validation_dataset), validation_dataset.count_positive()))
 
     device = net_params['device']
     exp_dir = net_params['exp_dir']

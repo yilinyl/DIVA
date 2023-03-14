@@ -35,7 +35,7 @@ def setup_logger(exp_dir, log_prefix, log_level='info', use_console=True):
         use_console: if True, will also print logs to console
     """
     now = datetime.now()
-    date_time = now.strftime("%Y-%m-%d-%H-%M-%S")
+    date_time = now.strftime("%Y-%m-%d")
     log_path = Path(exp_dir) / 'log'
     # if not log_path.exists():
     log_path.mkdir(parents=True, exist_ok=True)
@@ -83,12 +83,16 @@ def env_setup(args, config):
         config['gpu']['id'] = int(args.gpu_id)
         config['gpu']['use'] = True
     device = gpu_setup(config['gpu']['use'], config['gpu']['id'])
+    now = datetime.now()
+    date_time = now.strftime("%Y-%m-%d-%H-%M-%S")
 
     if args.exp_dir is not None:
         config['exp_dir'] = args.exp_dir
     if args.experiment is not None:
         config['experiment'] = args.experiment
-    config['exp_dir'] = '{exp_root}/{name}'.format(exp_root=config['exp_dir'], name=config['experiment'])
+    config['exp_dir'] = '{exp_root}/{name}/{date_time}'.format(exp_root=config['exp_dir'],
+                                                               name=config['experiment'],
+                                                               date_time=date_time)
     # Set up logging file
     setup_logger(config['exp_dir'], log_prefix=config['mode'], log_level=args.log_level)
     logging.info(json.dumps(config, indent=4))
