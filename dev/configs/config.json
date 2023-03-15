@@ -27,7 +27,7 @@
         "var_graph_radius": 20,
         "save": true,
         "save_var_graph": true,
-        "cache_only": false,
+        "cache_only": true,
         "anno_ires": false,
         "norm_feat": true,
         "coord_option": "mass",
