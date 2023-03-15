@@ -21,7 +21,7 @@ class VariantGraphDataSet(Dataset):
                  cov_thres=0.5, num_neighbors=10, distance_type='centroid', method='radius', radius=10, df_ires=None, save=False,
                  anno_ires=False, coord_option=None, feat_stats=None, var_db=None, seq2struct_all=None,
                  var_graph_radius=None, seq_dict=None, window_size=None, graph_type='hetero', norm_feat=True,
-                 save_var_graph=False, var_graph_cache='./var_graph_cache', **kwargs):
+                 save_var_graph=False, var_graph_cache='./var_graph_cache', nsp_dir='', **kwargs):
         super(VariantGraphDataSet, self).__init__()
 
         self.data = []
@@ -124,11 +124,16 @@ class VariantGraphDataSet(Dataset):
             # feat_data = load_pio_features(uprot, feat_path)
             # feat_data = normalize_data(feat_data, feat_stats)
             if uprot != uprot_prev:
-                bio_feats = load_expasy_feats(uprot, feat_root, '3dvip_expasy')
-                pssm_feats = load_pssm(uprot, feat_root, '3dvip_pssm')
-                coev_feat_df = load_coev_feats(uprot, feat_root, '3dvip_sca', '3dvip_dca')
+                try:
+                    bio_feats = load_expasy_feats(uprot, feat_root, '3dvip_expasy')
+                    pssm_feats = load_pssm(uprot, feat_root, '3dvip_pssm')
+                    coev_feat_df = load_coev_feats(uprot, feat_root, '3dvip_sca', '3dvip_dca')
+                    nsp_feat = load_nsp_feats(uprot, nsp_dir, exclude=['asa', 'phi', 'psi', 'disorder'])
 
-                feat_data = np.hstack([bio_feats, pssm_feats])
+                    feat_data = np.hstack([bio_feats, pssm_feats, nsp_feat])
+                except (FileNotFoundError, ValueError) as e:
+                    logging.warning(f'{e} in loading feature for {uprot}')
+                    continue
 
             if f_var_graph.exists():
                 with open(f_var_graph, 'rb') as f_pkl:
@@ -170,8 +175,11 @@ class VariantGraphDataSet(Dataset):
                     }
 
                     var_graph = dgl.heterograph(edge_dict)
-                    var_graph.edges['struct'].data['angle'] = impute_and_normalize(struct_g.edata['angle'], angle_stats, normalize=norm_feat)
-                    var_graph.edges['struct'].data['dist'] = impute_and_normalize(struct_g.edata['dist'], dist_stats, normalize=norm_feat)
+                    angle_feat, angle_stats = impute_nan(struct_g.edata['angle'], angle_stats)
+                    dist_feat, dist_stats = impute_nan(struct_g.edata['dist'], dist_stats)
+                    if norm_feat:
+                        var_graph.edges['struct'].data['angle'] = normalize_feat(angle_feat, angle_stats)
+                        var_graph.edges['struct'].data['dist'] = normalize_feat(dist_feat, dist_stats)
                     var_graph.edges['sca'].data['sca'] = g_sca_sub.edata['sca'].unsqueeze(1)
                     var_graph.edges['dca'].data['dca'] = torch.cat([g_dca_sub.edata['di'].unsqueeze(1),
                                                                       g_dca_sub.edata['mi'].unsqueeze(1)], dim=-1)
@@ -179,7 +187,6 @@ class VariantGraphDataSet(Dataset):
                     var_graph.ndata['ref_aa'] = torch.tensor(seq_array[start_idx:(end_idx+1)], dtype=torch.int64)
                     var_graph.ndata['expasy'] = torch.tensor(feat_data[start_idx: end_idx + 1])
 
-                    # TODO: automatically get all ndata names and concat
                     seq_pos_remain = list(range(start_idx+1, end_idx+2))  # convert index to 1-based sequential positions
                     struct_etype = 'struct'
 
@@ -241,6 +248,8 @@ class VariantGraphDataSet(Dataset):
             self.n_nodes.append(var_graph.num_nodes())
             self.n_edges.append(var_graph.num_edges())
             uprot_prev = uprot
+            struct_prev = struct_id
+            model_prev = model
 
     def __getitem__(self, index):
         graph, label, alt_aa, target_idx, var_id = self.data[index]

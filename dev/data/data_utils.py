@@ -92,22 +92,36 @@ def extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos, prot
                   'min': torch.tensor(np.nanmin(prot_graph.edata['dist'].numpy())),
                   'max': torch.tensor(np.nanmax(prot_graph.edata['dist'].numpy()))}
 
-    feat_stats = {'mean': torch.tensor(np.nanmean(feat_data)),
-                  'min': torch.tensor(np.nanmin(feat_data)),
-                  'max': torch.tensor(np.nanmax(feat_data))}
+    feat_stats = {'mean': torch.tensor(np.nanmean(feat_data, axis=0)),
+                  'min': torch.tensor(np.nanmin(feat_data, axis=0)),
+                  'max': torch.tensor(np.nanmax(feat_data, axis=0))}
 
     var_feats = torch.tensor(feat_data[list(map(lambda x: x - 1, seq_pos_remain)), :])
-    var_feats = impute_and_normalize(var_feats, feat_stats, normalize=normalize)
+    var_feats, feat_stats = impute_nan(var_feats, feat_stats)
+    var_graph.edata['angle'], angle_stats = impute_nan(var_graph.edata['angle'], feat_stats=angle_stats)
+    var_graph.edata['dist'], dist_stats = impute_nan(var_graph.edata['dist'], feat_stats=dist_stats)
+    if normalize:
+        var_graph.edata['angle'] = normalize_feat(var_graph.edata['angle'], feat_stats=angle_stats)
+        var_graph.edata['dist'] = normalize_feat(var_graph.edata['dist'], feat_stats=dist_stats)
+        var_feats = normalize_feat(var_feats, feat_stats=feat_stats)
+
     var_graph.ndata['feat'] = var_feats
-    var_graph.edata['angle'] = impute_and_normalize(var_graph.edata['angle'], feat_stats=angle_stats, normalize=normalize)
-    var_graph.edata['dist'] = impute_and_normalize(var_graph.edata['dist'], feat_stats=dist_stats, normalize=normalize)
     var_graph.edata['coev'] = torch.tensor(coev_feats)
     var_graph.edata['feat'] = torch.cat([var_graph.edata['angle'], var_graph.edata['dist'], var_graph.edata['coev']], dim=1)
 
     return var_graph, seq_pos_remain
 
 
-def impute_and_normalize(feat_raw, feat_stats=None, normalize=False):
+def impute_nan(feat_raw, feat_stats=None):
+    """
+    Impute missing values with mean (1-dim feature only)
+    Args:
+        feat_raw:
+        feat_stats:
+
+    Returns:
+
+    """
     # target_idx = []
     # for col in feat_cols:
     #     if col in target_cols:
@@ -116,9 +130,9 @@ def impute_and_normalize(feat_raw, feat_stats=None, normalize=False):
     feat_raw = copy.deepcopy(feat_raw)
     if not feat_stats:
         feat_stats = dict()
-        feat_stats['mean'] = torch.tensor(np.nanmean(feat_raw.numpy()))
-        feat_stats['min'] = torch.tensor(np.nanmin(feat_raw.numpy()))
-        feat_stats['max'] = torch.tensor(np.nanmax(feat_raw.numpy()))
+        feat_stats['mean'] = torch.tensor(np.nanmean(feat_raw.numpy(), axis=0))
+        feat_stats['min'] = torch.tensor(np.nanmin(feat_raw.numpy(), axis=0))
+        feat_stats['max'] = torch.tensor(np.nanmax(feat_raw.numpy(), axis=0))
     # for key in feat_stats:
     #     feat_stats[key] = torch.tensor(feat_stats[key]).clone().detach()
 
@@ -126,10 +140,12 @@ def impute_and_normalize(feat_raw, feat_stats=None, normalize=False):
         na_idx = torch.where(torch.isnan(feat_raw))
         feat_raw[na_idx] = torch.take(feat_stats['mean'], na_idx[1])
 
-    if normalize:
-        return (feat_raw - feat_stats['min']) / (feat_stats['max'] - feat_stats['min'])
+    return feat_raw, feat_stats
 
-    return feat_raw
+
+def normalize_feat(feat_raw, feat_stats):
+    feat_raw = copy.deepcopy(feat_raw)
+    return (feat_raw - feat_stats['min']) / (feat_stats['max'] - feat_stats['min'])
 
 
 def load_pio_features(uprot, feat_path):
@@ -190,6 +206,21 @@ def add_coev_edges(df_coev, feat_names, nlargest=20, src_name='pos1', dst_name='
     g_coev = dgl.from_networkx(nx.from_pandas_edgelist(df_top, src_name, dst_name, edge_attr=True).to_directed(),
                                edge_attrs=feat_names)
     return g_coev
+
+
+def load_nsp_feats(uprot, feat_root, exclude, rewrite_pkl=True):
+    if isinstance(feat_root, str):
+        feat_root = Path(feat_root)
+
+    df_nsp = pd.read_pickle(feat_root / f'{uprot}.pkl')
+    rename_dict = dict(zip(df_nsp.columns, [s.strip() for s in df_nsp.columns]))
+    df_nsp = df_nsp.rename(columns=rename_dict)
+
+    if rewrite_pkl:
+        df_nsp.to_pickle(feat_root / f'{uprot}.pkl')
+
+    return df_nsp.drop(columns=exclude).values
+
 
 # Adapted from Dwivedi, Vijay Prakash, and Xavier Bresson.
 # "A generalization of transformer networks to graphs." https://arxiv.org/abs/2012.09699
