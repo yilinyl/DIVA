@@ -98,7 +98,7 @@ def extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos, prot
 
     var_feats = torch.tensor(feat_data[list(map(lambda x: x - 1, seq_pos_remain)), :])
     var_feats = impute_and_normalize(var_feats, feat_stats, normalize=normalize)
-    var_graph.ndata['expasy'] = var_feats
+    var_graph.ndata['feat'] = var_feats
     var_graph.edata['angle'] = impute_and_normalize(var_graph.edata['angle'], feat_stats=angle_stats, normalize=normalize)
     var_graph.edata['dist'] = impute_and_normalize(var_graph.edata['dist'], feat_stats=dist_stats, normalize=normalize)
     var_graph.edata['coev'] = torch.tensor(coev_feats)

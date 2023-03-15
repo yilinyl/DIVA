@@ -118,7 +118,7 @@ def parse_args():
     parser.add_argument('--train_data', default='train.csv', help='Training data file')
     parser.add_argument('--test_data', default='test.csv', help='Testing data file')
     parser.add_argument('--val_data', default='val.csv', help='Validation data file')
-    parser.add_argument('--save_freq', type=int, default=1, help='Frequency to save models')
+    parser.add_argument('--save_freq', type=int, default=5, help='Frequency to save models')
     args = parser.parse_args()
 
     return args
@@ -202,6 +202,8 @@ def pipeline():
     #     pickle.dump(seq_struct_dict, f_pkl)
 
     logging.info('Training set: {}; Positive: {}'.format(len(train_dataset), train_dataset.count_positive()))
+    logging.info('Training data summary (average) nodes: {:.0f}; edges: {:.0f}'.format(*train_dataset.dataset_summary()))
+    logging.info('Average number of pathogenic variants in graph: {:.1f}'.format(train_dataset.get_patho_num()))
     logging.info('Test set: {}; Positive: {}'.format(len(test_dataset), test_dataset.count_positive()))
     logging.info('Validation set: {}; Positive: {}'.format(len(validation_dataset), validation_dataset.count_positive()))
 
@@ -220,6 +222,7 @@ def pipeline():
     net_params['ndata_dim_in'] = train_dataset.get_ndata_dim('feat')
     net_params['meta_paths'] = ['seq', 'struct']
     model = build_model(config['model_name'], **net_params)
+    logging.info(f'Model Architecture:\n{model}')
     total_param = sum([p.numel() for p in model.parameters()])
     logging.info(f'Number of model parameters: {total_param}')
 

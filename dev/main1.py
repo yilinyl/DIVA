@@ -165,6 +165,7 @@ def run_pipeline(net_params, train_dataset, validation_dataset, test_dataset, sa
         
     model = GraphTransformer(net_params)
     # logging.info('Total Parameters: {}\n\n'.format(view_model_param(net_params, model)))
+    logging.info(f'Model Architecture:\n{model}')
     total_param = sum([p.numel() for p in model.parameters()])
     logging.info(f'Number of model parameters: {total_param}')
 
@@ -295,7 +296,7 @@ def parse_args():
     parser.add_argument('--train_data', default='train.csv', help='Training data file')
     parser.add_argument('--test_data', default='test.csv', help='Testing data file')
     parser.add_argument('--val_data', default='val.csv', help='Validation data file')
-    parser.add_argument('--save_freq', type=int, default=100, help='Frequency to save models')
+    parser.add_argument('--save_freq', type=int, default=5, help='Frequency to save models')
     args = parser.parse_args()
 
     return args
@@ -392,7 +393,6 @@ def main():
 
     seq_struct_dict.update(train_dataset.seq2struct_dict)
     var_ref = train_dataset.get_var_db()
-    logging.info('Training data summary (average) nodes: {:.0f}; edges: {:.0f}'.format(*train_dataset.dataset_summary()))
 
     if data_params['cache_only']:
         validation_dataset = VariantGraphCacheDataSet(df_val, sift_map=sift_map, seq2struct_all=seq_struct_dict,
@@ -411,10 +411,13 @@ def main():
                                            var_db=var_ref, **data_params)
     seq_struct_dict.update(test_dataset.seq2struct_dict)
 
-    with open(data_params['seq2struct_cache'], 'wb') as f_pkl:
-        pickle.dump(seq_struct_dict, f_pkl)
+    if not Path(data_params['seq2struct_cache']).exists():
+        with open(data_params['seq2struct_cache'], 'wb') as f_pkl:
+            pickle.dump(seq_struct_dict, f_pkl)
 
     logging.info('Training set: {}; Positive: {}'.format(len(train_dataset), train_dataset.count_positive()))
+    logging.info('Training data summary (average) nodes: {:.0f}; edges: {:.0f}'.format(*train_dataset.dataset_summary()))
+    logging.info('Average number of pathogenic variants in graph: {:.1f}'.format(train_dataset.get_patho_num()))
     logging.info('Test set: {}; Positive: {}'.format(len(test_dataset), test_dataset.count_positive()))
     logging.info('Validation set: {}; Positive: {}'.format(len(validation_dataset), validation_dataset.count_positive()))
 
