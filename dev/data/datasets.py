@@ -28,7 +28,7 @@ class VariantGraphDataSet(Dataset):
         self.label = []
         self.n_nodes = []
         self.n_edges = []
-        self.n_patho = []
+        # self.n_patho = []
         # self.aa_idx = []
         # self.aa_mask = []
         self.lap_pos_enc = lap_pos_enc
@@ -191,10 +191,10 @@ class VariantGraphDataSet(Dataset):
             else:
                 struct_g = dgl.edge_type_subgraph(var_graph, etypes=['struct'])
 
-            prot_patho_pos = self.var_db.query('UniProt == @uprot')
-            patho_tag = list(map(lambda x: x in prot_patho_pos['Protein_position'], seq_pos_remain))
-            self.n_patho.append(sum(patho_tag))
-            var_graph.ndata['patho_tag'] = torch.tensor(patho_tag, dtype=torch.float64).unsqueeze(1)
+            # prot_patho_pos = self.var_db.query('UniProt == @uprot')
+            # patho_tag = list(map(lambda x: x in prot_patho_pos['Protein_position'], seq_pos_remain))
+            # self.n_patho.append(sum(patho_tag))
+            # var_graph.ndata['patho_tag'] = torch.tensor(patho_tag, dtype=torch.float64).unsqueeze(1)
 
             # var_graph.edges[struct_etype].data['angle'] = impute_and_normalize(struct_g.edata['angle'], angle_stats,
             #                                                                    normalize=norm_feat)
@@ -232,8 +232,8 @@ class VariantGraphDataSet(Dataset):
             if self.graph_type == 'hetero':
                 nfeat_comb = list(map(lambda x: var_graph.ndata[x], nfeat_all))
                 var_graph.ndata['feat'] = torch.cat(nfeat_comb, dim=-1)
-            else:
-                var_graph.ndata['feat'] = torch.cat([var_graph.ndata['feat'], var_graph.ndata['patho_tag']], dim=-1)
+            # else:
+            #     var_graph.ndata['feat'] = torch.cat([var_graph.ndata['feat'], var_graph.ndata['patho_tag']], dim=-1)
             # ref_aa = aa_to_index(record['REF_AA'])
             alt_aa = aa_to_index(protein_letters_1to3_extended[record['ALT_AA']].upper())
             self.data.append((var_graph, record['label'], alt_aa, var_idx, record['prot_var_id']))
@@ -266,8 +266,8 @@ class VariantGraphDataSet(Dataset):
 
         return g.edata[feat_name].shape[1]
 
-    def get_patho_num(self):
-        return np.mean(self.n_patho)
+    # def get_patho_num(self):
+    #     return np.mean(self.n_patho)
 
     def dataset_summary(self):
         return np.mean(self.n_nodes), np.mean(self.n_edges)
@@ -318,7 +318,7 @@ class VariantGraphCacheDataSet(Dataset):
         self.label = []
         self.n_nodes = []
         self.n_edges = []
-        self.n_patho = []
+        # self.n_patho = []
         # self.aa_idx = []
         # self.aa_mask = []
         self.lap_pos_enc = lap_pos_enc
@@ -430,12 +430,12 @@ class VariantGraphCacheDataSet(Dataset):
                     var_graph.ndata['lap_pos_enc'] = lap
             if self.wl_pos_enc:
                 var_graph.ndata['wl_pos_enc'] = wl_positional_encoding(struct_g)
-            if 'patho_tag' not in var_graph.node_attr_schemes().keys():
-                prot_patho_pos = self.var_db.query('UniProt == @uprot')
-                patho_tag = list(map(lambda x: x in prot_patho_pos['Protein_position'], seq_pos_remain))
-                var_graph.ndata['patho_tag'] = torch.tensor(patho_tag, dtype=torch.float64).unsqueeze(1)
+            # if 'patho_tag' not in var_graph.node_attr_schemes().keys():
+            #     prot_patho_pos = self.var_db.query('UniProt == @uprot')
+            #     patho_tag = list(map(lambda x: x in prot_patho_pos['Protein_position'], seq_pos_remain))
+            #     var_graph.ndata['patho_tag'] = torch.tensor(patho_tag, dtype=torch.float64).unsqueeze(1)
 
-            self.n_patho.append(var_graph.ndata['patho_tag'].mean().item())
+            # self.n_patho.append(var_graph.ndata['patho_tag'].mean().item())
 
             if self.graph_type == 'hetero':
                 nfeat_all = list(var_graph.node_attr_schemes().keys())
@@ -446,8 +446,8 @@ class VariantGraphCacheDataSet(Dataset):
                     nfeat_all.pop(nfeat_all.index('ref_aa'))  # process primary sequence separately
                 nfeat_comb = list(map(lambda x: var_graph.ndata[x], nfeat_all))
                 var_graph.ndata['feat'] = torch.cat(nfeat_comb, dim=-1)
-            else:
-                var_graph.ndata['feat'] = torch.cat([var_graph.ndata['feat'], var_graph.ndata['patho_tag']], dim=-1)
+            # else:
+            #     var_graph.ndata['feat'] = torch.cat([var_graph.ndata['feat'], var_graph.ndata['patho_tag']], dim=-1)
             # ref_aa = aa_to_index(record['REF_AA'])
             alt_aa = aa_to_index(protein_letters_1to3_extended[record['ALT_AA']].upper())
             self.data.append((var_graph, record['label'], alt_aa, var_idx, record['prot_var_id']))
@@ -480,8 +480,8 @@ class VariantGraphCacheDataSet(Dataset):
 
         return g.edata[feat_name].shape[1]
 
-    def get_patho_num(self):
-        return np.mean(self.n_patho)
+    # def get_patho_num(self):
+    #     return np.max(self.n_patho)
 
     def dataset_summary(self):
         return np.mean(self.n_nodes), np.mean(self.n_edges)

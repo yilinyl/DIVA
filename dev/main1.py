@@ -417,7 +417,7 @@ def main():
 
     logging.info('Training set: {}; Positive: {}'.format(len(train_dataset), train_dataset.count_positive()))
     logging.info('Training data summary (average) nodes: {:.0f}; edges: {:.0f}'.format(*train_dataset.dataset_summary()))
-    logging.info('Average number of pathogenic variants in graph: {:.1f}'.format(train_dataset.get_patho_num()))
+    # logging.info('Average number of pathogenic variants in graph: {:.1f}'.format(train_dataset.get_patho_num()))
     logging.info('Test set: {}; Positive: {}'.format(len(test_dataset), test_dataset.count_positive()))
     logging.info('Validation set: {}; Positive: {}'.format(len(validation_dataset), validation_dataset.count_positive()))
 
