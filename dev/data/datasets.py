@@ -135,6 +135,10 @@ class VariantGraphDataSet(Dataset):
                     logging.warning(f'{e} in loading feature for {uprot}')
                     continue
 
+            feat_stats = {'mean': torch.tensor(np.nanmean(feat_data, axis=0)),
+                          'min': torch.tensor(np.nanmin(feat_data, axis=0)),
+                          'max': torch.tensor(np.nanmax(feat_data, axis=0))}
+
             if f_var_graph.exists():
                 with open(f_var_graph, 'rb') as f_pkl:
                     var_graph, seq_pos_remain, var_idx = pickle.load(f_pkl)
@@ -177,15 +181,18 @@ class VariantGraphDataSet(Dataset):
                     var_graph = dgl.heterograph(edge_dict)
                     angle_feat, angle_stats = impute_nan(struct_g.edata['angle'], angle_stats)
                     dist_feat, dist_stats = impute_nan(struct_g.edata['dist'], dist_stats)
+                    aa_feat = torch.tensor(feat_data[start_idx: end_idx + 1])
                     if norm_feat:
                         var_graph.edges['struct'].data['angle'] = normalize_feat(angle_feat, angle_stats)
                         var_graph.edges['struct'].data['dist'] = normalize_feat(dist_feat, dist_stats)
+                        aa_feat = normalize_feat(aa_feat, feat_stats)
+
                     var_graph.edges['sca'].data['sca'] = g_sca_sub.edata['sca'].unsqueeze(1)
                     var_graph.edges['dca'].data['dca'] = torch.cat([g_dca_sub.edata['di'].unsqueeze(1),
                                                                       g_dca_sub.edata['mi'].unsqueeze(1)], dim=-1)
 
                     var_graph.ndata['ref_aa'] = torch.tensor(seq_array[start_idx:(end_idx+1)], dtype=torch.int64)
-                    var_graph.ndata['expasy'] = torch.tensor(feat_data[start_idx: end_idx + 1])
+                    var_graph.ndata['aa_feat'] = aa_feat
 
                     seq_pos_remain = list(range(start_idx+1, end_idx+2))  # convert index to 1-based sequential positions
                     struct_etype = 'struct'
@@ -361,9 +368,9 @@ class VariantGraphCacheDataSet(Dataset):
         for i, record in tqdm(df_in.iterrows(), total=df_in.shape[0]):
             uprot = record['UniProt']
             uprot_pos = record['Protein_position']
-            if uprot not in self.seq_dict:
-                self.seq_dict[uprot] = fetch_prot_seq(uprot)
-            seq = self.seq_dict[uprot]
+            # if uprot not in self.seq_dict:
+            #     self.seq_dict[uprot] = fetch_prot_seq(uprot)
+            # seq = self.seq_dict[uprot]
             if record['PDB_coverage'] >= cov_thres:
                 model = 'PDB'
                 struct_id = record['PDB']
@@ -372,24 +379,24 @@ class VariantGraphCacheDataSet(Dataset):
 
                 if key not in self.seq2struct_dict:
                     struct_info = sift_map.query('UniProt == @uprot & PDB == @struct_id & Chain == @chain').iloc[0]
-                    seq_pos = list(map(int, unzip_res_range(struct_info['MappableResInPDBChainOnUniprotBasis'])))
-                    struct_pos = unzip_res_range(struct_info['MappableResInPDBChainOnPDBBasis'])
-                    self.seq2struct_dict[key] = dict(zip(seq_pos, struct_pos))
+                    # seq_pos = list(map(int, unzip_res_range(struct_info['MappableResInPDBChainOnUniprotBasis'])))
+                    # struct_pos = unzip_res_range(struct_info['MappableResInPDBChainOnPDBBasis'])
+                    # self.seq2struct_dict[key] = dict(zip(seq_pos, struct_pos))
 
-                seq2struct_pos = self.seq2struct_dict[key]
-                if max(seq2struct_pos.keys()) > len(seq):
-                    logging.warning('Inconsistent sequence length for {}'.format(uprot))
-                    continue
+                # seq2struct_pos = self.seq2struct_dict[key]
+                # if max(seq2struct_pos.keys()) > len(seq):
+                #     logging.warning('Inconsistent sequence length for {}'.format(uprot))
+                #     continue
 
             else:
                 model = 'AF'
                 struct_id = uprot
                 chain = 'A'
                 key = ':'.join([uprot, model, chain])
-                seq_pos = list(range(1, record['prot_length']+1))
-                struct_pos = list(map(str, seq_pos))
-                self.seq2struct_dict[key] = dict(zip(seq_pos, struct_pos))
-                seq2struct_pos = self.seq2struct_dict[key]
+                # seq_pos = list(range(1, record['prot_length']+1))
+                # struct_pos = list(map(str, seq_pos))
+                # self.seq2struct_dict[key] = dict(zip(seq_pos, struct_pos))
+                # seq2struct_pos = self.seq2struct_dict[key]
 
             f_graph = graph_cache_path / '{}_{}_graph.pkl'.format(model, struct_id)
             f_var_graph = var_graph_path / f'{model}-{struct_id}_{uprot_pos}.pkl'

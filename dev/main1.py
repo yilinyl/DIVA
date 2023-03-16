@@ -4,19 +4,18 @@ import sys
 # sys.path.append('..')
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import random
-import gzip
-import logging
 
 from datetime import datetime
 import torch.optim as optim
 from data.datasets import *
-from models import VariantEncoder
-from graphtransformer import GraphTransformer
+from models import build_model
+# from dev.models.graphtransformer import GraphTransformer
 from torch.utils.tensorboard import SummaryWriter
 from metrics import *
-from utils import str2bool, setup_logger
+from utils import str2bool, env_setup, _save_scores
 from preprocess.utils import parse_fasta
 from hooks import register_inf_check_hooks
+import diagnostics
 import argparse
 
 torch.set_default_dtype(torch.float64)
@@ -31,24 +30,7 @@ def gpu_setup(use_gpu, gpu_id):
     return device
 
 
-def view_model_param(model):
-    # model = GraphTransformer(net_params)
-    # total_param = 0
-    # for param in model.parameters():
-    #     total_param += np.prod(list(param.data.size()))
-    total_param = sum([p.numel() for p in model.parameters()])
-
-    return total_param
-
-
-def _save_scores(var_ids, target, pred, name, epoch, exp_dir):
-    with open(f'{exp_dir}/result/epoch_{epoch}_{name}_score.txt', 'w') as f:
-        f.write('var\ttarget\tscore\n')
-        for a, c, d in zip(var_ids, target, pred):
-            f.write('{}\t{:d}\t{:f}\n'.format(a, int(c), d))
-
-
-def train_epoch(model, optimizer, device, data_loader):
+def train_epoch(model, optimizer, device, data_loader, diagnostic=None):
     model.train()
     running_loss = 0
     n_sample = 0
@@ -71,7 +53,7 @@ def train_epoch(model, optimizer, device, data_loader):
             
         optimizer.zero_grad()
 
-        batch_logits = model.forward(batch_graphs, batch_lap_pos_enc, batch_alt_aa)
+        batch_logits = model.forward(batch_graphs, batch_lap_pos_enc, batch_alt_aa, batch_var_idx)
         shapes = batch_logits.size()
         batch_logits = batch_logits.view(shapes[0]*shapes[1])
 
@@ -84,6 +66,9 @@ def train_epoch(model, optimizer, device, data_loader):
         running_loss += loss_* size
         n_sample += size
 
+        if diagnostic and batch_idx == 5:
+            diagnostic.print_diagnostics()
+            break
     epoch_loss = running_loss / n_sample
     
     return epoch_loss, optimizer
@@ -108,7 +93,7 @@ def evaluation_epoch(model, device, data_loader):
             else:
                 batch_lap_pos_enc = None
 
-            batch_logits = model.forward(batch_graphs, batch_lap_pos_enc, batch_alt_aa)
+            batch_logits = model.forward(batch_graphs, batch_lap_pos_enc, batch_alt_aa, batch_var_idx)
             shapes = batch_logits.size()
             batch_logits = batch_logits.view(shapes[0] * shapes[1])
 
@@ -140,144 +125,6 @@ def evaluation_epoch(model, device, data_loader):
     return epoch_loss, all_labels, all_scores, all_vars
 
 
-def run_pipeline(net_params, train_dataset, validation_dataset, test_dataset, save_freq,
-                 inf_check=False, tb_writer=None):
-    device = net_params['device']
-    exp_dir = net_params['exp_dir']
-    model_save_path = Path(exp_dir) / 'checkpoints'
-
-    if not model_save_path.exists():
-        model_save_path.mkdir(parents=True)
-
-    result_path = Path(exp_dir) / 'result'
-    if not result_path.exists():
-        result_path.mkdir(parents=True)
-
-    # print('-------------------------------------')
-
-    # print('-------------------------------------')
-    # setting seeds
-    random.seed(net_params['seed'])
-    np.random.seed(net_params['seed'])
-    torch.manual_seed(net_params['seed'])
-    if device.type == 'cuda':
-        torch.cuda.manual_seed(net_params['seed'])
-        
-    model = GraphTransformer(net_params)
-    # logging.info('Total Parameters: {}\n\n'.format(view_model_param(net_params, model)))
-    logging.info(f'Model Architecture:\n{model}')
-    total_param = sum([p.numel() for p in model.parameters()])
-    logging.info(f'Number of model parameters: {total_param}')
-
-    model = model.to(device)
-
-    if inf_check:
-        register_inf_check_hooks(model)
-
-    optimizer = optim.Adam(model.parameters(), lr=net_params['init_lr'], weight_decay=net_params['weight_decay'])
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min',
-                                                     factor=net_params['lr_reduce_factor'],
-                                                     patience=net_params['lr_schedule_patience'],
-                                                     verbose=True)
-    
-    train_loader = dgl.dataloading.GraphDataLoader(train_dataset, batch_size=net_params['batch_size'],
-                                                   shuffle=True, pin_memory=True, drop_last=False)
-    validation_loader = dgl.dataloading.GraphDataLoader(validation_dataset, batch_size=net_params['batch_size'],
-                                                        shuffle=False, pin_memory=True, drop_last=False)
-    test_loader = dgl.dataloading.GraphDataLoader(test_dataset, batch_size=net_params['batch_size'],
-                                                  shuffle=False, pin_memory=True, drop_last=False)
-
-    logging.info("Training starts...")
-    best_ep_scores_train = None
-    best_ep_labels_train = None
-    best_val_loss = float('inf')
-    best_weights = None
-    best_epoch = 0
-
-    for epoch in range(net_params['epochs']):
-        logging.info('Epoch %d' % epoch)
-        # if tb_writer:
-        #     tb_writer.add_scalar("train/epoch", epoch)
-
-        train_loss, optimizer = train_epoch(model, optimizer, device, train_loader)
-        if epoch % save_freq == 0:
-            torch.save({'args': net_params, 'state_dict': model.state_dict()},
-                       model_save_path / 'model-ep{}.pt'.format(epoch))
-            # torch.save(model.state_dict(), os.path.join(net_params['model_dir'], 'model%s.dat'%(str(epoch))))
-        train_loss, train_labels, train_scores, train_vars = evaluation_epoch(model, device, train_loader)
-        train_aupr = compute_aupr(train_labels, train_scores)
-        train_auc = compute_roc(train_labels, train_scores)
-
-        data_name = 'train'
-        logging.info(f'<{data_name}> loss={train_loss:.4f} auPR={train_aupr:.4f} auROC={train_auc:.4f}')
-
-        val_loss, val_labels, val_scores, val_vars = evaluation_epoch(model, device, validation_loader)
-        scheduler.step(val_loss)
-
-        val_aupr = compute_aupr(val_labels, val_scores)
-        val_auc = compute_roc(val_labels, val_scores)
-
-        data_name = 'validation'
-        logging.info(f'<{data_name}> loss={val_loss:.4f} auPR={val_aupr:.4f} auROC={val_auc:.4f}')
-
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_epoch = epoch
-            best_weights = copy.deepcopy(model.state_dict())
-            best_ep_scores_train = train_scores
-            best_ep_labels_train = train_labels
-
-        # f_max, p_max, r_max, t_max, predictions_max = compute_performance_max(validation_labels, validation_scores)
-        # if predictions_max is not None:
-        #     acc = acc_score(validation_labels, predictions_max)
-        #     mcc = compute_mcc(validation_labels, predictions_max)
-        # else:
-        #     acc, mcc = 0.0, 0.0
-        # if epoch % print_freq == 0:
-        #     print('validation, loss:%0.6f, aupr:%0.6f, auc:%0.6f, F_value:%0.6f, mcc:%0.6f, '
-        #           'precision:%0.6f, recall:%0.6f, acc:%0.6f, threshold:%0.6f' % (validation_loss, aupr, auc, f_max,
-        #                                                                          mcc, p_max, r_max, acc, t_max))
-
-        test_loss, test_labels, test_scores, test_vars = evaluation_epoch(model, device, test_loader)
-        # print('# Loss: train= {0:.5f}; validation= {1:.5f}; test= {2:.5f};'.format(train_loss, val_loss, test_loss))
-
-        test_aupr = compute_aupr(test_labels, test_scores)
-        test_auc = compute_roc(test_labels, test_scores)
-        data_name = 'test'
-        logging.info(f'<{data_name}> loss={test_loss:.4f} auPR={test_aupr:.4f} auROC={test_auc:.4f}')
-
-        # thres = 0.6
-        # f, p, r, predictions = compute_performance(test_labels, test_scores, thres)
-        # if predictions is not None:
-        #     acc = acc_score(test_labels, predictions)
-        #     mcc = compute_mcc(test_labels, predictions)
-        # else:
-        #     acc, mcc = 0, 0
-        # print('test, loss:%0.6f, aupr:%0.6f, auc:%0.6f, F_value:%0.6f, mcc:%0.6f, '
-        #       'precision:%0.6f, recall:%0.6f, acc:%0.6f, threshold:%0.6f' % (test_loss, aupr, auc, f, mcc, p, r, acc, thres))
-        if epoch % save_freq == 0:
-            _save_scores(train_vars, train_labels, train_scores, 'train', epoch, exp_dir)
-            _save_scores(val_vars, val_labels, val_scores, 'val', epoch, exp_dir)
-            _save_scores(test_vars, test_labels, test_scores, 'test', epoch, exp_dir)
-
-        if tb_writer:
-            tb_writer.add_scalar('train/loss', train_loss, epoch)
-            tb_writer.add_scalar('validation/loss', val_loss, epoch)
-            tb_writer.add_scalar('test/loss', train_loss, epoch)
-
-        if optimizer.param_groups[0]['lr'] < net_params['min_lr']:
-            logging.info("!! LR SMALLER OR EQUAL TO MIN LR THRESHOLD.")
-            break
-
-    if tb_writer:
-        tb_writer.add_pr_curve('Train/PR-curve', best_ep_labels_train, best_ep_scores_train, best_epoch)
-        tb_writer.close()
-    logging.info('Save best model at epoch {}:'.format(best_epoch))
-    torch.save({'args': net_params, 'state_dict': best_weights,
-                'train_labels': best_ep_labels_train, 'train_scores': best_ep_scores_train},
-               model_save_path / 'bestmodel-ep{}.pt'.format(best_epoch))
-
-
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='./configs/config.json', help="Config file path (.json)")
@@ -292,6 +139,12 @@ def parse_args():
 
     parser.add_argument('--inf-check', type=str2bool, default=False,
                         help='add hooks to check for infinite module outputs and gradients')
+    parser.add_argument(
+        "--print-diagnostics",
+        type=str2bool,
+        default=False,
+        help="Accumulate stats on activations, print them and exit.",
+    )
     # parser.add_argument('--var_info')
     parser.add_argument('--train_data', default='train.csv', help='Training data file')
     parser.add_argument('--test_data', default='test.csv', help='Testing data file')
@@ -302,31 +155,13 @@ def parse_args():
     return args
 
 
-def main():
+def pipeline():
     args = parse_args()
 
     with open(args.config) as f:
         config = json.load(f)
-        
-    # device
-    if args.gpu_id is not None:
-        config['gpu']['id'] = int(args.gpu_id)
-        config['gpu']['use'] = True
-    device = gpu_setup(config['gpu']['use'], config['gpu']['id'])
 
-    now = datetime.now()
-    date_time = now.strftime("%Y-%m-%d-%H-%M-%S")
-
-    if args.exp_dir is not None:
-        config['exp_dir'] = args.exp_dir
-    if args.experiment is not None:
-        config['experiment'] = args.experiment
-    config['exp_dir'] = '{exp_root}/{name}/{date_time}'.format(exp_root=config['exp_dir'],
-                                                               name=config['experiment'],
-                                                               date_time=date_time)
-    # Set up logging file
-    setup_logger(config['exp_dir'], log_prefix=config['mode'], log_level=args.log_level)
-    logging.info(json.dumps(config, indent=4))
+    net_params, data_params = env_setup(args, config)
 
     if args.tensorboard:
         tb_writer = SummaryWriter(log_dir='{}/logs'.format(config['exp_dir']))
@@ -337,16 +172,6 @@ def main():
         config['data_dir'] = args.data_dir
 
     data_path = Path(config['data_dir'])
-    data_params = config['data_params']
-
-    net_params = config['net_params']
-    net_params['device'] = device
-    net_params['use_gpu'] = config['gpu']['use']
-    net_params['gpu_id'] = config['gpu']['id']
-    net_params['exp_dir'] = config['exp_dir']
-    net_params['lap_pos_enc']  = data_params['lap_pos_enc']
-    net_params['wl_pos_enc']  = data_params['wl_pos_enc']
-    net_params['pos_enc_dim']  = data_params['pos_enc_dim']
 
     df_train = pd.read_csv(data_path / args.train_data)
     df_val = pd.read_csv(data_path / args.val_data)
@@ -356,10 +181,13 @@ def main():
     sift_map = pd.read_csv(data_params['sift_file'], sep='\t').dropna().reset_index(drop=True)
     sift_map = sift_map.merge(var_prot_df, how='inner').drop_duplicates().reset_index(drop=True)
 
-    # with open(data_params['feat_stats_file'], 'rb') as f_pkl:
-    #     feat_stats, feat_cols = pickle.load(f_pkl)
-    #     for key in feat_stats:
-    #         feat_stats[key] = torch.tensor(feat_stats[key])
+    if 'feat_stats_file' in data_params and Path(data_params['feat_stats_file']).exists():
+        with open(data_params['feat_stats_file'], 'rb') as f_pkl:
+            feat_stats, feat_cols = pickle.load(f_pkl)
+            for key in feat_stats:
+                feat_stats[key] = torch.tensor(feat_stats[key])
+    else:
+        feat_stats = None
 
     if Path(data_params['seq2struct_cache']).exists():
         with open(data_params['seq2struct_cache'], 'rb') as f_pkl:
@@ -374,15 +202,6 @@ def main():
         except FileNotFoundError:
             pass
     data_params['seq_dict'] = seq_dict
-
-    # Graph cache config
-    graph_cache_root = Path(data_params['graph_cache_root'])
-    if data_params['method'] == 'radius':
-        graph_cache = graph_cache_root / f'radius{data_params["radius"]}'
-    else:
-        graph_cache = graph_cache_root / f'knn{data_params["num_neighbors"]}'
-
-    data_params['graph_cache'] = os.fspath(graph_cache)
 
     if data_params['cache_only']:
         train_dataset = VariantGraphCacheDataSet(df_train, sift_map=sift_map,
@@ -421,13 +240,138 @@ def main():
     logging.info('Test set: {}; Positive: {}'.format(len(test_dataset), test_dataset.count_positive()))
     logging.info('Validation set: {}; Positive: {}'.format(len(validation_dataset), validation_dataset.count_positive()))
 
-    net_params['in_dim1_node'] = train_dataset.get_ndata_dim('feat')
-    net_params['in_dim1_edge'] = train_dataset.get_edata_dim('feat')
-    run_pipeline(net_params, train_dataset, validation_dataset, test_dataset, save_freq=args.save_freq,
-                 inf_check=args.inf_check, tb_writer=tb_writer)
+    device = net_params['device']
+    exp_dir = net_params['exp_dir']
+    model_save_path = Path(exp_dir) / 'checkpoints'
+
+    if not model_save_path.exists():
+        model_save_path.mkdir(parents=True)
+
+    result_path = Path(exp_dir) / 'result'
+    if not result_path.exists():
+        result_path.mkdir(parents=True)
+
+    # --------------- Build Model ---------------
+    net_params['ndata_dim_in'] = train_dataset.get_ndata_dim('feat')
+    net_params['edata_dim_in'] = train_dataset.get_edata_dim('feat')
+
+    model = build_model(config['model_name'], **net_params)
+    logging.info(f'Model Architecture:\n{model}')
+    total_param = sum([p.numel() for p in model.parameters()])
+    logging.info(f'Number of model parameters: {total_param}')
+
+    # setting seeds
+    random.seed(net_params['seed'])
+    np.random.seed(net_params['seed'])
+    torch.manual_seed(net_params['seed'])
+    if device.type == 'cuda':
+        torch.cuda.manual_seed(net_params['seed'])
+
+    # logging.info('Total Parameters: {}\n\n'.format(view_model_param(net_params, model)))
+    logging.info(f'Model Architecture:\n{model}')
+    total_param = sum([p.numel() for p in model.parameters()])
+    logging.info(f'Number of model parameters: {total_param}')
+
+    model = model.to(device)
+
+    if args.inf_check:
+        register_inf_check_hooks(model)
+
+    if args.print_diagnostics:
+        opts = diagnostics.TensorDiagnosticOptions(
+            512
+        )
+        diagnostic = diagnostics.attach_diagnostics(model, opts)
+    else:
+        diagnostic = None
+
+    optimizer = optim.Adam(model.parameters(), lr=net_params['init_lr'], weight_decay=net_params['weight_decay'])
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min',
+                                                     factor=net_params['lr_reduce_factor'],
+                                                     patience=net_params['lr_schedule_patience'],
+                                                     verbose=True)
+
+    train_loader = dgl.dataloading.GraphDataLoader(train_dataset, batch_size=net_params['batch_size'],
+                                                   shuffle=True, pin_memory=True, drop_last=False)
+    validation_loader = dgl.dataloading.GraphDataLoader(validation_dataset, batch_size=net_params['batch_size'],
+                                                        shuffle=False, pin_memory=True, drop_last=False)
+    test_loader = dgl.dataloading.GraphDataLoader(test_dataset, batch_size=net_params['batch_size'],
+                                                  shuffle=False, pin_memory=True, drop_last=False)
+
+    logging.info("Training starts...")
+    best_ep_scores_train = None
+    best_ep_labels_train = None
+    best_val_loss = float('inf')
+    best_weights = None
+    best_epoch = 0
+
+    for epoch in range(net_params['epochs']):
+        logging.info('Epoch %d' % epoch)
+        # if tb_writer:
+        #     tb_writer.add_scalar("train/epoch", epoch)
+
+        train_loss, optimizer = train_epoch(model, optimizer, device, train_loader, diagnostic=diagnostic)
+        if epoch % args.save_freq == 0:
+            torch.save({'args': net_params, 'state_dict': model.state_dict()},
+                       model_save_path / 'model-ep{}.pt'.format(epoch))
+            # torch.save(model.state_dict(), os.path.join(net_params['model_dir'], 'model%s.dat'%(str(epoch))))
+        train_loss, train_labels, train_scores, train_vars = evaluation_epoch(model, device, train_loader)
+        train_aupr = compute_aupr(train_labels, train_scores)
+        train_auc = compute_roc(train_labels, train_scores)
+
+        data_name = 'train'
+        logging.info(f'<{data_name}> loss={train_loss:.4f} auPR={train_aupr:.4f} auROC={train_auc:.4f}')
+
+        val_loss, val_labels, val_scores, val_vars = evaluation_epoch(model, device, validation_loader)
+        scheduler.step(val_loss)
+
+        val_aupr = compute_aupr(val_labels, val_scores)
+        val_auc = compute_roc(val_labels, val_scores)
+
+        data_name = 'validation'
+        logging.info(f'<{data_name}> loss={val_loss:.4f} auPR={val_aupr:.4f} auROC={val_auc:.4f}')
+
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            best_epoch = epoch
+            best_weights = copy.deepcopy(model.state_dict())
+            best_ep_scores_train = train_scores
+            best_ep_labels_train = train_labels
+
+        test_loss, test_labels, test_scores, test_vars = evaluation_epoch(model, device, test_loader)
+        # print('# Loss: train= {0:.5f}; validation= {1:.5f}; test= {2:.5f};'.format(train_loss, val_loss, test_loss))
+
+        test_aupr = compute_aupr(test_labels, test_scores)
+        test_auc = compute_roc(test_labels, test_scores)
+        data_name = 'test'
+        logging.info(f'<{data_name}> loss={test_loss:.4f} auPR={test_aupr:.4f} auROC={test_auc:.4f}')
+
+        if epoch % args.save_freq == 0:
+            _save_scores(train_vars, train_labels, train_scores, 'train', epoch, exp_dir)
+            _save_scores(val_vars, val_labels, val_scores, 'val', epoch, exp_dir)
+            _save_scores(test_vars, test_labels, test_scores, 'test', epoch, exp_dir)
+
+        if tb_writer:
+            tb_writer.add_scalar('train/loss', train_loss, epoch)
+            tb_writer.add_scalar('validation/loss', val_loss, epoch)
+            tb_writer.add_scalar('test/loss', train_loss, epoch)
+
+        if optimizer.param_groups[0]['lr'] < net_params['min_lr']:
+            logging.info("!! LR SMALLER OR EQUAL TO MIN LR THRESHOLD.")
+            break
+
+    if tb_writer:
+        tb_writer.add_pr_curve('Train/PR-curve', best_ep_labels_train, best_ep_scores_train, best_epoch)
+        tb_writer.close()
+    logging.info('Save best model at epoch {}:'.format(best_epoch))
+    torch.save({'args': net_params, 'state_dict': best_weights,
+                'train_labels': best_ep_labels_train, 'train_scores': best_ep_scores_train},
+               model_save_path / 'bestmodel-ep{}.pt'.format(best_epoch))
+    # run_pipeline(net_params, train_dataset, validation_dataset, test_dataset, save_freq=args.save_freq,
+    #              inf_check=args.inf_check, tb_writer=tb_writer, print_diagnostics=args.print_diagnostics)
 
 
 if __name__ == '__main__':
-    main()
+    pipeline()
     
     logging.info('Done!')

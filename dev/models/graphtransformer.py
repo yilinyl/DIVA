@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import dgl.function as fn
 import numpy as np
+from .VariantEncoder import VariantEncoder
 
 
 def src_dot_dst(src_field, dst_field, out_field):
@@ -224,64 +225,77 @@ class MLPReadout(nn.Module):
 
 class GraphTransformer(nn.Module):
 
-    def __init__(self, net_params):
-        super().__init__()
+    def __init__(self,
+                 hidden_size,  # hidden size for each attention head
+                 out_dim,
+                 n_classes,
+                 n_heads,
+                 n_layers,
+                 readout,
+                 ndata_dim_in,
+                 edata_dim_in,
+                 device,
+                 lap_pos_enc,
+                 pos_enc_dim=None,
+                 wl_pos_enc=False,
+                 n_labels=21,
+                 to_onehot=True,
+                 embed_aa=False,
+                 aa_embed_dim=None,
+                 residual=True,
+                 dropout=0.0,
+                 in_feat_dropout=0.0,
+                 layer_norm=True,
+                 batch_norm=False,
+                 use_weight_in_loss=False,
+                 **kwargs):
+        super(GraphTransformer, self).__init__()
 
-        in_dim1_node = net_params['in_dim1_node']
-        in_dim1_edge = net_params['in_dim1_edge']
-        # in_dim2 = net_params['in_dim2']    # partner
-        aa_embed_dim = net_params['aa_emb_dim']
-        # feat_embed_dim = net_params['feat_embed_dim']
-        hidden_dim1 = net_params['hidden_dim1']
-        # hidden_dim2 = net_params['hidden_dim2']
-        out_dim1 = net_params['out_dim1']
-        # out_dim2 = net_params['out_dim2']  # partner
-        n_classes = net_params['n_classes']
-        num_heads = net_params['n_heads']
-        in_feat_dropout = net_params['in_feat_dropout']
-        self.dropout = net_params['dropout']
-        self.n_layers = net_params['L']
+        self.dropout = dropout
+        self.n_layers = n_layers
         # self.topk = net_params['topk']
-
-        self.readout = net_params['readout']
-        self.layer_norm = net_params['layer_norm']
-        self.batch_norm = net_params['batch_norm']
-        self.residual = net_params['residual']
-        self.device = net_params['device']
-        self.lap_pos_enc = net_params['lap_pos_enc']
-        self.wl_pos_enc = net_params['wl_pos_enc']
+        self.readout = readout
+        self.layer_norm = layer_norm
+        self.batch_norm = batch_norm
+        self.residual = residual
+        self.device = device
+        self.lap_pos_enc = lap_pos_enc
+        self.wl_pos_enc = wl_pos_enc
         # self.embed_graph = net_params['embed_graph']
-        self.use_weight_in_loss = net_params['use_weight_in_loss']
+        self.variant_processor = VariantEncoder(ndata_dim_in, hidden_size, self.device, n_labels,
+                                                to_onehot, embed_aa, aa_embed_dim)
+
+        self.use_weight_in_loss = use_weight_in_loss
         max_wl_role_index = 100
         
         
         if self.lap_pos_enc:
-            pos_enc_dim = net_params['pos_enc_dim']
-            self.embedding_lap_pos_enc = nn.Linear(pos_enc_dim, hidden_dim1)
+            # pos_enc_dim = net_params['pos_enc_dim']
+            self.embedding_lap_pos_enc = nn.Linear(pos_enc_dim, hidden_size)
         if self.wl_pos_enc:
-            self.embedding_wl_pos_enc = nn.Embedding(max_wl_role_index, hidden_dim1)
+            self.embedding_wl_pos_enc = nn.Embedding(max_wl_role_index, hidden_size)
 
         # self.onehot =
-        self.aa_embedding = nn.Embedding(21, aa_embed_dim)
+        # self.aa_embedding = nn.Embedding(n_labels, aa_embed_dim)
         # self.center_encoder = nn.Linear(in_dim1_node, hidden_dim1)
-        self.node_linear = nn.Linear(aa_embed_dim + in_dim1_node, hidden_dim1)
-        self.edge_linear = nn.Linear(in_dim1_edge, hidden_dim1)
+        # self.node_linear = nn.Linear(aa_embed_dim + in_dim1_node, hidden_dim1)
+        self.edge_linear = nn.Linear(edata_dim_in, hidden_size)
         # self.embedding_partner = nn.Linear(in_dim2, out_dim2)
         
         self.in_feat_dropout = nn.Dropout(in_feat_dropout)
         
-        self.layers = nn.ModuleList([GraphTransformerLayer(hidden_dim1, hidden_dim1, num_heads,
+        self.layers = nn.ModuleList([GraphTransformerLayer(hidden_size, hidden_size, n_heads,
                                                            self.dropout, self.layer_norm, self.batch_norm, self.residual)
                                      for _ in range(self.n_layers-1)])
-        self.layers.append(GraphTransformerLayer(hidden_dim1, out_dim1, num_heads, self.dropout,
+        self.layers.append(GraphTransformerLayer(hidden_size, out_dim, n_heads, self.dropout,
                                                  self.layer_norm, self.batch_norm,  self.residual))
         
-        self.SAP = nn.Sequential(nn.Linear(out_dim1, 1), nn.Softmax(0))
+        self.SAP = nn.Sequential(nn.Linear(out_dim, 1), nn.Softmax(0))
         
-        self.MLP_layer = MLPReadout(out_dim1, n_classes)  # modified for no-partner
+        self.MLP_layer = MLPReadout(out_dim, n_classes)  # modified for no-partner
         self.predict = nn.Sigmoid()
 
-    def forward(self, g, h_lap_pos_enc, alt_aa):
+    def forward(self, g, h_lap_pos_enc, alt_aa, var_idx, ref_aa_key='ref_aa', feat_key='feat'):
         # batch_n_nodes = g.batch_num_nodes()
         # target_indices = torch.cat([torch.tensor([0], device=self.device), batch_n_nodes])[:-1]
 
@@ -290,18 +304,18 @@ class GraphTransformer(nn.Module):
 
         # target_ref_aa = ref_aa_enc[target_indices]
         assert not g.ndata['feat'].detach().cpu().isnan().any()
-
-        h_aa = self.aa_embedding(g.ndata['ref_aa'])  # n_nodes x hidden_dim
-        g.ndata['h_aa'] = h_aa
-        h_alt = self.aa_embedding(alt_aa)  # n_batch x hidden_dim
-
-        seq_emb = []
-        for b in range(g.batch_size):
-            g_sub = dgl.slice_batch(g, b)
-            # seq_emb.append(torch.matmul(g_sub.ndata['h_aa'], h_alt[b]))
-            seq_emb.append(g_sub.ndata['h_aa'] * h_alt[b])
-        h_aa = torch.cat(seq_emb)
-        h = self.node_linear(torch.cat([h_aa, g.ndata['feat']], dim=-1))
+        h = self.variant_processor(g, alt_aa, var_idx, ref_aa_key, feat_key)
+        # h_aa = self.aa_embedding(g.ndata['ref_aa'])  # n_nodes x hidden_dim
+        # g.ndata['h_aa'] = h_aa
+        # h_alt = self.aa_embedding(alt_aa)  # n_batch x hidden_dim
+        #
+        # seq_emb = []
+        # for b in range(g.batch_size):
+        #     g_sub = dgl.slice_batch(g, b)
+        #     # seq_emb.append(torch.matmul(g_sub.ndata['h_aa'], h_alt[b]))
+        #     seq_emb.append(g_sub.ndata['h_aa'] * h_alt[b])
+        # h_aa = torch.cat(seq_emb)
+        # h = self.node_linear(torch.cat([h_aa, g.ndata['feat']], dim=-1))
         # h = self.embedding_h(g.ndata['feat']) + h_aa
         # h = self.embedding_h(g.ndata['feat'])
         # h = torch.cat([h_seq.unsqueeze(1), h], dim=1)
@@ -345,7 +359,7 @@ class GraphTransformer(nn.Module):
         return hg_out
 
     
-    def loss(self, logits, label):  # TODO: modify for top-k recommendation
+    def loss(self, logits, label):
         # scores.topk(self.topk)
         if self.use_weight_in_loss:
             V = label.size(0)

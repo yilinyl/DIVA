@@ -1,7 +1,9 @@
 from .han import HAN
+from .graphtransformer import GraphTransformer
 
 __model_lib = {
-    'han': HAN
+    'han': HAN,
+    'gtn': GraphTransformer
 }
 
 def build_model(model='', **kwargs):

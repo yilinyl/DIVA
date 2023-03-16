@@ -208,7 +208,7 @@ def add_coev_edges(df_coev, feat_names, nlargest=20, src_name='pos1', dst_name='
     return g_coev
 
 
-def load_nsp_feats(uprot, feat_root, exclude, rewrite_pkl=True):
+def load_nsp_feats(uprot, feat_root, exclude, rewrite_pkl=False):
     if isinstance(feat_root, str):
         feat_root = Path(feat_root)
 
