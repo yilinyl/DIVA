@@ -222,6 +222,14 @@ def load_nsp_feats(uprot, feat_root, exclude, rewrite_pkl=False):
     return df_nsp.drop(columns=exclude).values
 
 
+def load_cosmis_feats(uprot, feat_root, cols=['cosmis', 'cosmis_pvalue']):
+    if isinstance(feat_root, str):
+        feat_root = Path(feat_root)
+
+    df_cosmis = pd.read_pickle(feat_root / f'{uprot}.pkl')
+
+    return df_cosmis[cols].values
+
 # Adapted from Dwivedi, Vijay Prakash, and Xavier Bresson.
 # "A generalization of transformer networks to graphs." https://arxiv.org/abs/2012.09699
 

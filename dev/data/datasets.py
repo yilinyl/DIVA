@@ -327,7 +327,7 @@ class VariantGraphDataSet(Dataset):
 class VariantGraphCacheDataSet(Dataset):
     def __init__(self, df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir, sift_map, lap_pos_enc=True, wl_pos_enc=False, pos_enc_dim=None,
                  cov_thres=0.5, var_db=None, seq2struct_all=None, seq_dict=None, window_size=None, graph_type='hetero', norm_feat=True,
-                 save_var_graph=False, var_graph_cache='./var_graph_cache', **kwargs):
+                 save_var_graph=False, var_graph_cache='./var_graph_cache', use_nsp=False, nsp_dir='', use_cosmis=False, cosmis_dir='', **kwargs):
         super(VariantGraphCacheDataSet, self).__init__()
 
         self.data = []
@@ -435,6 +435,24 @@ class VariantGraphCacheDataSet(Dataset):
             if struct_g.edata['dist'].isnan().any():
                 logging.warning('NA in dist data for {}-{}'.format(model, record['prot_var_id']))
                 continue
+            if use_nsp:
+                try:
+                    nsp_feat_raw = load_nsp_feats(uprot, nsp_dir, exclude=['asa', 'phi', 'psi', 'disorder'])
+                    nsp_stats = {'mean': torch.tensor(np.nanmean(nsp_feat_raw, axis=0)),
+                                  'min': torch.tensor(np.nanmin(nsp_feat_raw, axis=0)),
+                                  'max': torch.tensor(np.nanmax(nsp_feat_raw, axis=0))}
+                    nsp_feat, nsp_stats = impute_nan(
+                        torch.tensor(nsp_feat_raw[list(map(lambda x: x - 1, seq_pos_remain)), :]), nsp_stats)
+                    var_graph.ndata['nps_feat'] = nsp_feat
+                except (FileNotFoundError, ValueError) as e:
+                    logging.warning(f'{e} in loading feature for {uprot}')
+                    continue
+            if use_cosmis:
+                try:
+                    cosmis_feat = load_cosmis_feats(uprot, cosmis_dir, cols=['cosmis', 'cosmis_pvalue'])
+                    var_graph.ndata['cosmis'] = torch.tensor(cosmis_feat[list(map(lambda x: x - 1, seq_pos_remain)), :])
+                except FileNotFoundError:
+                    continue
 
             if self.lap_pos_enc:
                 lap = laplacian_positional_encoding(struct_g, pos_enc_dim)
@@ -452,18 +470,18 @@ class VariantGraphCacheDataSet(Dataset):
             #     var_graph.ndata['patho_tag'] = torch.tensor(patho_tag, dtype=torch.float64).unsqueeze(1)
 
             # self.n_patho.append(var_graph.ndata['patho_tag'].mean().item())
+            feat_exclude = ['_ID', 'ref_aa', 'lap_pos_enc', 'wl_pos_enc', 'coords']  # skip for current step
+            # if self.graph_type == 'hetero':
+            nfeat_all = list(var_graph.node_attr_schemes().keys())
+            for key in feat_exclude:
+                if key in nfeat_all:
+                    nfeat_all.pop(nfeat_all.index(key))
 
-            if self.graph_type == 'hetero':
-                nfeat_all = list(var_graph.node_attr_schemes().keys())
-                if '_ID' in nfeat_all:
-                    nfeat_all.pop(nfeat_all.index('_ID'))
-
-                if 'ref_aa' in nfeat_all:
-                    nfeat_all.pop(nfeat_all.index('ref_aa'))  # process primary sequence separately
-                nfeat_comb = list(map(lambda x: var_graph.ndata[x], nfeat_all))
-                var_graph.ndata['feat'] = torch.cat(nfeat_comb, dim=-1)
+            nfeat_comb = list(map(lambda x: var_graph.ndata[x], nfeat_all))
+            var_graph.ndata['feat'] = torch.cat(nfeat_comb, dim=-1)
             # else:
-            #     var_graph.ndata['feat'] = torch.cat([var_graph.ndata['feat'], var_graph.ndata['patho_tag']], dim=-1)
+            #     if use_nsp:
+            #         var_graph.ndata['feat'] = torch.cat([var_graph.ndata['feat'], var_graph.ndata['nsp_feat']], dim=-1)
             # ref_aa = aa_to_index(record['REF_AA'])
             alt_aa = aa_to_index(protein_letters_1to3_extended[record['ALT_AA']].upper())
             self.data.append((var_graph, record['label'], alt_aa, var_idx, record['prot_var_id']))

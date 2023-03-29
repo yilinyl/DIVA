@@ -1,5 +1,5 @@
 from .han import HAN
-from .graphtransformer import GraphTransformer
+from .graphtransformer_v0 import GraphTransformer
 
 __model_lib = {
     'han': HAN,

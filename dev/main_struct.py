@@ -39,7 +39,7 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None):
         batch_graphs = batch_data[0].to(device)
         batch_labels = batch_data[1].to(device)
         batch_alt_aa = batch_data[2].to(device)
-        batch_var_idx = batch_data[3].to(device)
+        # batch_var_idx = batch_data[3].to(device)
 
         if model.lap_pos_enc:
             # sign flip as in Bresson et al. for laplacian PE
@@ -53,7 +53,7 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None):
             
         optimizer.zero_grad()
 
-        batch_logits = model.forward(batch_graphs, batch_lap_pos_enc, batch_alt_aa, batch_var_idx)
+        batch_logits = model.forward(batch_graphs, batch_lap_pos_enc, batch_alt_aa)
         shapes = batch_logits.size()
         batch_logits = batch_logits.view(shapes[0]*shapes[1])
 
@@ -93,7 +93,7 @@ def evaluation_epoch(model, device, data_loader):
             else:
                 batch_lap_pos_enc = None
 
-            batch_logits = model.forward(batch_graphs, batch_lap_pos_enc, batch_alt_aa, batch_var_idx)
+            batch_logits = model.forward(batch_graphs, batch_lap_pos_enc, batch_alt_aa)
             shapes = batch_logits.size()
             batch_logits = batch_logits.view(shapes[0] * shapes[1])
 
