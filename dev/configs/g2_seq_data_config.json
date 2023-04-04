@@ -1,0 +1,25 @@
+{
+    "experiment": "gtn_debug",
+    "mode": "data_prepare",
+    "exp_dir": "./output",
+    "data_dir": "/home/yl986/data/3dvip/dataset/by_gene50k/subsets",
+    "data_params": {
+        "graph_cache_root": "/fs/cbsuhyfs1/storage/yl986/3d_vip/dev/graph_cache_dir",
+        "var_graph_cache": "/home/yl986/data/3dvip/var_graph_cache/",
+        "pdb_root_dir": "/fs/cbsuhyfs1/storage/resources/pdb/data",
+        "af_root_dir": "/fs/cbsuhyfs1/storage1/dx38/mutation_pathogenicity/data/AF_structs",
+        "feat_dir": "/home/yl986/data/mutation_pathogenicity",
+        "nsp_dir": "/home/yl986/data/mutation_pathogenicity/nsp3_result/",
+        "seq_fasta": ["/home/yl986/data/UniProt/uniprot_sprot.fasta",
+                      "/home/yl986/data/UniProt/uniprot_sprot_varsplic.fasta"],
+        "window_size": 128,
+        "graph_type": "seq",
+        "save": true,
+        "save_var_graph": true,
+        "anno_ires": false,
+        "norm_feat": false,
+        "lap_pos_enc": true,
+        "pos_enc_dim": 4,
+        "wl_pos_enc": false
+    }
+}

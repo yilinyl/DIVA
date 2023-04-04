@@ -111,14 +111,15 @@ def env_setup(args, config):
     net_params['wl_pos_enc'] = data_params['wl_pos_enc']
     net_params['pos_enc_dim'] = data_params['pos_enc_dim']
 
-    # Graph cache config
-    graph_cache_root = Path(data_params['graph_cache_root'])
-    if data_params['method'] == 'radius':
-        graph_cache = graph_cache_root / f'radius{data_params["radius"]}'
-    else:
-        graph_cache = graph_cache_root / f'knn{data_params["num_neighbors"]}'
+    # Graph cache config (for structure based graph)
+    if data_params['graph_type'] != 'seq':
+        graph_cache_root = Path(data_params['graph_cache_root'])
+        if data_params['method'] == 'radius':
+            graph_cache = graph_cache_root / f'radius{data_params["radius"]}'
+        else:
+            graph_cache = graph_cache_root / f'knn{data_params["num_neighbors"]}'
 
-    data_params['graph_cache'] = os.fspath(graph_cache)
+        data_params['graph_cache'] = os.fspath(graph_cache)
 
     # setting seeds
     random.seed(net_params['seed'])

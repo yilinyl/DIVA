@@ -11,6 +11,8 @@ from torch.utils.data import Dataset
 from preprocess.utils import *
 from data.data_utils import *
 
+torch.set_default_dtype(torch.float64)
+
 
 def add_seq_edges(uprot_pos, prot_len, window_size=128, max_dist=1, inverse=True):
     w = window_size // 2
