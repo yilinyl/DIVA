@@ -43,19 +43,10 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None):
         batch_alt_aa = batch_data[2].to(device)
         # batch_var_idx = batch_data[3].to(device)
 
-        if model.lap_pos_enc:
-            # sign flip as in Bresson et al. for laplacian PE
-            batch_lap_pos_enc = batch_graphs.ndata['lap_pos_enc'].to(device)
-            sign_flip = torch.rand(batch_lap_pos_enc.size(1)).to(device)
-            sign_flip[sign_flip >= 0.5] = 1.0
-            sign_flip[sign_flip < 0.5] = -1.0
-            batch_lap_pos_enc = batch_lap_pos_enc * sign_flip.unsqueeze(0)
-        else:
-            batch_lap_pos_enc = None
             
         optimizer.zero_grad()
 
-        batch_logits = model.forward(batch_graphs, batch_lap_pos_enc, batch_alt_aa)
+        batch_logits = model.forward(batch_graphs, batch_alt_aa)
         shapes = batch_logits.size()
         batch_logits = batch_logits.view(shapes[0]*shapes[1])
 
@@ -90,12 +81,12 @@ def evaluation_epoch(model, device, data_loader):
             batch_var_idx = batch_data[3].to(device)
             batch_vars = batch_data[-1]  # TODO: add var_id
 
-            if model.lap_pos_enc:
-                batch_lap_pos_enc = batch_graphs.ndata['lap_pos_enc'].to(device)
-            else:
-                batch_lap_pos_enc = None
+            # if model.lap_pos_enc:
+            #     batch_lap_pos_enc = batch_graphs.ndata['lap_pos_enc'].to(device)
+            # else:
+            #     batch_lap_pos_enc = None
 
-            batch_logits = model.forward(batch_graphs, batch_lap_pos_enc, batch_alt_aa)
+            batch_logits = model.forward(batch_graphs, batch_alt_aa)
             shapes = batch_logits.size()
             batch_logits = batch_logits.view(shapes[0] * shapes[1])
 
@@ -188,7 +179,6 @@ def pipeline():
         except FileNotFoundError:
             pass
     data_params['seq_dict'] = seq_dict
-
     train_dataset = VariantSeqGraphDataSet(df_train, **data_params)
     validation_dataset = VariantSeqGraphDataSet(df_val, **data_params)
     test_dataset = VariantSeqGraphDataSet(df_test, **data_params)

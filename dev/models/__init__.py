@@ -1,9 +1,11 @@
 from .han import HAN
 from .graphtransformer_v0 import GraphTransformer
+from .gat import GAT
 
 __model_lib = {
     'han': HAN,
-    'gtn': GraphTransformer
+    'gtn': GraphTransformer,
+    'gat': GAT
 }
 
 def build_model(model='', **kwargs):

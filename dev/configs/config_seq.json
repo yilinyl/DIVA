@@ -3,13 +3,13 @@
         "use": true,
         "id": 1
     },
-    "experiment": "gtn_seq_debug",
+    "experiment": "gat_seq_gene",
     "mode": "train",
-    "model_name": "gtn",
+    "model_name": "gat",
     "exp_dir": "./output",
-    "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/dataset/by_gene_test",
+    "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/dataset/by_gene50k",
     "data_params": {
-        "var_graph_cache": "/fs/cbsuhyfs1/storage/yl986/3d_vip/dev/var_graph_prev_raw",
+        "var_graph_cache": "/fs/cbsuhyfs1/storage/yl986/3d_vip/dev/var_graph_cache",
         "pdb_root_dir": "/fs/cbsuhyfs1/storage/resources/pdb/data",
         "af_root_dir": "/fs/cbsuhyfs1/storage1/dx38/mutation_pathogenicity/data/AF_structs",
         "feat_dir": "/fs/cbsuhyfs1/storage1/dx38/mutation_pathogenicity/features",
@@ -26,12 +26,12 @@
         "seq_graph_option": "star",
         "save": true,
         "save_var_graph": false,
-        "cache_only": false,
+        "cache_only": true,
         "anno_ires": false,
         "norm_feat": false,
         "lap_pos_enc": false,
         "pos_enc_dim": 3,
-        "wl_pos_enc": true
+        "wl_pos_enc": false
     },
 
     "net_params": {
@@ -47,7 +47,7 @@
         "use_weight_in_loss": false,
         "n_classes": 1,
         "n_layers": 2,
-        "n_heads": 4,
+        "n_heads": 2,
         "to_onehot": false,
         "embed_aa": true,
         "aa_embed_dim": 20,
