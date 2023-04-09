@@ -2,7 +2,7 @@ import torch
 from torch import nn
 import torch.functional as F
 import dgl
-from dgl.nn.pytorch import GATConv
+from dgl.nn.pytorch import GATConv, EGATConv
 from .graphtransformer_v0 import MLPReadout
 
 
@@ -19,6 +19,8 @@ class GAT(nn.Module):
                  n_labels=21,
                  aa_embed_dim=None,
                  residual=True,
+                 use_efeat=True,
+                 edata_dim_in=None,
                  dropout=0.0,
                  classify=True,
                  **kwargs):
@@ -30,31 +32,52 @@ class GAT(nn.Module):
         self.classify = classify
         self.gat_layers = nn.ModuleList()
         self.n_heads = n_heads
+        self.use_efeat = use_efeat
+        # self.feat_dropout = nn.Dropout(dropout)
 
         if not isinstance(self.n_heads, list):
             self.n_heads = [n_heads] * n_layers
 
         h_dim_in = aa_embed_dim + ndata_dim_in
         h_dim_out = hidden_size  # 64
-        for l in range(n_layers - 1):
-            self.gat_layers.append(GATConv(h_dim_in,
-                                           h_dim_out,
-                                           self.n_heads[l],
-                                           feat_drop=dropout,
-                                           attn_drop=dropout,
-                                           residual=residual,
-                                           activation=self.act))
-            # d_out = h_dim_out * n_heads # 128
-            h_dim_in = h_dim_out * self.n_heads[l]  # 128
-            h_dim_out = h_dim_in * 2
 
-        self.gat_out_layer = GATConv(h_dim_in,
-                                     h_dim_out,
-                                     self.n_heads[-1],
-                                     feat_drop=dropout,
-                                     attn_drop=dropout,
-                                     residual=residual,
-                                     activation=None)
+        if self.use_efeat:
+            e_dim_in = edata_dim_in
+            f_dim_out = h_dim_out
+            for l in range(n_layers - 1):
+                self.gat_layers.append(EGATConv(h_dim_in,
+                                                e_dim_in,
+                                                h_dim_out,
+                                                f_dim_out,
+                                                self.n_heads[l]))
+                h_dim_in = h_dim_out * self.n_heads[l]  # 128
+                e_dim_in = f_dim_out * self.n_heads[l]
+                h_dim_out = h_dim_in * 2
+                f_dim_out = h_dim_out
+
+            self.gat_out_layer = EGATConv(h_dim_in,
+                                          e_dim_in,
+                                          h_dim_out,
+                                          f_dim_out,
+                                          self.n_heads[-1])
+        else:
+            for l in range(n_layers - 1):
+                self.gat_layers.append(GATConv(h_dim_in,
+                                               h_dim_out,
+                                               self.n_heads[l],
+                                               attn_drop=dropout,
+                                               residual=residual,
+                                               activation=self.act))
+                # d_out = h_dim_out * n_heads # 128
+                h_dim_in = h_dim_out * self.n_heads[l]  # 128
+                h_dim_out = h_dim_in * 2
+
+            self.gat_out_layer = GATConv(h_dim_in,
+                                         h_dim_out,
+                                         self.n_heads[-1],
+                                         attn_drop=dropout,
+                                         residual=residual,
+                                         activation=None)
 
         self.MLP_layer = MLPReadout(h_dim_out, n_classes)
         self.predict = nn.Sigmoid()
@@ -84,12 +107,22 @@ class GAT(nn.Module):
 
         # h = self.ndata_encoder(torch.cat([g.ndata['h_aa'], g.ndata['feat']], dim=-1))
         h = torch.cat([g.ndata['h_aa'], g.ndata['feat']], dim=-1)
+        f = g.edata['feat']
+        if self.use_efeat:
+            for i, att_conv in enumerate(self.gat_layers):
+                h, f = att_conv(g, h, f)
+                h = self.act(h).flatten(1)  # concat embeddings from different heads
+                f = self.act(f).flatten(1)
 
-        for i, att_conv in enumerate(self.gat_layers):
-            h = att_conv(g, h)
-            h = h.flatten(1)  # concat embeddings from different heads
+            h, f = self.gat_out_layer(g, h, f)
 
-        h = self.act(torch.mean(self.gat_out_layer(g, h), dim=1))
+        else:
+            for i, att_conv in enumerate(self.gat_layers):
+                h = att_conv(g, h)  # activation applied in GAT layer
+                h = h.flatten(1)  # concat embeddings from different heads
+            h = self.gat_out_layer(g, h)
+
+        h = self.act(h.mean(dim=1))
 
         g.ndata['h'] = h
 

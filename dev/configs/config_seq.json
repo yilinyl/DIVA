@@ -3,7 +3,7 @@
         "use": true,
         "id": 1
     },
-    "experiment": "gat_seq_gene",
+    "experiment": "egat_seq_gene",
     "mode": "train",
     "model_name": "gat",
     "exp_dir": "./output",
@@ -53,6 +53,7 @@
         "aa_embed_dim": 20,
         "ndata_dim_in": 27,
         "edata_dim_in": 5,
+        "use_efeat": true,
         "hidden_size": 64,
         "out_dim": 64,
         "residual": true,
