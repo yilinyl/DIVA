@@ -78,7 +78,7 @@ class GAT(nn.Module):
                                          attn_drop=dropout,
                                          residual=residual,
                                          activation=None)
-
+        self.out_dim = h_dim_out
         self.MLP_layer = MLPReadout(h_dim_out, n_classes)
         self.predict = nn.Sigmoid()
         self.criterion = nn.BCEWithLogitsLoss()

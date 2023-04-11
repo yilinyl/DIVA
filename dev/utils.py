@@ -112,7 +112,7 @@ def env_setup(args, config):
     net_params['pos_enc_dim'] = data_params['pos_enc_dim']
 
     # Graph cache config (for structure based graph)
-    if data_params['graph_type'] != 'seq':
+    if not data_params['cache_only'] and data_params['graph_type'] in ['seq', 'hetero']:
         graph_cache_root = Path(data_params['graph_cache_root'])
         if data_params['method'] == 'radius':
             graph_cache = graph_cache_root / f'radius{data_params["radius"]}'

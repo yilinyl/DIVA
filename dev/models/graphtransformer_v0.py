@@ -244,6 +244,7 @@ class GraphTransformer(nn.Module):
                  in_feat_dropout=0.0,
                  layer_norm=True,
                  batch_norm=False,
+                 classify=True,
                  use_weight_in_loss=False,
                  **kwargs):
         super().__init__()
@@ -258,6 +259,8 @@ class GraphTransformer(nn.Module):
         self.lap_pos_enc = lap_pos_enc
         self.wl_pos_enc = wl_pos_enc
         # self.embed_graph = net_params['embed_graph']
+        self.out_dim = out_dim
+        self.classify = classify
         self.use_weight_in_loss = use_weight_in_loss
         max_wl_role_index = 100
         
@@ -290,16 +293,7 @@ class GraphTransformer(nn.Module):
         self.MLP_layer = MLPReadout(out_dim, n_classes)  # modified for no-partner
         self.predict = nn.Sigmoid()
 
-    def forward(self, g, h_lap_pos_enc, alt_aa):
-        # batch_n_nodes = g.batch_num_nodes()
-        # target_indices = torch.cat([torch.tensor([0], device=self.device), batch_n_nodes])[:-1]
-
-        # ref_aa_enc = F.one_hot(g.ndata['ref_aa'], num_classes=21)
-        # alt_aa_enc = F.one_hot(alt_aa, num_classes = 21)
-
-        # target_ref_aa = ref_aa_enc[target_indices]
-        assert not g.ndata['feat'].detach().cpu().isnan().any()
-
+    def add_aa_embedding(self, g, alt_aa):
         h_aa = self.aa_embedding(g.ndata['ref_aa'])  # n_nodes x hidden_dim
         g.ndata['h_aa'] = h_aa
         h_alt = self.aa_embedding(alt_aa)  # n_batch x hidden_dim
@@ -310,7 +304,26 @@ class GraphTransformer(nn.Module):
             # seq_emb.append(torch.matmul(g_sub.ndata['h_aa'], h_alt[b]))
             seq_emb.append(g_sub.ndata['h_aa'] * h_alt[b])
         h_aa = torch.cat(seq_emb)
-        h = self.ndata_encoder(torch.cat([h_aa, g.ndata['feat']], dim=-1))
+
+        return h_aa
+
+    def forward(self, g, alt_aa):
+        # batch_n_nodes = g.batch_num_nodes()
+        # target_indices = torch.cat([torch.tensor([0], device=self.device), batch_n_nodes])[:-1]
+
+        # ref_aa_enc = F.one_hot(g.ndata['ref_aa'], num_classes=21)
+        # alt_aa_enc = F.one_hot(alt_aa, num_classes = 21)
+
+        # target_ref_aa = ref_aa_enc[target_indices]
+        assert not g.ndata['feat'].detach().cpu().isnan().any()
+
+        if 'h_aa' not in g.node_attr_schemes().keys():
+            g.ndata['h_aa'] = self.add_aa_embedding(g, alt_aa)
+
+        # h = self.ndata_encoder(torch.cat([g.ndata['h_aa'], g.ndata['feat']], dim=-1))
+        h = torch.cat([g.ndata['h_aa'], g.ndata['feat']], dim=-1)
+
+        h = self.ndata_encoder(h)
         # h = self.embedding_h(g.ndata['feat']) + h_aa
         # h = self.embedding_h(g.ndata['feat'])
         # h = torch.cat([h_seq.unsqueeze(1), h], dim=1)
@@ -318,9 +331,16 @@ class GraphTransformer(nn.Module):
         assert not g.edata['feat'].detach().cpu().isnan().any()
         e = self.edata_encoder(g.edata['feat'])
         assert not e.detach().cpu().isnan().any()
-        if self.lap_pos_enc:
+
+        if self.lap_pos_enc and self.training:
+            batch_lap_pos_enc = g.ndata['lap_pos_enc'].to(self.device)
+            sign_flip = torch.rand(batch_lap_pos_enc.size(1)).to(self.device)
+            sign_flip[sign_flip >= 0.5] = 1.0
+            sign_flip[sign_flip < 0.5] = -1.0
+            h_lap_pos_enc = batch_lap_pos_enc * sign_flip.unsqueeze(0)
             h_lap_pos_enc = self.embedding_lap_pos_enc(h_lap_pos_enc)
             h = h + h_lap_pos_enc
+
         if self.wl_pos_enc:
             h_wl_pos_enc = self.embedding_wl_pos_enc(g.ndata['wl_pos_enc'])
             h = h + h_wl_pos_enc
@@ -332,8 +352,11 @@ class GraphTransformer(nn.Module):
         g.ndata['h'] = h
         hg = dgl.readout_nodes(g, 'h', op=self.readout)  # graph embedding: batch_size x embedding_dim
 
-        hg_out = self.MLP_layer(hg)  # check hg dimension,
-        return hg_out
+        if self.classify:
+            hg_out = self.MLP_layer(hg)  # check hg dimension,
+            return hg_out
+
+        return hg
 
     
     def loss(self, logits, label):  # TODO: modify for top-k recommendation
