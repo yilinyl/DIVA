@@ -230,6 +230,42 @@ def load_cosmis_feats(uprot, feat_root, cols=['cosmis', 'cosmis_pvalue']):
 
     return df_cosmis[cols].values
 
+
+def add_seq_edges(uprot_pos, prot_len, window_size, option='star', max_dist=1, inverse=True):
+    w = window_size // 2
+
+    # seq = self.seq_dict[uprot]
+    # seq_array = np.array(list(map(lambda x: aa_to_index(protein_letters_1to3_extended[x].upper()), list(seq))))
+    start = max(uprot_pos - w - 1, 0)
+    end = min(uprot_pos + w - 1, prot_len - 1)
+    target_idx = uprot_pos - 1 - start
+    g_size = end - start + 1
+    nodes = list(range(g_size))
+
+    node_in = []
+    node_out = []
+    if option == 'seq':
+        for d in range(1, max_dist + 1):
+            node_in.extend(nodes[:-d])
+            node_out.extend(nodes[d:])
+            # node_in = torch.arange(start, end+1-d)
+            # node_out = torch.arange(start+d, end+1)
+        if inverse:
+            nodes_r = nodes[::-1]
+            for d in range(1, max_dist + 1):
+                node_in.extend(nodes_r[:-d])
+                node_out.extend(nodes_r[d:])
+    else:  # Star-shape graph
+        for n_cur in nodes:
+            if n_cur != target_idx:
+                node_in.append(n_cur)
+                node_out.append(target_idx)
+        if inverse:
+            node_out.extend(node_in)
+            node_in.extend([target_idx] * (g_size - 1))
+
+    return node_in, node_out, start, end
+
 # Adapted from Dwivedi, Vijay Prakash, and Xavier Bresson.
 # "A generalization of transformer networks to graphs." https://arxiv.org/abs/2012.09699
 

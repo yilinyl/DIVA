@@ -291,7 +291,7 @@ class VariantGraphDataSet(GraphDataSetBase):
 
 
 class VariantGraphCacheDataSet(GraphDataSetBase):
-    def __init__(self, df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir, sift_map, lap_pos_enc=True, wl_pos_enc=False, pos_enc_dim=None,
+    def __init__(self, df_in, feat_dir, lap_pos_enc=True, wl_pos_enc=False, pos_enc_dim=None,
                  cov_thres=0.5, var_db=None, seq2struct_all=None, seq_dict=None, window_size=None, graph_type='hetero', norm_feat=True,
                  save_var_graph=False, var_graph_cache='./var_graph_cache', use_nsp=False, nsp_dir='', use_cosmis=False, cosmis_dir='', **kwargs):
         super(VariantGraphCacheDataSet, self).__init__()
@@ -316,9 +316,9 @@ class VariantGraphCacheDataSet(GraphDataSetBase):
         self.seq_dict = seq_dict
 
         feat_root = Path(feat_dir)
-        graph_cache_path = Path(graph_cache)
-        if not graph_cache_path.exists():
-            graph_cache_path.mkdir(parents=True)
+        # graph_cache_path = Path(graph_cache)
+        # if not graph_cache_path.exists():
+        #     graph_cache_path.mkdir(parents=True)
 
         var_graph_path = Path(var_graph_cache) / self.graph_type
         if save_var_graph:
@@ -349,7 +349,7 @@ class VariantGraphCacheDataSet(GraphDataSetBase):
                 chain = 'A'
                 key = ':'.join([uprot, model, chain])
 
-            f_graph = graph_cache_path / '{}_{}_graph.pkl'.format(model, struct_id)
+            # f_graph = graph_cache_path / '{}_{}_graph.pkl'.format(model, struct_id)
             if graph_type == 'seq':
                 f_var_graph = var_graph_path / f'{uprot}_{uprot_pos}.pkl'
             else:

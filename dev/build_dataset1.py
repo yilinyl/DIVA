@@ -14,34 +14,34 @@ from data.data_utils import *
 torch.set_default_dtype(torch.float64)
 
 
-def add_seq_edges(uprot_pos, prot_len, window_size=128, max_dist=1, inverse=True):
-    w = window_size // 2
-    # if uprot not in seq_dict:
-    #     self.seq_dict[uprot] = fetch_prot_seq(uprot)
-    # seq = self.seq_dict[uprot]
-    # seq_array = np.array(list(map(lambda x: aa_to_index(protein_letters_1to3_extended[x].upper()), list(seq))))
-    start = max(uprot_pos - w - 1, 0)
-    end = min(uprot_pos + w - 1, prot_len - 1)
-    g_size = end - start + 1
-    nodes = list(range(g_size))
+# def add_seq_edges(uprot_pos, prot_len, window_size=128, max_dist=1, inverse=True):
+#     w = window_size // 2
+#     # if uprot not in seq_dict:
+#     #     self.seq_dict[uprot] = fetch_prot_seq(uprot)
+#     # seq = self.seq_dict[uprot]
+#     # seq_array = np.array(list(map(lambda x: aa_to_index(protein_letters_1to3_extended[x].upper()), list(seq))))
+#     start = max(uprot_pos - w - 1, 0)
+#     end = min(uprot_pos + w - 1, prot_len - 1)
+#     g_size = end - start + 1
+#     nodes = list(range(g_size))
+#
+#     node_in = []
+#     node_out = []
+#     for d in range(1, max_dist+1):
+#         node_in.extend(nodes[:-d])
+#         node_out.extend(nodes[d:])
+#         # node_in = torch.arange(start, end+1-d)
+#         # node_out = torch.arange(start+d, end+1)
+#     if inverse:
+#         nodes_r = nodes[::-1]
+#         for d in range(1, max_dist+1):
+#             node_in.extend(nodes_r[:-d])
+#             node_out.extend(nodes_r[d:])
+#
+#     return node_in, node_out, start, end
 
-    node_in = []
-    node_out = []
-    for d in range(1, max_dist+1):
-        node_in.extend(nodes[:-d])
-        node_out.extend(nodes[d:])
-        # node_in = torch.arange(start, end+1-d)
-        # node_out = torch.arange(start+d, end+1)
-    if inverse:
-        nodes_r = nodes[::-1]
-        for d in range(1, max_dist+1):
-            node_in.extend(nodes_r[:-d])
-            node_out.extend(nodes_r[d:])
 
-    return node_in, node_out, start, end
-
-
-def build_variant_graph(df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir, sift_map, lap_pos_enc=True, wl_pos_enc=False, pos_enc_dim=None,
+def build_variant_graph(df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir, sift_map,
                         cov_thres=0.5, num_neighbors=10, distance_type='centroid', method='radius', radius=10, df_ires=None, save=False,
                         anno_ires=False, coord_option=None, feat_stats=None, var_db=None, seq2struct_dict=None,
                         var_graph_radius=None, seq_dict=None, window_size=None, graph_type='hetero', norm_feat=True,
@@ -136,9 +136,9 @@ def build_variant_graph(df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir,
             bio_feats = load_expasy_feats(uprot, feat_root, '3dvip_expasy')
             pssm_feats = load_pssm(uprot, feat_root, '3dvip_pssm')
             coev_feat_df = load_coev_feats(uprot, feat_root, '3dvip_sca', '3dvip_dca')
-            nsp_feat = load_nsp_feats(uprot, nsp_dir, exclude=['asa', 'phi', 'psi', 'disorder'])
+            # nsp_feat = load_nsp_feats(uprot, nsp_dir, exclude=['asa', 'phi', 'psi', 'disorder'])
             # feat_data = np.hstack([bio_feats, pssm_feats])
-            feat_data = np.hstack([bio_feats, pssm_feats, nsp_feat])
+            feat_data = np.hstack([bio_feats, pssm_feats])
 
         if graph_type == 'struct':
             # Extract structure-based variant graph
@@ -152,7 +152,7 @@ def build_variant_graph(df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir,
             seq_array = np.array(
                 list(map(lambda x: aa_to_index(protein_letters_1to3_extended[x].upper()), list(seq))))
 
-            seq_src, seq_dst, start_idx, end_idx = add_seq_edges(uprot_pos, len(seq), window_size)
+            seq_src, seq_dst, start_idx, end_idx = add_seq_edges(uprot_pos, len(seq), window_size, option='star')
             seq_nodes = list(range(start_idx, end_idx + 1))
 
             g_sca = add_coev_edges(coev_feat_df, 'sca', nlargest=10)

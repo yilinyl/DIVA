@@ -1,8 +1,8 @@
 import os
 import sys
 
-# sys.path.append('..')
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+sys.path.append(os.path.abspath('..'))
+# sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 import random
 import gzip
 import logging
@@ -170,7 +170,7 @@ def pipeline():
             pass
     data_params['seq_dict'] = seq_dict
     if data_params['cache_only']:
-        train_dataset = VariantGraphCacheDataSet(df_train, sift_map=sift_map, feat_stats=feat_stats,
+        train_dataset = VariantGraphCacheDataSet(df_train, feat_stats=feat_stats,
                                                  seq2struct_all=seq_struct_dict, **data_params)
     else:
         train_dataset = VariantGraphDataSet(df_train, sift_map=sift_map, feat_stats=feat_stats,
@@ -181,7 +181,7 @@ def pipeline():
     logging.info('Training data summary (average) nodes: {:.0f}; edges: {:.0f}'.format(*train_dataset.dataset_summary()))
 
     if data_params['cache_only']:
-        validation_dataset = VariantGraphCacheDataSet(df_val, sift_map=sift_map, feat_stats=feat_stats,
+        validation_dataset = VariantGraphCacheDataSet(df_val, feat_stats=feat_stats,
                                                       seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)
     else:
         validation_dataset = VariantGraphDataSet(df_val, sift_map=sift_map, feat_stats=feat_stats,
@@ -191,7 +191,7 @@ def pipeline():
     var_ref = pd.concat([var_ref, validation_dataset.get_var_db()])
 
     if data_params['cache_only']:
-        test_dataset = VariantGraphCacheDataSet(df_test, sift_map=sift_map, feat_stats=feat_stats,
+        test_dataset = VariantGraphCacheDataSet(df_test, feat_stats=feat_stats,
                                                 seq2struct_all=seq_struct_dict, var_db=var_ref, **data_params)
     else:
         test_dataset = VariantGraphDataSet(df_test, sift_map=sift_map, feat_stats=feat_stats,
