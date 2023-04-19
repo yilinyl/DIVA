@@ -25,13 +25,14 @@ class MultiModalData(object):
 
 class MultiModalDataSet(GraphDataSetBase):
     def __init__(self, df_in, window_size, feat_dir, lap_pos_enc, wl_pos_enc, pos_enc_dim, cov_thres=0.5, seq_dict=None,
-                 seq_graph_option='star', use_nsp=False, nsp_dir=None, use_cosmis=False, cosmis_dir=None,
+                 seq_graph_option='star', use_nsp=False, nsp_dir=None, use_cosmis=False, cosmis_dir=None, var_db=None,
                  norm_feat=False, var_graph_cache=None, struct_graph_cache=None, seq_graph_cache=None, **kwargs):
         super(MultiModalDataSet, self).__init__()
         # self.n_patho = []
         # self.aa_idx = []
         self.option = seq_graph_option
         # self.graph_type = graph_type
+        self.var_db = var_db
         self.window_size = window_size
         self.seq_dict = seq_dict
         self.lap_pos_enc = lap_pos_enc
@@ -55,6 +56,13 @@ class MultiModalDataSet(GraphDataSetBase):
 
 
     def load_cache_data(self, df_in):
+
+        if isinstance(self.var_db, type(None)):
+            self.var_db = df_in
+            self.var_db = self.var_db.groupby(['UniProt', 'Protein_position'])['label'].any().reset_index()
+            self.var_db = self.var_db.rename(columns={'label': 'any_patho'}).query('any_patho == True').reset_index(
+                drop=True)
+
         for i, record in tqdm(df_in.iterrows(), total=df_in.shape[0]):
             uprot = record['UniProt']
             uprot_pos = record['Protein_position']
@@ -124,6 +132,11 @@ class MultiModalDataSet(GraphDataSetBase):
             isolated_nodes = ((struct_graph.in_degrees() == 0) & (struct_graph.out_degrees() == 0)).nonzero().squeeze(1)
             struct_graph = dgl.remove_nodes(struct_graph, isolated_nodes)
 
+            prot_patho_pos = self.var_db.query('UniProt == @uprot')
+            patho_tag = list(map(lambda x: x in prot_patho_pos['Protein_position'], pos_remain_seq))
+            # self.n_patho.append(sum(patho_tag))
+            seq_graph.ndata['patho_tag'] = torch.tensor(patho_tag, dtype=torch.float64).unsqueeze(1)
+
             if self.lap_pos_enc:
                 lap_seq = laplacian_positional_encoding(seq_graph, self.pos_enc_dim)
                 lap_str = laplacian_positional_encoding(struct_graph, self.pos_enc_dim)
@@ -174,6 +187,9 @@ class MultiModalDataSet(GraphDataSetBase):
         edata_dim_all = {'seq': graph_data_dict['seq_graph'].edata[feat_name].shape[1],
                          'struct': graph_data_dict['struct_graph'].edata[feat_name].shape[1]}
         return edata_dim_all
+
+    def get_var_db(self):
+        return self.var_db
 
     def _compile_feats(self, g, feat_exclude):
         nfeat_all = list(g.node_attr_schemes().keys())

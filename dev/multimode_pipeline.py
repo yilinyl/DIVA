@@ -176,7 +176,7 @@ def pipeline():
     df_val = pd.read_csv(data_path / args.val_data)
     df_test = pd.read_csv(data_path / args.test_data)
     prot_cols = ['UniProt','PDB', 'Chain']
-    # var_prot_df = pd.concat([df_train[prot_cols], df_val[prot_cols], df_test[prot_cols]]).drop_duplicates()
+    var_prot_df = pd.concat([df_train[prot_cols], df_val[prot_cols], df_test[prot_cols]]).drop_duplicates()
     
     seq_dict = dict()
     for fname in data_params['seq_fasta']:
@@ -187,8 +187,10 @@ def pipeline():
     data_params['seq_dict'] = seq_dict
 
     train_dataset = MultiModalDataSet(df_train, **data_params)
-    validation_dataset = MultiModalDataSet(df_val, **data_params)
-    test_dataset = MultiModalDataSet(df_test, **data_params)
+    var_db = train_dataset.get_var_db()
+    validation_dataset = MultiModalDataSet(df_val, var_db=var_db, **data_params)
+    var_db = pd.concat([var_db, validation_dataset.get_var_db()])
+    test_dataset = MultiModalDataSet(df_test, var_db=var_db, **data_params)
 
     logging.info('Training set: {}; Positive: {}'.format(len(train_dataset), train_dataset.count_positive()))
     # logging.info('Training data summary (average) nodes: {:.0f}; edges: {:.0f}'.format(*train_dataset.dataset_summary()))
@@ -238,9 +240,6 @@ def pipeline():
         torch.cuda.manual_seed(net_params['seed'])
 
     # logging.info('Total Parameters: {}\n\n'.format(view_model_param(net_params, model)))
-    logging.info(f'Model Architecture:\n{model}')
-    total_param = sum([p.numel() for p in model.parameters()])
-    logging.info(f'Number of model parameters: {total_param}')
 
     model = model.to(device)
 
@@ -269,11 +268,12 @@ def pipeline():
                                                   shuffle=False, pin_memory=True, drop_last=False)
 
     logging.info("Training starts...")
-    best_ep_scores_train = None
-    best_ep_labels_train = None
+    # best_ep_scores_train = None
+    # best_ep_labels_train = None
     best_val_loss = float('inf')
     best_weights = None
     best_epoch = 0
+    best_scores = {'train': None, 'test': None, 'val': None}
 
     for epoch in range(net_params['epochs']):
         logging.info('Epoch %d' % epoch)
@@ -301,14 +301,16 @@ def pipeline():
         data_name = 'validation'
         logging.info(f'<{data_name}> loss={val_loss:.4f} auPR={val_aupr:.4f} auROC={val_auc:.4f}')
 
+        test_loss, test_labels, test_scores, test_vars = evaluation_epoch(model, device, test_loader)
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch
             best_weights = copy.deepcopy(model.state_dict())
-            best_ep_scores_train = train_scores
-            best_ep_labels_train = train_labels
-
-        test_loss, test_labels, test_scores, test_vars = evaluation_epoch(model, device, test_loader)
+            # best_ep_scores_train = train_scores
+            # best_ep_labels_train = train_labels
+            best_scores['train'] = (train_labels, train_scores)
+            best_scores['test'] = (test_labels, test_scores)
+            best_scores['val'] = (val_labels, val_scores)
         # print('# Loss: train= {0:.5f}; validation= {1:.5f}; test= {2:.5f};'.format(train_loss, val_loss, test_loss))
 
         test_aupr = compute_aupr(test_labels, test_scores)
@@ -331,12 +333,14 @@ def pipeline():
             break
 
     if tb_writer:
-        tb_writer.add_pr_curve('Train/PR-curve', best_ep_labels_train, best_ep_scores_train, best_epoch)
+        tb_writer.add_pr_curve('Train/PR-curve', best_scores['train'][0], best_scores['train'][1], best_epoch)
         tb_writer.close()
     logging.info('Save best model at epoch {}:'.format(best_epoch))
     torch.save({'args': net_params, 'state_dict': best_weights,
-                'train_labels': best_ep_labels_train, 'train_scores': best_ep_scores_train},
+                'train_labels': best_scores['train'][0], 'train_scores': best_scores['train'][1]},
                model_save_path / 'bestmodel-ep{}.pt'.format(best_epoch))
+    for key in best_scores:
+        _save_scores(train_vars, best_scores[key][0], best_scores[key][1], key, best_epoch, exp_dir)
     # run_pipeline(net_params, train_dataset, validation_dataset, test_dataset, save_freq=args.save_freq,
     #              inf_check=args.inf_check, tb_writer=tb_writer, print_diagnostics=args.print_diagnostics)
 

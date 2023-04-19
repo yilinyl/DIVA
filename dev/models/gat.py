@@ -42,23 +42,28 @@ class GAT(nn.Module):
         h_dim_out = hidden_size  # 64
 
         if self.use_efeat:
-            e_dim_in = edata_dim_in
-            f_dim_out = h_dim_out
-            for l in range(n_layers - 1):
-                self.gat_layers.append(EGATConv(h_dim_in,
-                                                e_dim_in,
-                                                h_dim_out,
-                                                f_dim_out,
+            # e_dim_in = edata_dim_in
+            # f_dim_out = h_dim_out
+            self.gat_layers.append(EGATConv(h_dim_in,
+                                            edata_dim_in,
+                                            hidden_size,
+                                            hidden_size,
+                                            self.n_heads[0]))
+            for l in range(1, n_layers - 1):
+                self.gat_layers.append(EGATConv(hidden_size * self.n_heads[l-1],
+                                                hidden_size * self.n_heads[l-1],
+                                                hidden_size,
+                                                hidden_size,
                                                 self.n_heads[l]))
-                h_dim_in = h_dim_out * self.n_heads[l]  # 128
-                e_dim_in = f_dim_out * self.n_heads[l]
-                h_dim_out = h_dim_in * 2
-                f_dim_out = h_dim_out
+                # h_dim_in = h_dim_out * self.n_heads[l]  # 128
+                # e_dim_in = f_dim_out * self.n_heads[l]
+                # h_dim_out = h_dim_in * 2
+                # f_dim_out = h_dim_out
 
-            self.gat_out_layer = EGATConv(h_dim_in,
-                                          e_dim_in,
-                                          h_dim_out,
-                                          f_dim_out,
+            self.gat_out_layer = EGATConv(hidden_size * self.n_heads[-2],
+                                          hidden_size * self.n_heads[-2],
+                                          out_dim,
+                                          out_dim,
                                           self.n_heads[-1])
         else:
             for l in range(n_layers - 1):
@@ -78,8 +83,8 @@ class GAT(nn.Module):
                                          attn_drop=dropout,
                                          residual=residual,
                                          activation=None)
-        self.out_dim = h_dim_out
-        self.MLP_layer = MLPReadout(h_dim_out, n_classes)
+        self.out_dim = out_dim
+        self.MLP_layer = MLPReadout(self.out_dim, n_classes)
         self.predict = nn.Sigmoid()
         self.criterion = nn.BCEWithLogitsLoss()
 

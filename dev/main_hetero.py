@@ -245,11 +245,12 @@ def pipeline():
                                                   shuffle=False, pin_memory=True, drop_last=False)
 
     logging.info("Training starts...")
-    best_ep_scores_train = None
-    best_ep_labels_train = None
+    # best_ep_scores_train = None
+    # best_ep_labels_train = None
     best_val_loss = float('inf')
     best_weights = None
     best_epoch = 0
+    best_scores = {'train': None, 'test': None, 'val': None}
 
     for epoch in range(net_params['epochs']):
         logging.info('Epoch %d' % epoch)
@@ -277,14 +278,17 @@ def pipeline():
         data_name = 'validation'
         logging.info(f'<{data_name}> loss={val_loss:.4f} auPR={val_aupr:.4f} auROC={val_auc:.4f}')
 
+        test_loss, test_labels, test_scores, test_vars = evaluation_epoch(model, device, test_loader)
+
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch
             best_weights = copy.deepcopy(model.state_dict())
-            best_ep_scores_train = train_scores
-            best_ep_labels_train = train_labels
-
-        test_loss, test_labels, test_scores, test_vars = evaluation_epoch(model, device, test_loader)
+            # best_ep_scores_train = train_scores
+            # best_ep_labels_train = train_labels
+            best_scores['train'] = (train_labels, train_scores)
+            best_scores['test'] = (test_labels, test_scores)
+            best_scores['val'] = (val_labels, val_scores)
         # print('# Loss: train= {0:.5f}; validation= {1:.5f}; test= {2:.5f};'.format(train_loss, val_loss, test_loss))
 
         test_aupr = compute_aupr(test_labels, test_scores)
@@ -307,12 +311,14 @@ def pipeline():
             break
 
     if tb_writer:
-        tb_writer.add_pr_curve('Train/PR-curve', best_ep_labels_train, best_ep_scores_train, best_epoch)
+        tb_writer.add_pr_curve('Train/PR-curve', best_scores['train'][0], best_scores['train'][1], best_epoch)
         tb_writer.close()
     logging.info('Save best model at epoch {}:'.format(best_epoch))
     torch.save({'args': net_params, 'state_dict': best_weights,
-                'train_labels': best_ep_labels_train, 'train_scores': best_ep_scores_train},
+                'train_labels': best_scores['train'][0], 'train_scores': best_scores['train'][1]},
                model_save_path / 'bestmodel-ep{}.pt'.format(best_epoch))
+    for key in best_scores:
+        _save_scores(train_vars, best_scores[key][0], best_scores[key][1], key, best_epoch, exp_dir)
 
 
 if __name__ == '__main__':

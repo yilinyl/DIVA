@@ -217,9 +217,6 @@ def pipeline():
         torch.cuda.manual_seed(net_params['seed'])
 
     # logging.info('Total Parameters: {}\n\n'.format(view_model_param(net_params, model)))
-    logging.info(f'Model Architecture:\n{model}')
-    total_param = sum([p.numel() for p in model.parameters()])
-    logging.info(f'Number of model parameters: {total_param}')
 
     model = model.to(device)
 

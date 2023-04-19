@@ -155,16 +155,21 @@ class HAN(nn.Module):
                  ):
         super(HAN, self).__init__()
         self.device = device
-        self.variant_processor = VariantEncoder(ndata_dim_in, ndata_dim_out, self.device, n_labels,
-                                                to_onehot, embed_aa, aa_embed_dim)
+        # self.variant_processor = VariantEncoder(ndata_dim_in, ndata_dim_out, self.device, n_labels,
+        #                                         to_onehot, embed_aa, aa_embed_dim)
+        self.aa_embedding = nn.Embedding(n_labels, aa_embed_dim)
+        # self.ndata_encoder = nn.Linear(aa_embed_dim + ndata_dim_in, hidden_size)
         self.readout = readout
         self.use_weight_in_loss = use_weight_in_loss
 
-        in_size = self.variant_processor.ndata_dim_out
+        # in_size = self.variant_processor.ndata_dim_out
+        in_size = aa_embed_dim + ndata_dim_in
         self.layers = nn.ModuleList()
         self.layers.append(
             HANLayer(meta_paths, in_size, hidden_size, n_heads, dropout)
         )
+        # h_dim_in = hidden_size * n_heads
+        # h_dim_out = h_dim_in * 2
         for l in range(1, n_layers):
             self.layers.append(
                 HANLayer(
@@ -178,14 +183,35 @@ class HAN(nn.Module):
         self.out_layer = nn.Linear(hidden_size * n_heads, n_classes)
         self.predict = nn.Sigmoid()
 
+    def add_aa_embedding(self, g, alt_aa):
+        h_aa = self.aa_embedding(g.ndata['ref_aa'])  # n_nodes x hidden_dim
+        g.ndata['h_aa'] = h_aa
+        h_alt = self.aa_embedding(alt_aa)  # n_batch x hidden_dim
+
+        seq_emb = []
+        for b in range(g.batch_size):
+            g_sub = dgl.slice_batch(g, b)
+            # seq_emb.append(torch.matmul(g_sub.ndata['h_aa'], h_alt[b]))
+            seq_emb.append(g_sub.ndata['h_aa'] * h_alt[b])
+        h_aa = torch.cat(seq_emb)
+
+        return h_aa
+
     def forward(self, g, alt_aa, var_idx, ref_aa_key='ref_aa', feat_key='feat'):
-        h = self.variant_processor(g, alt_aa, var_idx, ref_aa_key, feat_key)
+
+        if 'h_aa' not in g.node_attr_schemes().keys():
+            g.ndata['h_aa'] = self.add_aa_embedding(g, alt_aa)
+
+        # h = self.ndata_encoder(torch.cat([g.ndata['h_aa'], g.ndata['feat']], dim=-1))
+        h = torch.cat([g.ndata['h_aa'], g.ndata[feat_key]], dim=-1)
+
+        # h = self.ndata_encoder(h)
 
         for gnn in self.layers:
             h = gnn(g, h)
 
         g.ndata['h'] = h
-        hg = dgl.readout_nodes(g, 'h', op=self.readout)  # TODO: check dim
+        hg = dgl.readout_nodes(g, 'h', op=self.readout)
 
         return self.out_layer(hg)
 
