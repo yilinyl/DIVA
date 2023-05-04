@@ -238,6 +238,7 @@ class GraphTransformer(nn.Module):
                  pos_enc_dim=None,
                  wl_pos_enc=False,
                  n_labels=21,
+                 use_esm=False,
                  aa_embed_dim=None,
                  residual=True,
                  dropout=0.0,
@@ -271,12 +272,17 @@ class GraphTransformer(nn.Module):
         if self.wl_pos_enc:
             self.embedding_wl_pos_enc = nn.Embedding(max_wl_role_index, hidden_size)
 
-        # self.onehot =
-        self.aa_embedding = nn.Embedding(n_labels, aa_embed_dim)
+        self.use_esm = use_esm
+        self.embed_aa = not self.use_esm
+
         # self.center_encoder = nn.Linear(ndata_dim_in, hidden_size)
         # self.ndata_encoder = nn.Sequential(nn.Linear(aa_embed_dim + ndata_dim_in, hidden_size), nn.ReLU())
         # self.edata_encoder = nn.Sequential(nn.Linear(edata_dim_in, hidden_size), nn.ReLU())
-        self.ndata_encoder = nn.Linear(aa_embed_dim + ndata_dim_in, hidden_size)
+        if self.embed_aa:
+            self.aa_embedding = nn.Embedding(n_labels, aa_embed_dim)
+            self.ndata_encoder = nn.Linear(aa_embed_dim + ndata_dim_in, hidden_size)
+        else:
+            self.ndata_encoder = nn.Linear(2 * ndata_dim_in, hidden_size)  # additive fusion for feat_ref & feat_alt
         self.edata_encoder = nn.Linear(edata_dim_in, hidden_size)
         # self.embedding_partner = nn.Linear(in_dim2, out_dim2)
         
@@ -315,13 +321,21 @@ class GraphTransformer(nn.Module):
         # alt_aa_enc = F.one_hot(alt_aa, num_classes = 21)
 
         # target_ref_aa = ref_aa_enc[target_indices]
-        assert not g.ndata['feat'].detach().cpu().isnan().any()
+        if self.use_esm:
+            nfeat_key = 'feat_ref'
+        else:
+            nfeat_key = 'feat'
+        assert not g.ndata[nfeat_key].detach().cpu().isnan().any()
 
-        if 'h_aa' not in g.node_attr_schemes().keys():
-            g.ndata['h_aa'] = self.add_aa_embedding(g, alt_aa)
+        if not self.use_esm:
+            if 'h_aa' not in g.node_attr_schemes().keys():
+                g.ndata['h_aa'] = self.add_aa_embedding(g, alt_aa)
 
-        # h = self.ndata_encoder(torch.cat([g.ndata['h_aa'], g.ndata['feat']], dim=-1))
-        h = torch.cat([g.ndata['h_aa'], g.ndata['feat']], dim=-1)
+            # h = self.ndata_encoder(torch.cat([g.ndata['h_aa'], g.ndata['feat']], dim=-1))
+            h = torch.cat([g.ndata['h_aa'], g.ndata[nfeat_key]], dim=-1)
+        else:
+            nfeat_alt_key = 'feat_alt'
+            h = torch.cat([g.ndata[nfeat_key], g.ndata[nfeat_alt_key]], dim=-1)
 
         h = self.ndata_encoder(h)
         # h = self.embedding_h(g.ndata['feat']) + h_aa

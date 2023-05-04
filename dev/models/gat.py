@@ -17,6 +17,7 @@ class GAT(nn.Module):
                  readout,
                  activation=nn.ELU(),
                  n_labels=21,
+                 use_esm=False,
                  aa_embed_dim=None,
                  residual=True,
                  use_efeat=True,
@@ -26,7 +27,9 @@ class GAT(nn.Module):
                  **kwargs):
         super(GAT, self).__init__()
         self.act = activation
-        self.aa_embedding = nn.Embedding(n_labels, aa_embed_dim)
+        self.use_esm = use_esm
+        self.embed_aa = not self.use_esm
+
         self.readout = readout
         # self.ndata_encoder = nn.Linear(aa_embed_dim + ndata_dim_in, hidden_size)
         self.classify = classify
@@ -38,7 +41,12 @@ class GAT(nn.Module):
         if not isinstance(self.n_heads, list):
             self.n_heads = [n_heads] * n_layers
 
-        h_dim_in = aa_embed_dim + ndata_dim_in
+        if self.embed_aa:
+            self.aa_embedding = nn.Embedding(n_labels, aa_embed_dim)
+            h_dim_in = aa_embed_dim + ndata_dim_in
+        else:
+            self.in_fusion = nn.Sequential(nn.Linear(2 * ndata_dim_in, hidden_size), nn.ReLU())
+            h_dim_in = hidden_size  # concatenation of esm_ref, esm_alt
         h_dim_out = hidden_size  # 64
 
         if self.use_efeat:
@@ -105,13 +113,23 @@ class GAT(nn.Module):
 
 
     def forward(self, g, alt_aa):
-        assert not g.ndata['feat'].detach().cpu().isnan().any()
+        if self.use_esm:
+            nfeat_key = 'feat_ref'
+        else:
+            nfeat_key = 'feat'
+        assert not g.ndata[nfeat_key].detach().cpu().isnan().any()
 
-        if 'h_aa' not in g.node_attr_schemes().keys():
-            g.ndata['h_aa'] = self.add_aa_embedding(g, alt_aa)
+        if not self.use_esm:
+            if 'h_aa' not in g.node_attr_schemes().keys():
+                g.ndata['h_aa'] = self.add_aa_embedding(g, alt_aa)
 
-        # h = self.ndata_encoder(torch.cat([g.ndata['h_aa'], g.ndata['feat']], dim=-1))
-        h = torch.cat([g.ndata['h_aa'], g.ndata['feat']], dim=-1)
+            # h = self.ndata_encoder(torch.cat([g.ndata['h_aa'], g.ndata['feat']], dim=-1))
+            h = torch.cat([g.ndata['h_aa'], g.ndata['feat']], dim=-1)
+        else:
+            nfeat_alt_key = 'feat_alt'
+            h = torch.cat([g.ndata[nfeat_key], g.ndata[nfeat_alt_key]], dim=-1)
+            h = self.in_fusion(h)  # additive fusion of ref & alt esm-embedding
+
         f = g.edata['feat']
         if self.use_efeat:
             for i, att_conv in enumerate(self.gat_layers):

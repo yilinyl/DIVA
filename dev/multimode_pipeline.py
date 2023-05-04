@@ -185,12 +185,18 @@ def pipeline():
         except FileNotFoundError:
             pass
     data_params['seq_dict'] = seq_dict
+    device = net_params['device']
 
-    train_dataset = MultiModalDataSet(df_train, **data_params)
-    var_db = train_dataset.get_var_db()
-    validation_dataset = MultiModalDataSet(df_val, var_db=var_db, **data_params)
-    var_db = pd.concat([var_db, validation_dataset.get_var_db()])
-    test_dataset = MultiModalDataSet(df_test, var_db=var_db, **data_params)
+    if config['use_esm']:  # apply ESM-embedding
+        train_dataset = MultiModalLMDataset(df_train, config['pretrained_esm'], device, **data_params)
+        validation_dataset = MultiModalLMDataset(df_val, config['pretrained_esm'], device, **data_params)
+        test_dataset = MultiModalLMDataset(df_test, config['pretrained_esm'], device, **data_params)
+    else:
+        train_dataset = MultiModalDataSet(df_train, **data_params)
+        var_db = train_dataset.get_var_db()
+        validation_dataset = MultiModalDataSet(df_val, var_db=var_db, **data_params)
+        var_db = pd.concat([var_db, validation_dataset.get_var_db()])
+        test_dataset = MultiModalDataSet(df_test, var_db=var_db, **data_params)
 
     logging.info('Training set: {}; Positive: {}'.format(len(train_dataset), train_dataset.count_positive()))
     # logging.info('Training data summary (average) nodes: {:.0f}; edges: {:.0f}'.format(*train_dataset.dataset_summary()))
@@ -198,7 +204,6 @@ def pipeline():
     logging.info('Test set: {}; Positive: {}'.format(len(test_dataset), test_dataset.count_positive()))
     logging.info('Validation set: {}; Positive: {}'.format(len(validation_dataset), validation_dataset.count_positive()))
 
-    device = net_params['device']
 
     for key in ['lap_pos_enc', 'wl_pos_enc', 'pos_enc_dim', 'device',
                 'n_classes', 'aa_embed_dim', 'classify']:
@@ -216,14 +221,18 @@ def pipeline():
         result_path.mkdir(parents=True)
 
     # --------------- Build Model ---------------
-    ndata_dims = train_dataset.get_ndata_dim('feat')
-    edata_dims = train_dataset.get_edata_dim('feat')
+    nfeat_key = train_dataset.nfeat_key
+    efeat_key = train_dataset.efeat_key
+    ndata_dims = train_dataset.get_ndata_dim(nfeat_key)
+    edata_dims = train_dataset.get_edata_dim(efeat_key)
 
     seq_params['ndata_dim_in'] = ndata_dims['seq']
     seq_params['edata_dim_in'] = edata_dims['seq']
+    seq_params['use_esm'] = config['use_esm']
 
     struct_params['ndata_dim_in'] = ndata_dims['struct']
     struct_params['edata_dim_in'] = edata_dims['struct']
+    struct_params['use_esm'] = config['use_esm']
 
 
     model = MultiModel(seq_params, struct_params, net_params['out_dim'], net_params['agg'],

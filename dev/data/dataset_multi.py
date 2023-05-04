@@ -5,6 +5,7 @@ from .dataset_base import GraphDataSetBase
 from dev.preprocess.utils import *
 from .data_utils import *
 
+from .lm_utils import *
 
 class MultiModalData(object):
     def __init__(self, seq_graph, seq_var_idx, struct_graph, str_var_idx):
@@ -208,3 +209,150 @@ class MultiModalDataSet(GraphDataSetBase):
 #     graphs, labels = map(list, zip(*samples))
 #     batched_graph = dgl.batch(graphs)
 #     return batched_graph, torch.tensor(labels)
+
+
+class MultiModalLMDataset(GraphDataSetBase):
+    def __init__(self, df_in, pretrained_lm, device, lap_pos_enc, wl_pos_enc, pos_enc_dim, cov_thres=0.5, seq_dict=None,
+                 use_lm_cache=False, lm_cache=None, var_graph_cache=None, struct_graph_cache=None, seq_graph_cache=None, **kwargs):
+        super(MultiModalLMDataset, self).__init__()
+        self.seq_dict = seq_dict
+        self.tokenizer, self.lm_model = init_pretrained_lm(pretrained_lm)
+        self.lm_model = self.lm_model.to(device)
+        self.lm_cache = lm_cache
+        self.lm_dict = dict()
+        self.device = device
+        if use_lm_cache and self.lm_cache:
+            with open(self.lm_cache, 'rb') as f_pkl:
+                self.lm_dict = pickle.load(f_pkl)
+
+        self.lap_pos_enc = lap_pos_enc
+        self.wl_pos_enc = wl_pos_enc
+        self.pos_enc_dim = pos_enc_dim
+        self.cov_thres = cov_thres
+
+        self.nfeat_key = 'feat_ref'
+
+        if var_graph_cache:
+            self.seq_graph_root = Path(var_graph_cache) / 'seq'
+            self.struct_graph_root = Path(var_graph_cache) / 'struct'
+        else:
+            self.seq_graph_root = Path(seq_graph_cache)
+            self.struct_graph_root = Path(struct_graph_cache)
+
+        self.process(df_in)
+
+
+    def process(self, df_in, norm_feat=False, max_len=1200):
+        for i, record in tqdm(df_in.iterrows(), total=df_in.shape[0]):
+            if record['prot_length'] > max_len:
+                continue
+
+            uprot = record['UniProt']
+            uprot_pos = record['Protein_position']
+
+            if record['PDB_coverage'] >= self.cov_thres:
+                model = 'PDB'
+                struct_id = record['PDB']
+                chain = record['Chain']
+
+            else:
+                model = 'AF'
+                struct_id = uprot
+                chain = 'A'
+
+            f_struct_graph = self.struct_graph_root / f'{model}-{struct_id}_{uprot_pos}.pkl'
+            if not f_struct_graph.exists():  # only load pre-constructed protein structure graph
+                continue
+            # if not f_struct_graph.exists():
+            #     new_graph = build_struct_graph(record, model, pdb_root_dir, af_root_dir, graph_cache,
+            #                                    num_neighbors, distance_type, method, radius, df_ires,
+            #                                    save, anno_ires, coord_option)
+            #
+            #     if not new_graph:  # fail to build protein graph
+            #         continue
+            #     prot_graph, chain_res_list = new_graph
+
+            with open(f_struct_graph, 'rb') as f_pkl:
+                # pos_remain_str: sequential position of remained residues in structural graph
+                struct_graph, pos_remain_str, var_idx_struct = pickle.load(f_pkl)
+
+            if struct_graph.edata['angle'].isnan().any():
+                logging.warning('NA in angle data for {}-{}'.format(model, record['prot_var_id']))
+                continue
+            if struct_graph.edata['dist'].isnan().any():
+                logging.warning('NA in dist data for {}-{}'.format(model, record['prot_var_id']))
+                continue
+
+            # load sequential graph
+            f_seq_graph = self.seq_graph_root / f'{uprot}_{uprot_pos}.pkl'
+            if not f_seq_graph.exists():
+                continue
+
+            with open(f_seq_graph, 'rb') as f_pkl:
+                seq_graph, pos_remain_seq, var_idx_seq = pickle.load(f_pkl)
+
+            if uprot not in self.seq_dict:
+                self.seq_dict[uprot] = fetch_prot_seq(uprot)
+            seq = self.seq_dict[uprot]
+            emb_ref = calc_esm_emb(seq, self.tokenizer, self.lm_model)
+            # emb_ref = emb_ref.cpu()
+            seq_alt = seq[:uprot_pos - 1] + record['ALT_AA'] + seq[uprot_pos:]
+            emb_alt = calc_esm_emb(seq_alt, self.tokenizer, self.lm_model)
+            # emb_alt = emb_alt.cpu()
+
+            struct_graph.ndata['feat_ref'] = emb_ref[list(map(lambda x: x - 1, pos_remain_str)), :]
+            struct_graph.ndata['feat_alt'] = emb_alt[list(map(lambda x: x - 1, pos_remain_str)), :]
+
+            seq_graph.ndata['feat_ref'] = emb_ref[list(map(lambda x: x - 1, pos_remain_seq)), :]
+            seq_graph.ndata['feat_alt'] = emb_alt[list(map(lambda x: x - 1, pos_remain_seq)), :]
+            # with torch.cuda.device(self.device):
+            #     del emb_ref
+            #     del emb_alt
+            #     torch.cuda.empty_cache()
+            alt_aa = aa_to_index(protein_letters_1to3_extended[record['ALT_AA']].upper())
+
+            isolated_nodes = ((struct_graph.in_degrees() == 0) & (struct_graph.out_degrees() == 0)).nonzero().squeeze(1)
+            struct_graph = dgl.remove_nodes(struct_graph, isolated_nodes)
+
+            if self.lap_pos_enc:
+                lap_seq = laplacian_positional_encoding(seq_graph, self.pos_enc_dim)
+                lap_str = laplacian_positional_encoding(struct_graph, self.pos_enc_dim)
+                if isinstance(lap_seq, type(None)) or isinstance(lap_str, type(None)):
+                    logging.warning(
+                        'Laplacian position encoding not applicable for variant {}'.format(record['prot_var_id']))
+                    # print('Variant graph: {} nodes'.format(var_graph.num_nodes()))
+                    continue
+                else:
+                    seq_graph.ndata['lap_pos_enc'] = lap_seq
+                    struct_graph.ndata['lap_pos_enc'] = lap_str
+
+            if self.wl_pos_enc:
+                seq_graph.ndata['wl_pos_enc'] = wl_positional_encoding(seq_graph)
+                struct_graph.ndata['wl_pos_enc'] = wl_positional_encoding(struct_graph)
+
+            seq_graph.edata['feat'] = seq_graph.edata['coev']
+
+            graph_data_dict = {'seq_graph': seq_graph, 'seq_idx': var_idx_seq, 'struct_graph': struct_graph,
+                               'struct_idx': var_idx_struct}
+            self.data.append((graph_data_dict, record['label'], alt_aa, record['prot_var_id']))
+            self.label.append(record['label'])
+
+    def __getitem__(self, index):
+        graph_data_dict, label, alt_aa, var_id = self.data[index]
+
+        return graph_data_dict, label, alt_aa, var_id
+
+
+    def get_ndata_dim(self, feat_name='feat_ref'):
+        graph_data_dict = self.data[0][0]
+
+        ndata_dim_all = {'seq': graph_data_dict['seq_graph'].ndata[feat_name].shape[1],
+                         'struct': graph_data_dict['struct_graph'].ndata[feat_name].shape[1]}
+        return ndata_dim_all
+
+    def get_edata_dim(self, feat_name='feat'):
+        graph_data_dict = self.data[0][0]
+
+        edata_dim_all = {'seq': graph_data_dict['seq_graph'].edata[feat_name].shape[1],
+                         'struct': graph_data_dict['struct_graph'].edata[feat_name].shape[1]}
+        return edata_dim_all

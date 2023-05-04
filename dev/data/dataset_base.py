@@ -11,6 +11,8 @@ class GraphDataSetBase(Dataset):
         self.label = []
         self.n_nodes = []
         self.n_edges = []
+        self.nfeat_key = 'feat'
+        self.efeat_key = 'feat'
 
     def __getitem__(self, index):
         graph, label, alt_aa, target_idx, var_id = self.data[index]
