@@ -212,12 +212,13 @@ class MultiModalDataSet(GraphDataSetBase):
 
 
 class MultiModalLMDataset(GraphDataSetBase):
-    def __init__(self, df_in, pretrained_lm, device, lap_pos_enc, wl_pos_enc, pos_enc_dim, cov_thres=0.5, seq_dict=None,
+    def __init__(self, df_in, tokenizer, lm_model, device, lap_pos_enc, wl_pos_enc, pos_enc_dim, cov_thres=0.5, seq_dict=None,
                  use_lm_cache=False, lm_cache=None, var_graph_cache=None, struct_graph_cache=None, seq_graph_cache=None, **kwargs):
         super(MultiModalLMDataset, self).__init__()
         self.seq_dict = seq_dict
-        self.tokenizer, self.lm_model = init_pretrained_lm(pretrained_lm)
-        self.lm_model = self.lm_model.to(device)
+        self.tokenizer = tokenizer
+        self.lm_model = lm_model
+        # self.lm_model = self.lm_model.to(device)
         self.lm_cache = lm_cache
         self.lm_dict = dict()
         self.device = device

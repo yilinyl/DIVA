@@ -188,9 +188,11 @@ def pipeline():
     device = net_params['device']
 
     if config['use_esm']:  # apply ESM-embedding
-        train_dataset = MultiModalLMDataset(df_train, config['pretrained_esm'], device, **data_params)
-        validation_dataset = MultiModalLMDataset(df_val, config['pretrained_esm'], device, **data_params)
-        test_dataset = MultiModalLMDataset(df_test, config['pretrained_esm'], device, **data_params)
+        tokenizer, lm_model = init_pretrained_lm(config['pretrained_esm'])
+        lm_model = lm_model.to(device)
+        train_dataset = MultiModalLMDataset(df_train, tokenizer, lm_model, device, **data_params)
+        validation_dataset = MultiModalLMDataset(df_val, tokenizer, lm_model, device, **data_params)
+        test_dataset = MultiModalLMDataset(df_test, tokenizer, lm_model, device, **data_params)
     else:
         train_dataset = MultiModalDataSet(df_train, **data_params)
         var_db = train_dataset.get_var_db()
