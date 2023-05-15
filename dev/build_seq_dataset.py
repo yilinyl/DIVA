@@ -26,9 +26,18 @@ def build_variant_graph(df_in, feat_dir, window_size=128, graph_type='seq', save
     for i, record in tqdm(df_in.iterrows(), total=df_in.shape[0]):
         uprot = record['UniProt']
         uprot_pos = record['Protein_position']
+        if uprot_pos > record['prot_length']:
+            logging.warning("Inconsistent length for UniProt {}".format(uprot))
+            continue
+
         if uprot not in seq_dict:
             seq_dict[uprot] = fetch_prot_seq(uprot)
         seq = seq_dict[uprot]
+        
+        if seq[uprot_pos - 1] != record['REF_AA']:
+            logging.warning(f"Inconsistent REF-AA for {uprot}:{uprot_pos}")
+            continue
+
         seq_array = np.array(
             list(map(lambda x: aa_to_index(protein_letters_1to3_extended[x].upper()), list(seq))))
 
@@ -36,10 +45,14 @@ def build_variant_graph(df_in, feat_dir, window_size=128, graph_type='seq', save
         if f_var_graph.exists():
             continue
         if uprot != uprot_prev:
-            bio_feats = load_expasy_feats(uprot, feat_root, '3dvip_expasy')
-            pssm_feats = load_pssm(uprot, feat_root, '3dvip_pssm')
-            coev_feat_df = load_coev_feats(uprot, feat_root, '3dvip_sca', '3dvip_dca')
-            feat_data = np.hstack([bio_feats, pssm_feats])
+            try:
+                bio_feats = load_expasy_feats(uprot, feat_root, '3dvip_expasy')
+                pssm_feats = load_pssm(uprot, feat_root, '3dvip_pssm')
+                coev_feat_df = load_coev_feats(uprot, feat_root, '3dvip_sca', '3dvip_dca')
+                feat_data = np.hstack([bio_feats, pssm_feats])
+            except FileNotFoundError:
+                logging.warning('Feature file not available for {}'.format(uprot))
+                continue
 
         seq_src, seq_dst, start_idx, end_idx = add_seq_edges(uprot_pos, len(seq), window_size, option=option)
         var_graph = dgl.graph((seq_src, seq_dst))

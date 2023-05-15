@@ -62,12 +62,12 @@ def build_variant_graph(df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir,
         if not var_graph_path.exists():
             var_graph_path.mkdir(parents=True)
 
-    var_db = var_db
-    if isinstance(var_db, type(None)):
-        var_db = df_in
-        var_db = var_db.groupby(['UniProt', 'Protein_position'])['label'].any().reset_index()
-        var_db = var_db.rename(columns={'label': 'any_patho'}).query('any_patho == True').reset_index(
-            drop=True)
+    # var_db = var_db
+    # if isinstance(var_db, type(None)):
+    #     var_db = df_in
+    #     var_db = var_db.groupby(['UniProt', 'Protein_position'])['label'].any().reset_index()
+    #     var_db = var_db.rename(columns={'label': 'any_patho'}).query('any_patho == True').reset_index(
+    #         drop=True)
     uprot_prev = ''
 
     for i, record in tqdm(df_in.iterrows(), total=df_in.shape[0]):
@@ -133,12 +133,16 @@ def build_variant_graph(df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir,
         # feat_data = load_pio_features(uprot, feat_path)
         # feat_data = normalize_data(feat_data, feat_stats)
         if uprot != uprot_prev:
-            bio_feats = load_expasy_feats(uprot, feat_root, '3dvip_expasy')
-            pssm_feats = load_pssm(uprot, feat_root, '3dvip_pssm')
-            coev_feat_df = load_coev_feats(uprot, feat_root, '3dvip_sca', '3dvip_dca')
-            # nsp_feat = load_nsp_feats(uprot, nsp_dir, exclude=['asa', 'phi', 'psi', 'disorder'])
-            # feat_data = np.hstack([bio_feats, pssm_feats])
-            feat_data = np.hstack([bio_feats, pssm_feats])
+            try:
+                bio_feats = load_expasy_feats(uprot, feat_root, '3dvip_expasy')
+                pssm_feats = load_pssm(uprot, feat_root, '3dvip_pssm')
+                coev_feat_df = load_coev_feats(uprot, feat_root, '3dvip_sca', '3dvip_dca')
+                # nsp_feat = load_nsp_feats(uprot, nsp_dir, exclude=['asa', 'phi', 'psi', 'disorder'])
+                # feat_data = np.hstack([bio_feats, pssm_feats])
+                feat_data = np.hstack([bio_feats, pssm_feats])
+            except FileNotFoundError:
+                logging.warning('Feature file not available for {}'.format(uprot))
+                continue
 
         if graph_type == 'struct':
             # Extract structure-based variant graph
