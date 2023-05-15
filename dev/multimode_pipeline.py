@@ -243,13 +243,6 @@ def pipeline():
     total_param = sum([p.numel() for p in model.parameters()])
     logging.info(f'Number of model parameters: {total_param}')
 
-    # setting seeds
-    random.seed(net_params['seed'])
-    np.random.seed(net_params['seed'])
-    torch.manual_seed(net_params['seed'])
-    if device.type == 'cuda':
-        torch.cuda.manual_seed(net_params['seed'])
-
     # logging.info('Total Parameters: {}\n\n'.format(view_model_param(net_params, model)))
 
     model = model.to(device)

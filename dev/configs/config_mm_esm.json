@@ -3,13 +3,13 @@
         "use": true,
         "id": 1
     },
-    "experiment": "esm_gene",
+    "experiment": "esm_gene1280",
     "mode": "train",
     "model_name": "gtn",
-    "exp_dir": "./output",
+    "exp_dir": "/fs/cbsuhyfs1/storage1/yl986/experiments/3d_vip",
     "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/dataset/by_gene50k",
     "use_esm": true,
-    "pretrained_esm": "facebook/esm2_t12_35M_UR50D",
+    "pretrained_esm": "facebook/esm2_t33_650M_UR50D",
     "data_params": {
         "graph_cache_root": "/fs/cbsuhyfs1/storage/yl986/3d_vip/dev/graph_cache_dir",
         "struct_graph_cache": "/fs/cbsuhyfs1/storage/yl986/3d_vip/dev/var_graph_prev_raw/struct",
@@ -41,8 +41,8 @@
 
     "net_params": {
         "seed": 2023,
-        "epochs": 50,
-        "batch_size": 16,
+        "epochs": 20,
+        "batch_size": 8,
         "init_lr": 0.001,
         "lr_reduce_factor": 0.5,
         "lr_schedule_patience": 10,
@@ -62,8 +62,8 @@
             "out_dim": 64,
             "residual": true,
             "readout": "mean",
-            "in_feat_dropout": 0.1,
-            "dropout": 0.1,
+            "in_feat_dropout": 0.3,
+            "dropout": 0.3,
             "layer_norm": true,
             "batch_norm": false
         },
@@ -77,8 +77,8 @@
             "out_dim": 64,
             "residual": true,
             "readout": "mean",
-            "in_feat_dropout": 0.1,
-            "dropout": 0.1,
+            "in_feat_dropout": 0.3,
+            "dropout": 0.3,
             "layer_norm": true,
             "batch_norm": false
         }
