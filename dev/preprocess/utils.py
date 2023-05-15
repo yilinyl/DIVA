@@ -19,7 +19,7 @@ import pickle
 from scipy.spatial.distance import pdist, squareform
 # from pathlib import Path
 # from tqdm import tqdm
-from .supp_data import *
+from dev.preprocess.supp_data import *
 
 
 def unzip_res_range(res_range):
@@ -301,6 +301,45 @@ def uprot2pdb_pos_map(uprot_pos_range, pdb_pos_range):
     pdb_pos = unzip_res_range(pdb_pos_range)
 
     return dict(zip(uprot_pos, pdb_pos))
+
+
+def map_to_pdb(pdb_data, df_var):
+    uniprots_in_pdb = pdb_data['UniProt'].drop_duplicates().values
+    # keep Uniprots with resolved PDB structure
+    # uniprots_in_pdb = set(pdb_data["UniProt"])
+    uniprot_pos = df_var[["UniProt", "Protein_position"]].drop_duplicates()
+    uniprot_pos = uniprot_pos[uniprot_pos['UniProt'].isin(uniprots_in_pdb)].reset_index(drop=True)
+
+    uprot2pdb_sorted = pdb_data[pdb_data['UniProt'].isin(uniprot_pos['UniProt'].drop_duplicates())].\
+                            sort_values(['UniProt','n_mapped'], ascending=[True, False])
+    
+    # Find the best PDB structure and chain for each uniprot position
+    uprot2pdb = {'UniProt': [], 'Position': [], 'PDB': [], 'Chain': []}
+    print("Need to find best PDB structures for {0} rows".format(len(uniprot_pos)))
+    uniprot_pos = uniprot_pos.reset_index(drop=True)
+    # uprot_all = uniprot_pos['UniProt'].drop_duplicates().values
+
+    for i, row in uniprot_pos.iterrows():
+        if (i+1) % 5000 == 0:
+            print("Found best PDB structures for {0} out of {1} rows".format(i+1, len(uniprot_pos)))
+        uprot = row['UniProt']
+        position = str(row["Protein_position"])
+        tmp = uprot2pdb_sorted.query('UniProt == @uprot')
+
+        for j, structure in tmp.iterrows():
+            if position in structure["MappableUniprotResidues"]:
+                uprot2pdb['UniProt'].append(uprot)
+                uprot2pdb['Position'].append(row["Protein_position"])
+                uprot2pdb['PDB'].append(structure['PDB'])
+                uprot2pdb['Chain'].append(structure['Chain'])
+                break
+
+    print("Done finding the best PDB structures")
+
+    # uprot2pdb_sorted.head()
+    uprot_pdb = pd.DataFrame(uprot2pdb)
+    
+    return uprot_pdb
 
 
 def uprot2pdb_pos(record):
