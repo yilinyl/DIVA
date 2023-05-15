@@ -101,15 +101,25 @@ def env_setup(args, config):
         config['data_dir'] = args.data_dir
 
     data_params = config['data_params']
-
-    net_params = config['net_params']
+    net_params = dict()
     net_params['device'] = device
     net_params['use_gpu'] = config['gpu']['use']
     net_params['gpu_id'] = config['gpu']['id']
     net_params['exp_dir'] = config['exp_dir']
-    net_params['lap_pos_enc'] = data_params['lap_pos_enc']
-    net_params['wl_pos_enc'] = data_params['wl_pos_enc']
-    net_params['pos_enc_dim'] = data_params['pos_enc_dim']
+
+    if 'net_params' in config:
+        # net_params = config['net_params']
+        net_params.update(config['net_params'])
+        # net_params['lap_pos_enc'] = data_params['lap_pos_enc']
+        # net_params['wl_pos_enc'] = data_params['wl_pos_enc']
+        # net_params['pos_enc_dim'] = data_params['pos_enc_dim']
+        # setting seeds
+        random.seed(net_params['seed'])
+        np.random.seed(net_params['seed'])
+        torch.manual_seed(net_params['seed'])
+        if device.type == 'cuda':
+            torch.cuda.manual_seed(net_params['seed'])
+            
 
     # Graph cache config (for structure based graph)
     if not data_params['cache_only'] and data_params['graph_type'] in ['seq', 'hetero']:
@@ -121,12 +131,6 @@ def env_setup(args, config):
 
         data_params['graph_cache'] = os.fspath(graph_cache)
 
-    # setting seeds
-    random.seed(net_params['seed'])
-    np.random.seed(net_params['seed'])
-    torch.manual_seed(net_params['seed'])
-    if device.type == 'cuda':
-        torch.cuda.manual_seed(net_params['seed'])
 
     return net_params, data_params
 
@@ -141,8 +145,12 @@ def view_model_param(model):
     return total_param
 
 
-def _save_scores(var_ids, target, pred, name, epoch, exp_dir):
-    with open(f'{exp_dir}/result/epoch_{epoch}_{name}_score.txt', 'w') as f:
+def _save_scores(var_ids, target, pred, name, epoch=None, exp_dir='./output', mode='train'):
+    if mode == 'train':
+        fname = f'{exp_dir}/result/epoch_{epoch}_{name}_score.txt'
+    else:
+        fname = f'{exp_dir}/result/predict_{name}_score.txt'
+    with open(fname, 'w') as f:
         f.write('var\ttarget\tscore\n')
         for a, c, d in zip(var_ids, target, pred):
-            f.write('{}\t{:d}\t{:f}\n'.format(a, int(c), d))
+            f.write('{}\t{}\t{:f}\n'.format(a, c, d))

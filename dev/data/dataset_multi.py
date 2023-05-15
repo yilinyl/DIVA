@@ -23,11 +23,10 @@ class MultiModalData(object):
                 'struct': self.struct_graph.edata[feat_key].shape[0]}
 
 
-
 class MultiModalDataSet(GraphDataSetBase):
     def __init__(self, df_in, window_size, feat_dir, lap_pos_enc, wl_pos_enc, pos_enc_dim, cov_thres=0.5, seq_dict=None,
                  seq_graph_option='star', use_nsp=False, nsp_dir=None, use_cosmis=False, cosmis_dir=None, var_db=None,
-                 norm_feat=False, var_graph_cache=None, struct_graph_cache=None, seq_graph_cache=None, **kwargs):
+                 norm_feat=False, var_graph_cache=None, struct_graph_cache=None, seq_graph_cache=None, use_patho_tag=False, **kwargs):
         super(MultiModalDataSet, self).__init__()
         # self.n_patho = []
         # self.aa_idx = []
@@ -44,6 +43,7 @@ class MultiModalDataSet(GraphDataSetBase):
         self.nsp_dir = nsp_dir
         self.use_cosmis = use_cosmis
         self.cosmis_dir = cosmis_dir
+        self.use_patho_tag = use_patho_tag
         if var_graph_cache:
             self.seq_graph_root = Path(var_graph_cache) / 'seq'
             self.struct_graph_root = Path(var_graph_cache) / 'struct'
@@ -118,7 +118,7 @@ class MultiModalDataSet(GraphDataSetBase):
                         torch.tensor(nsp_feat_raw[list(map(lambda x: x - 1, pos_remain_str)), :]), nsp_stats)
                     struct_graph.ndata['nps_feat'] = str_nsp_feat
 
-                except (FileNotFoundError, ValueError) as e:
+                except (FileNotFoundError, ValueError, IndexError) as e:
                     logging.warning(f'{e} in loading feature for {uprot}')
                     continue
 
@@ -133,10 +133,11 @@ class MultiModalDataSet(GraphDataSetBase):
             isolated_nodes = ((struct_graph.in_degrees() == 0) & (struct_graph.out_degrees() == 0)).nonzero().squeeze(1)
             struct_graph = dgl.remove_nodes(struct_graph, isolated_nodes)
 
-            prot_patho_pos = self.var_db.query('UniProt == @uprot')
-            patho_tag = list(map(lambda x: x in prot_patho_pos['Protein_position'], pos_remain_seq))
-            # self.n_patho.append(sum(patho_tag))
-            seq_graph.ndata['patho_tag'] = torch.tensor(patho_tag, dtype=torch.float64).unsqueeze(1)
+            if self.use_patho_tag:
+                prot_patho_pos = self.var_db.query('UniProt == @uprot')
+                patho_tag = list(map(lambda x: x in prot_patho_pos['Protein_position'], pos_remain_seq))
+                # self.n_patho.append(sum(patho_tag))
+                seq_graph.ndata['patho_tag'] = torch.tensor(patho_tag, dtype=torch.float64).unsqueeze(1)
 
             if self.lap_pos_enc:
                 lap_seq = laplacian_positional_encoding(seq_graph, self.pos_enc_dim)
@@ -192,13 +193,16 @@ class MultiModalDataSet(GraphDataSetBase):
     def get_var_db(self):
         return self.var_db
 
-    def _compile_feats(self, g, feat_exclude):
+    def _compile_feats(self, g, feat_exclude, feat_keep=None):
         nfeat_all = list(g.node_attr_schemes().keys())
-        for key in feat_exclude:
-            if key in nfeat_all:
-                nfeat_all.pop(nfeat_all.index(key))
+        if feat_keep:
+            nfeat_comb = list(map(lambda x: g.ndata[x], feat_keep))
+        else:
+            for key in feat_exclude:
+                if key in nfeat_all:
+                    nfeat_all.pop(nfeat_all.index(key))
 
-        nfeat_comb = list(map(lambda x: g.ndata[x], nfeat_all))
+            nfeat_comb = list(map(lambda x: g.ndata[x], nfeat_all))
 
         return torch.cat(nfeat_comb, dim=-1)
 

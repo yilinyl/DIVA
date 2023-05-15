@@ -1,0 +1,41 @@
+{
+    "gpu": {
+        "use": true,
+        "id": 1
+    },
+    "experiment": "mm_cosmis_pred",
+    "mode": "predict",
+    "model_name": "gtn",
+    "exp_dir": "/fs/cbsuhyfs1/storage1/yl986/experiments/3d_vip",
+    "use_esm": false,
+    "pretrained_esm": "facebook/esm2_t12_35M_UR50D",
+    "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/dataset/COSMIS",
+    "model_path": "/fs/cbsuhyfs1/storage/yl986/3d_vip/dev/output/multimode_gene/2023-04-13-10-56-09/checkpoints/bestmodel-ep17.pt",
+    "data_params": {
+        "struct_graph_cache": "/fs/cbsuhyfs1/storage1/yl986/var_graph_cache/struct",
+        "seq_graph_cache": "/fs/cbsuhyfs1/storage1/yl986/var_graph_cache/seq",
+        "pdb_root_dir": "/fs/cbsuhyfs1/storage/resources/pdb/data",
+        "af_root_dir": "/fs/cbsuhyfs1/storage1/dx38/mutation_pathogenicity/data/AF_structs",
+        "feat_dir": "/fs/cbsuhyfs1/storage1/dx38/mutation_pathogenicity/features",
+        "use_nsp": true,
+        "nsp_dir": "/fs/cbsuhyfs1/storage/yl986/data/nsp3_result/",
+        "use_cosmis": false,
+        "cosmis_dir": "/local/storage/yl986/3d_vip/data_prepare/data/cosmis_data",
+        "sift_file": "/local/storage/yl986/data/pdb/sifts_20220526/pdbresiduemapping.txt",
+        "seq_fasta": ["/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot.fasta",
+                      "/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot_varsplic.fasta"],
+        "seq2struct_cache": "./preprocess/seq2struct_map.pkl",
+        "window_size": 128,
+        "graph_type": "multi",
+        "cov_thres": 0.5,
+        "save": true,
+        "save_var_graph": false,
+        "cache_only": true,
+        "anno_ires": false,
+        "norm_feat": false,
+        "coord_option": "mass",
+        "lap_pos_enc": false,
+        "pos_enc_dim": 3,
+        "wl_pos_enc": true
+    }
+}
