@@ -312,9 +312,9 @@ def pipeline():
             best_weights = copy.deepcopy(model.state_dict())
             # best_ep_scores_train = train_scores
             # best_ep_labels_train = train_labels
-            best_scores['train'] = (train_labels, train_scores)
-            best_scores['test'] = (test_labels, test_scores)
-            best_scores['val'] = (val_labels, val_scores)
+            best_scores['train'] = (train_vars, train_labels, train_scores)
+            best_scores['test'] = (test_vars, test_labels, test_scores)
+            best_scores['val'] = (test_vars, val_labels, val_scores)
         # print('# Loss: train= {0:.5f}; validation= {1:.5f}; test= {2:.5f};'.format(train_loss, val_loss, test_loss))
 
         test_aupr = compute_aupr(test_labels, test_scores)
@@ -344,7 +344,7 @@ def pipeline():
                 'train_labels': best_scores['train'][0], 'train_scores': best_scores['train'][1]},
                model_save_path / 'bestmodel-ep{}.pt'.format(best_epoch))
     for key in best_scores:
-        _save_scores(train_vars, best_scores[key][0], best_scores[key][1], key, best_epoch, exp_dir)
+        _save_scores(best_scores[key][0], best_scores[key][1], best_scores[key][2], key, best_epoch, exp_dir)
     # run_pipeline(net_params, train_dataset, validation_dataset, test_dataset, save_freq=args.save_freq,
     #              inf_check=args.inf_check, tb_writer=tb_writer, print_diagnostics=args.print_diagnostics)
 
