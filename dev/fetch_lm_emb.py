@@ -94,7 +94,7 @@ if __name__ == '__main__':
     pretrained_full = args.pretrained_name
     esm_option = pretrained_full.split('/')[-1]
     get_all_lm_embed(df_var, esm_tokenizer, esm_model, seq_dict,
-                     esm_cache_dir=f'./esm_cache/{esm_option}')
+                     esm_cache_dir=f'{config["esm_cache_root"]}/{esm_option}')
 
 
 

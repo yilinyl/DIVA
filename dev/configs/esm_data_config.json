@@ -6,7 +6,8 @@
     "experiment": "esm",
     "mode": "data_prepare",
     "exp_dir": "./output",
-    "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/dataset/by_gene50k/",
+    "esm_cache_root": "/fs/cbsuhyfs1/storage1/yl986/data/esm_cache",
+    "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/dataset/by_gene/subsets",
     "data_params": {
         "pdb_root_dir": "/fs/cbsuhyfs1/storage/resources/pdb/data",
         "af_root_dir": "/fs/cbsuhyfs1/storage1/dx38/mutation_pathogenicity/data/AF_structs",
