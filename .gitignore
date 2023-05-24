@@ -4,7 +4,7 @@ __pycache__/
 .idea
 .ipynb_checkpoints
 .vscode
-*.DS_Store/
+*.DS_Store
 *html
 *ipynb
 *sh
