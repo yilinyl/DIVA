@@ -278,11 +278,13 @@ class GraphTransformer(nn.Module):
         # self.center_encoder = nn.Linear(ndata_dim_in, hidden_size)
         # self.ndata_encoder = nn.Sequential(nn.Linear(aa_embed_dim + ndata_dim_in, hidden_size), nn.ReLU())
         # self.edata_encoder = nn.Sequential(nn.Linear(edata_dim_in, hidden_size), nn.ReLU())
-        if self.embed_aa:
+        if not self.use_esm:
             self.aa_embedding = nn.Embedding(n_labels, aa_embed_dim)
             self.ndata_encoder = nn.Linear(aa_embed_dim + ndata_dim_in, hidden_size)
         else:
-            self.ndata_encoder = nn.Linear(2 * ndata_dim_in, hidden_size)  # additive fusion for feat_ref & feat_alt
+            if isinstance(ndata_dim_in, (tuple, list)):
+                ndata_dim_in = sum(ndata_dim_in)  # sum of ref_dim & alt_dim
+            self.ndata_encoder = nn.Linear(ndata_dim_in, hidden_size)  # additive fusion for feat_ref & feat_alt
         self.edata_encoder = nn.Linear(edata_dim_in, hidden_size)
         # self.embedding_partner = nn.Linear(in_dim2, out_dim2)
         

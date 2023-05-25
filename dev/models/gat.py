@@ -41,11 +41,13 @@ class GAT(nn.Module):
         if not isinstance(self.n_heads, list):
             self.n_heads = [n_heads] * n_layers
 
-        if self.embed_aa:
+        if not self.use_esm:
             self.aa_embedding = nn.Embedding(n_labels, aa_embed_dim)
             h_dim_in = aa_embed_dim + ndata_dim_in
         else:
-            self.in_fusion = nn.Sequential(nn.Linear(2 * ndata_dim_in, hidden_size), nn.ReLU())
+            if isinstance(ndata_dim_in, (tuple, list)):
+                ndata_dim_in = sum(ndata_dim_in)  # sum of ref_dim & alt_dim
+            self.in_fusion = nn.Sequential(nn.Linear(ndata_dim_in, hidden_size), nn.ReLU())
             h_dim_in = hidden_size  # concatenation of esm_ref, esm_alt
         h_dim_out = hidden_size  # 64
 

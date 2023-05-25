@@ -231,7 +231,8 @@ class MultiModalDataSet(GraphDataSetBase):
 
 class MultiModalLMDataset(GraphDataSetBase):
     def __init__(self, df_in, tokenizer, lm_model, device, lap_pos_enc, wl_pos_enc, pos_enc_dim, cov_thres=0.5, seq_dict=None,
-                 use_lm_cache=False, lm_cache=None, var_graph_cache=None, struct_graph_cache=None, seq_graph_cache=None, **kwargs):
+                 use_lm_cache=False, lm_cache=None, var_graph_cache=None, struct_graph_cache=None, seq_graph_cache=None, 
+                 use_cosmis=False, cosmis_dir=None, cosmis_cols=['cosmis'], cosmis_suffix='.pkl', **kwargs):
         super(MultiModalLMDataset, self).__init__()
         self.seq_dict = seq_dict
         self.tokenizer = tokenizer
@@ -248,8 +249,10 @@ class MultiModalLMDataset(GraphDataSetBase):
         self.wl_pos_enc = wl_pos_enc
         self.pos_enc_dim = pos_enc_dim
         self.cov_thres = cov_thres
+        self.use_cosmis = use_cosmis
+        self.cosmis_dir = cosmis_dir
 
-        self.nfeat_key = 'feat_ref'
+        # self.nfeat_key = 'feat_ref'
 
         if var_graph_cache:
             self.seq_graph_root = Path(var_graph_cache) / 'seq'
@@ -258,10 +261,10 @@ class MultiModalLMDataset(GraphDataSetBase):
             self.seq_graph_root = Path(seq_graph_cache)
             self.struct_graph_root = Path(struct_graph_cache)
 
-        self.process(df_in)
+        self.process(df_in, cosmis_cols=cosmis_cols, cosmis_suffix=cosmis_suffix)
 
 
-    def process(self, df_in, norm_feat=False, max_len=1200):
+    def process(self, df_in, norm_feat=False, max_len=1200, cosmis_cols=['cosmis'], cosmis_suffix='.pkl'):
         for i, record in tqdm(df_in.iterrows(), total=df_in.shape[0]):
             if record['prot_length'] > max_len:
                 continue
@@ -310,6 +313,26 @@ class MultiModalLMDataset(GraphDataSetBase):
             with open(f_seq_graph, 'rb') as f_pkl:
                 seq_graph, pos_remain_seq, var_idx_seq = pickle.load(f_pkl)
 
+            if self.use_cosmis:
+                try:
+                    cosmis_feat_raw = load_cosmis_feats(uprot, self.cosmis_dir, cols=cosmis_cols, suffix=cosmis_suffix)
+                    if np.isnan(cosmis_feat_raw).all():
+                        logging.warning("NA in COSMIS for {}".format(uprot))
+                        continue
+
+                    cosmis_stats = {'mean': torch.tensor(np.nanmean(cosmis_feat_raw, axis=0)),
+                                    'min': torch.tensor(np.nanmin(cosmis_feat_raw, axis=0)),
+                                    'max': torch.tensor(np.nanmax(cosmis_feat_raw, axis=0))}
+                    
+                    seq_cosmis_feat, cosmis_stats = impute_nan(torch.tensor(cosmis_feat_raw[list(map(lambda x: x - 1, pos_remain_seq)), :]), cosmis_stats)
+                    seq_graph.ndata['cosmis'] = seq_cosmis_feat
+
+                    str_cosmis_feat, cosmis_stats = impute_nan(torch.tensor(cosmis_feat_raw[list(map(lambda x: x - 1, pos_remain_str)), :]), cosmis_stats)
+                    struct_graph.ndata['cosmis'] = str_cosmis_feat
+
+                except FileNotFoundError:
+                    continue
+
             if uprot not in self.seq_dict:
                 self.seq_dict[uprot] = fetch_prot_seq(uprot)
             seq = self.seq_dict[uprot]
@@ -319,11 +342,17 @@ class MultiModalLMDataset(GraphDataSetBase):
             emb_alt = calc_esm_emb(seq_alt, self.tokenizer, self.lm_model)
             # emb_alt = emb_alt.cpu()
 
-            struct_graph.ndata['feat_ref'] = emb_ref[list(map(lambda x: x - 1, pos_remain_str)), :]
+            feat_ref_str = emb_ref[list(map(lambda x: x - 1, pos_remain_str)), :]
             struct_graph.ndata['feat_alt'] = emb_alt[list(map(lambda x: x - 1, pos_remain_str)), :]
 
-            seq_graph.ndata['feat_ref'] = emb_ref[list(map(lambda x: x - 1, pos_remain_seq)), :]
+            feat_ref_seq = emb_ref[list(map(lambda x: x - 1, pos_remain_seq)), :]
             seq_graph.ndata['feat_alt'] = emb_alt[list(map(lambda x: x - 1, pos_remain_seq)), :]
+            if self.use_cosmis:
+                struct_graph.ndata['feat_ref'] = torch.cat([feat_ref_str, str_cosmis_feat], dim=-1)
+                seq_graph.ndata['feat_ref'] = torch.cat([feat_ref_seq, seq_cosmis_feat], dim=-1)
+            else:
+                struct_graph.ndata['feat_ref'] = feat_ref_str
+                seq_graph.ndata['feat_ref'] = feat_ref_seq
             # with torch.cuda.device(self.device):
             #     del emb_ref
             #     del emb_alt
@@ -362,11 +391,13 @@ class MultiModalLMDataset(GraphDataSetBase):
         return graph_data_dict, label, alt_aa, var_id
 
 
-    def get_ndata_dim(self, feat_name='feat_ref'):
+    def get_ndata_dim(self, feat_name='feat'):
         graph_data_dict = self.data[0][0]
 
-        ndata_dim_all = {'seq': graph_data_dict['seq_graph'].ndata[feat_name].shape[1],
-                         'struct': graph_data_dict['struct_graph'].ndata[feat_name].shape[1]}
+        ndata_dim_all = {'seq': (graph_data_dict['seq_graph'].ndata[f'{feat_name}_ref'].shape[1], 
+                                 graph_data_dict['seq_graph'].ndata[f'{feat_name}_alt'].shape[1]),
+                         'struct': (graph_data_dict['struct_graph'].ndata[f'{feat_name}_ref'].shape[1],
+                                    graph_data_dict['struct_graph'].ndata[f'{feat_name}_alt'].shape[1])}
         return ndata_dim_all
 
     def get_edata_dim(self, feat_name='feat'):
