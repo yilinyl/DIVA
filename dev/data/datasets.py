@@ -293,7 +293,8 @@ class VariantGraphDataSet(GraphDataSetBase):
 class VariantGraphCacheDataSet(GraphDataSetBase):
     def __init__(self, df_in, feat_dir, lap_pos_enc=True, wl_pos_enc=False, pos_enc_dim=None,
                  cov_thres=0.5, var_db=None, seq2struct_all=None, seq_dict=None, window_size=None, graph_type='hetero', norm_feat=True,
-                 save_var_graph=False, var_graph_cache='./var_graph_cache', use_nsp=False, nsp_dir='', use_cosmis=False, cosmis_dir='', **kwargs):
+                 save_var_graph=False, var_graph_cache='./var_graph_cache', use_nsp=False, nsp_dir='', use_cosmis=False, cosmis_dir='', 
+                 cosmis_cols=['cosmis'], cosmis_suffix='.pkl', **kwargs):
         super(VariantGraphCacheDataSet, self).__init__()
 
         self.data = []
@@ -399,7 +400,7 @@ class VariantGraphCacheDataSet(GraphDataSetBase):
                     continue
             if use_cosmis:
                 try:
-                    cosmis_feat = load_cosmis_feats(uprot, cosmis_dir, cols=['cosmis', 'cosmis_pvalue'])
+                    cosmis_feat = load_cosmis_feats(uprot, cosmis_dir, cols=cosmis_cols, suffix=cosmis_suffix)
                     var_graph.ndata['cosmis'] = torch.tensor(cosmis_feat[list(map(lambda x: x - 1, seq_pos_remain)), :])
                 except FileNotFoundError:
                     continue
@@ -446,7 +447,8 @@ class VariantGraphCacheDataSet(GraphDataSetBase):
 class VariantSeqGraphDataSet(GraphDataSetBase):
     def __init__(self, df_in, window_size, feat_dir, lap_pos_enc, wl_pos_enc, pos_enc_dim, graph_type='seq', seq_dict=None,
                  seq_graph_option='star', use_nsp=False, nsp_dir=None, use_cosmis=False, cosmis_dir=None,
-                 norm_feat=False, cache_only=False, var_graph_cache='./var_graph_cache', **kwargs):
+                 norm_feat=False, cache_only=False, var_graph_cache='./var_graph_cache', 
+                 cosmis_cols=['cosmis'], cosmis_suffix='.pkl', **kwargs):
         super(VariantSeqGraphDataSet, self).__init__()
         # self.n_patho = []
         # self.aa_idx = []
@@ -465,12 +467,12 @@ class VariantSeqGraphDataSet(GraphDataSetBase):
         self.var_graph_path = Path(var_graph_cache) / self.graph_type
 
         if cache_only and self.var_graph_path.exists():
-            self.load_cache_data(df_in)
+            self.load_cache_data(df_in, cosmis_cols, cosmis_suffix)
         else:
-            self.process(df_in, norm_feat)
+            self.process(df_in, norm_feat, cosmis_cols, cosmis_suffix)
 
 
-    def load_cache_data(self, df_in):
+    def load_cache_data(self, df_in, cosmis_cols=['cosmis'], cosmis_suffix='.pkl'):
         for i, record in tqdm(df_in.iterrows(), total=df_in.shape[0]):
             uprot = record['UniProt']
             uprot_pos = record['Protein_position']
@@ -494,7 +496,7 @@ class VariantSeqGraphDataSet(GraphDataSetBase):
                     continue
             if self.use_cosmis:
                 try:
-                    cosmis_feat = load_cosmis_feats(uprot, self.cosmis_dir, cols=['cosmis', 'cosmis_pvalue'])
+                    cosmis_feat = load_cosmis_feats(uprot, self.cosmis_dir, cols=cosmis_cols, suffix=cosmis_suffix)
                     var_graph.ndata['cosmis'] = torch.tensor(cosmis_feat[list(map(lambda x: x - 1, seq_pos_remain)), :])
                 except FileNotFoundError:
                     continue
@@ -528,7 +530,7 @@ class VariantSeqGraphDataSet(GraphDataSetBase):
             self.n_edges.append(var_graph.num_edges())
 
 
-    def process(self, df_in, norm_feat=False):
+    def process(self, df_in, norm_feat=False, cosmis_cols=['cosmis'], cosmis_suffix='.pkl'):
         for i, record in tqdm(df_in.iterrows(), total=df_in.shape[0]):
             uprot = record['UniProt']
             uprot_pos = record['Protein_position']
@@ -574,7 +576,7 @@ class VariantSeqGraphDataSet(GraphDataSetBase):
                     continue
             if self.use_cosmis:
                 try:
-                    cosmis_feat = load_cosmis_feats(uprot, self.cosmis_dir, cols=['cosmis', 'cosmis_pvalue'])
+                    cosmis_feat = load_cosmis_feats(uprot, self.cosmis_dir, cols=cosmis_cols, suffix=cosmis_suffix)
                     var_graph.ndata['cosmis'] = torch.tensor(cosmis_feat[start_idx: end_idx + 1, :])
                 except FileNotFoundError:
                     continue

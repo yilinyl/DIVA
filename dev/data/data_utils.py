@@ -222,11 +222,14 @@ def load_nsp_feats(uprot, feat_root, exclude, rewrite_pkl=False):
     return df_nsp.drop(columns=exclude).values
 
 
-def load_cosmis_feats(uprot, feat_root, cols=['cosmis', 'cosmis_pvalue']):
+def load_cosmis_feats(uprot, feat_root, cols=['cosmis', 'cosmis_pvalue'], suffix='_cosmis.tsv'):
     if isinstance(feat_root, str):
         feat_root = Path(feat_root)
 
-    df_cosmis = pd.read_pickle(feat_root / f'{uprot}.pkl')
+    if suffix.split('.')[-1] == 'pkl':
+        df_cosmis = pd.read_pickle(feat_root / f'{uprot}{suffix}')
+    else:
+        df_cosmis = pd.read_table(feat_root / f'{uprot}{suffix}')
 
     return df_cosmis[cols].values
 

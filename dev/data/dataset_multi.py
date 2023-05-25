@@ -26,7 +26,8 @@ class MultiModalData(object):
 class MultiModalDataSet(GraphDataSetBase):
     def __init__(self, df_in, window_size, feat_dir, lap_pos_enc, wl_pos_enc, pos_enc_dim, cov_thres=0.5, seq_dict=None,
                  seq_graph_option='star', use_nsp=False, nsp_dir=None, use_cosmis=False, cosmis_dir=None, var_db=None,
-                 norm_feat=False, var_graph_cache=None, struct_graph_cache=None, seq_graph_cache=None, use_patho_tag=False, **kwargs):
+                 norm_feat=False, var_graph_cache=None, struct_graph_cache=None, seq_graph_cache=None, use_patho_tag=False, 
+                 cosmis_cols=['cosmis'], cosmis_suffix='.pkl', **kwargs):
         super(MultiModalDataSet, self).__init__()
         # self.n_patho = []
         # self.aa_idx = []
@@ -53,10 +54,10 @@ class MultiModalDataSet(GraphDataSetBase):
 
         self.cov_thres = cov_thres
 
-        self.load_cache_data(df_in)
+        self.load_cache_data(df_in, cosmis_cols, cosmis_suffix)
 
 
-    def load_cache_data(self, df_in):
+    def load_cache_data(self, df_in, cosmis_cols=['cosmis'], cosmis_suffix='.pkl'):
 
         if isinstance(self.var_db, type(None)):
             self.var_db = df_in
@@ -124,9 +125,22 @@ class MultiModalDataSet(GraphDataSetBase):
 
             if self.use_cosmis:
                 try:
-                    cosmis_feat = load_cosmis_feats(uprot, self.cosmis_dir, cols=['cosmis', 'cosmis_pvalue'])
-                    seq_graph.ndata['cosmis'] = torch.tensor(cosmis_feat[list(map(lambda x: x - 1, pos_remain_seq)), :])
-                    struct_graph.ndata['cosmis'] = torch.tensor(cosmis_feat[list(map(lambda x: x - 1, pos_remain_str)), :])
+                    cosmis_feat_raw = load_cosmis_feats(uprot, self.cosmis_dir, cols=cosmis_cols, suffix=cosmis_suffix)
+                    if np.isnan(cosmis_feat_raw).all():
+                        logging.warning("NA in COSMIS for {}".format(uprot))
+                        continue
+
+                    cosmis_stats = {'mean': torch.tensor(np.nanmean(cosmis_feat_raw, axis=0)),
+                                    'min': torch.tensor(np.nanmin(cosmis_feat_raw, axis=0)),
+                                    'max': torch.tensor(np.nanmax(cosmis_feat_raw, axis=0))}
+
+                    seq_cosmis_feat, cosmis_stats = impute_nan(torch.tensor(cosmis_feat_raw[list(map(lambda x: x - 1, pos_remain_seq)), :]), cosmis_stats)
+                    seq_graph.ndata['cosmis'] = seq_cosmis_feat
+
+                    str_cosmis_feat, cosmis_stats = impute_nan(torch.tensor(cosmis_feat_raw[list(map(lambda x: x - 1, pos_remain_str)), :]), cosmis_stats)
+                    struct_graph.ndata['cosmis'] = str_cosmis_feat
+
+
                 except FileNotFoundError:
                     continue
 
