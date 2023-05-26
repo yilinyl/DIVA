@@ -113,11 +113,11 @@ class MultiModalDataSet(GraphDataSetBase):
                                  'max': torch.tensor(np.nanmax(nsp_feat_raw, axis=0))}
 
                     seq_nsp_feat, nsp_stats = impute_nan(torch.tensor(nsp_feat_raw[list(map(lambda x: x - 1, pos_remain_seq)), :]), nsp_stats)
-                    seq_graph.ndata['nps_feat'] = seq_nsp_feat
+                    seq_graph.ndata['nsp_feat'] = seq_nsp_feat
 
                     str_nsp_feat, nsp_stats = impute_nan(
                         torch.tensor(nsp_feat_raw[list(map(lambda x: x - 1, pos_remain_str)), :]), nsp_stats)
-                    struct_graph.ndata['nps_feat'] = str_nsp_feat
+                    struct_graph.ndata['nsp_feat'] = str_nsp_feat
 
                 except (FileNotFoundError, ValueError, IndexError) as e:
                     logging.warning(f'{e} in loading feature for {uprot}')
@@ -232,7 +232,7 @@ class MultiModalDataSet(GraphDataSetBase):
 class MultiModalLMDataset(GraphDataSetBase):
     def __init__(self, df_in, tokenizer, lm_model, device, lap_pos_enc, wl_pos_enc, pos_enc_dim, cov_thres=0.5, seq_dict=None,
                  use_lm_cache=False, lm_cache=None, var_graph_cache=None, struct_graph_cache=None, seq_graph_cache=None, 
-                 use_cosmis=False, cosmis_dir=None, cosmis_cols=['cosmis'], cosmis_suffix='.pkl', **kwargs):
+                 use_nsp=False, nsp_dir=None, use_cosmis=False, cosmis_dir=None, cosmis_cols=['cosmis'], cosmis_suffix='.pkl', **kwargs):
         super(MultiModalLMDataset, self).__init__()
         self.seq_dict = seq_dict
         self.tokenizer = tokenizer
@@ -249,6 +249,8 @@ class MultiModalLMDataset(GraphDataSetBase):
         self.wl_pos_enc = wl_pos_enc
         self.pos_enc_dim = pos_enc_dim
         self.cov_thres = cov_thres
+        self.use_nsp = use_nsp
+        self.nsp_dir = nsp_dir
         self.use_cosmis = use_cosmis
         self.cosmis_dir = cosmis_dir
 
@@ -312,6 +314,23 @@ class MultiModalLMDataset(GraphDataSetBase):
 
             with open(f_seq_graph, 'rb') as f_pkl:
                 seq_graph, pos_remain_seq, var_idx_seq = pickle.load(f_pkl)
+            if self.use_nsp:
+                try:
+                    nsp_feat_raw = load_nsp_feats(uprot, self.nsp_dir, exclude=['asa', 'phi', 'psi', 'disorder'])
+                    nsp_stats = {'mean': torch.tensor(np.nanmean(nsp_feat_raw, axis=0)),
+                                 'min': torch.tensor(np.nanmin(nsp_feat_raw, axis=0)),
+                                 'max': torch.tensor(np.nanmax(nsp_feat_raw, axis=0))}
+
+                    seq_nsp_feat, nsp_stats = impute_nan(torch.tensor(nsp_feat_raw[list(map(lambda x: x - 1, pos_remain_seq)), :]), nsp_stats)
+                    seq_graph.ndata['nsp_feat'] = seq_nsp_feat
+
+                    str_nsp_feat, nsp_stats = impute_nan(
+                        torch.tensor(nsp_feat_raw[list(map(lambda x: x - 1, pos_remain_str)), :]), nsp_stats)
+                    struct_graph.ndata['nsp_feat'] = str_nsp_feat
+
+                except (FileNotFoundError, ValueError, IndexError) as e:
+                    logging.warning(f'{e} in loading feature for {uprot}')
+                    continue
 
             if self.use_cosmis:
                 try:
@@ -342,17 +361,19 @@ class MultiModalLMDataset(GraphDataSetBase):
             emb_alt = calc_esm_emb(seq_alt, self.tokenizer, self.lm_model)
             # emb_alt = emb_alt.cpu()
 
-            feat_ref_str = emb_ref[list(map(lambda x: x - 1, pos_remain_str)), :]
+            struct_graph.ndata['esm_ref'] = emb_ref[list(map(lambda x: x - 1, pos_remain_str)), :]
             struct_graph.ndata['feat_alt'] = emb_alt[list(map(lambda x: x - 1, pos_remain_str)), :]
 
-            feat_ref_seq = emb_ref[list(map(lambda x: x - 1, pos_remain_seq)), :]
+            seq_graph.ndata['esm_ref'] = emb_ref[list(map(lambda x: x - 1, pos_remain_seq)), :]
             seq_graph.ndata['feat_alt'] = emb_alt[list(map(lambda x: x - 1, pos_remain_seq)), :]
+            nfeat_all = ['esm_ref']
+            if self.use_nsp:
+                nfeat_all.append('nsp_feat')
             if self.use_cosmis:
-                struct_graph.ndata['feat_ref'] = torch.cat([feat_ref_str, str_cosmis_feat], dim=-1)
-                seq_graph.ndata['feat_ref'] = torch.cat([feat_ref_seq, seq_cosmis_feat], dim=-1)
-            else:
-                struct_graph.ndata['feat_ref'] = feat_ref_str
-                seq_graph.ndata['feat_ref'] = feat_ref_seq
+                nfeat_all.append('cosmis')
+            
+            struct_graph.ndata['feat_ref'] = torch.cat(list(map(lambda x: struct_graph.ndata[x], nfeat_all)), dim=-1)
+            seq_graph.ndata['feat_ref'] = torch.cat(list(map(lambda x: seq_graph.ndata[x], nfeat_all)), dim=-1)
             # with torch.cuda.device(self.device):
             #     del emb_ref
             #     del emb_alt
