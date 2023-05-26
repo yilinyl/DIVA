@@ -43,5 +43,7 @@ class GraphDataSetBase(Dataset):
     # def get_patho_num(self):
     #     return np.mean(self.n_patho)
 
-    def dataset_summary(self):
-        return np.mean(self.n_nodes), np.mean(self.n_edges)
+    def dataset_summary(self, stats_dict=None):
+        if not stats_dict:
+            return np.mean(self.n_nodes), np.mean(self.n_edges)
+        return np.mean(stats_dict['nodes']), np.mean(stats_dict['edges'])

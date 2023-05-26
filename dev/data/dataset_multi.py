@@ -45,6 +45,8 @@ class MultiModalDataSet(GraphDataSetBase):
         self.use_cosmis = use_cosmis
         self.cosmis_dir = cosmis_dir
         self.use_patho_tag = use_patho_tag
+        self.seq_graph_stats = {'nodes': [], 'edges': []}
+        self.struct_graph_stats = {'nodes': [], 'edges': []}
         if var_graph_cache:
             self.seq_graph_root = Path(var_graph_cache) / 'seq'
             self.struct_graph_root = Path(var_graph_cache) / 'struct'
@@ -182,8 +184,10 @@ class MultiModalDataSet(GraphDataSetBase):
                           'struct_idx': var_idx_struct}
             self.data.append((graph_data_dict, record['label'], alt_aa, record['prot_var_id']))
             self.label.append(record['label'])
-            # self.n_nodes.append(seq_graph.num_nodes())
-            # self.n_edges.append(seq_graph.num_edges())
+            self.seq_graph_stats['nodes'].append(seq_graph.num_nodes())
+            self.seq_graph_stats['edges'].append(seq_graph.num_edges())
+            self.struct_graph_stats['nodes'].append(struct_graph.num_nodes())
+            self.struct_graph_stats['edges'].append(struct_graph.num_edges())
 
     def __getitem__(self, index):
         graph_data_dict, label, alt_aa, var_id = self.data[index]

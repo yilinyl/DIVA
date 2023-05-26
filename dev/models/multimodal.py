@@ -66,10 +66,10 @@ class MultiModel(nn.Module):
             attn = self.cross_attn(f_seq, f_struct)
         else:  # additive fusion
             h_all = torch.cat([f_seq, f_struct], dim=-1)
-            h_all = self.fusion(h_all)
+            h_all = self.fusion(h_all)  # graph embeddings
             h_out = self.MLP_layer(h_all)
 
-        return h_out
+        return h_out, h_all
 
 
     def loss(self, logits, label):

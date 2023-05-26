@@ -3,7 +3,7 @@
         "use": true,
         "id": 1
     },
-    "experiment": "mm_cosmis_mean",
+    "experiment": "mm_cosmis_comb1",
     "mode": "train",
     "model_name": "gtn",
     "use_esm": false,
@@ -20,7 +20,7 @@
         "nsp_dir": "/fs/cbsuhyfs1/storage/yl986/data/nsp3_result/",
         "use_cosmis": true,
         "cosmis_dir": "/fs/cbsuhyfs1/storage1/yl986/data/cosmis_scores",
-        "cosmis_cols": ["cosmis_mean", "mis_p_value", "mis_pmt_mean", "mis_pmt_sd", "plddt"],
+        "cosmis_cols": ["cosmis_min", "cosmis_mean", "cosmis_raw", "mis_p_value", "mis_pmt_mean", "mis_pmt_sd", "plddt"],
         "cosmis_suffix": "_cosmis.tsv",
         "sift_file": "/local/storage/yl986/data/pdb/sifts_20220526/pdbresiduemapping.txt",
         "seq_fasta": ["/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot.fasta",
@@ -42,7 +42,7 @@
 
     "net_params": {
         "seed": 2023,
-        "epochs": 50,
+        "epochs": 20,
         "batch_size": 16,
         "init_lr": 0.001,
         "lr_reduce_factor": 0.5,

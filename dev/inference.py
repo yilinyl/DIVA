@@ -66,7 +66,7 @@ def predict(model, device, data_loader):
             # batch_var_idx = batch_data[3].to(device)
             batch_vars = batch_data[-1]
 
-            batch_logits = model.forward(batch_seq_graph, batch_str_graph, batch_alt_aa)
+            batch_logits, batch_emb = model(batch_seq_graph, batch_str_graph, batch_alt_aa)
             shapes = batch_logits.size()
             batch_logits = batch_logits.view(shapes[0] * shapes[1])
 
@@ -114,6 +114,8 @@ if __name__ == '__main__':
     else:
         test_dataset = MultiModalDataSet(df_test, **data_params)  # TODO: var_db
 
+    logging.info("Sequential graph summary: (average) nodes {:.1f}, edges {:.1f}".format(*test_dataset.dataset_summary(test_dataset.seq_graph_stats)))
+    logging.info("Structural graph summary: (average) nodes {:.1f}, edges {:.1f}".format(*test_dataset.dataset_summary(test_dataset.struct_graph_stats)))
     # Load model
     checkpt_dict = torch.load(config['model_path'], map_location='cpu')
     net_params = checkpt_dict['args']
@@ -131,7 +133,7 @@ if __name__ == '__main__':
     test_loader = dgl.dataloading.GraphDataLoader(test_dataset, batch_size=net_params['batch_size'],
                                                   shuffle=False, pin_memory=True, drop_last=False)
     exp_dir = net_params['exp_dir']
-    result_path = Path(exp_dir) / 'result'
+    result_path = Path(exp_dir)
     if not result_path.exists():
         result_path.mkdir(parents=True)
 

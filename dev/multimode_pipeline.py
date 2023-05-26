@@ -48,7 +48,7 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None):
             
         optimizer.zero_grad()
 
-        batch_logits = model.forward(batch_seq_graph, batch_str_graph, batch_alt_aa)
+        batch_logits, g_emb = model(batch_seq_graph, batch_str_graph, batch_alt_aa)
         shapes = batch_logits.size()
         batch_logits = batch_logits.view(shapes[0]*shapes[1])
 
@@ -74,6 +74,7 @@ def evaluation_epoch(model, device, data_loader):
     running_loss = 0
     n_sample = 0
     all_vars, all_labels, all_scores = [], [], []
+    all_emb = []
     with torch.no_grad():
         for batch_idx, batch_data in enumerate(data_loader):
             batch_dict = batch_data[0]
@@ -90,7 +91,7 @@ def evaluation_epoch(model, device, data_loader):
             # else:
             #     batch_lap_pos_enc = None
 
-            batch_logits = model.forward(batch_seq_graph, batch_str_graph, batch_alt_aa)
+            batch_logits, batch_embeds = model(batch_seq_graph, batch_str_graph, batch_alt_aa)
             shapes = batch_logits.size()
             batch_logits = batch_logits.view(shapes[0] * shapes[1])
 
@@ -105,6 +106,7 @@ def evaluation_epoch(model, device, data_loader):
             # if device.type == 'cuda':
             batch_scores_ = batch_scores.detach().cpu().numpy()
             batch_labels_ = batch_labels.detach().cpu().numpy()
+            batch_embeds_ = batch_embeds.detach().cpu()
             # batch_vars_ = batch_vars.detach().cpu().numpy()
             # else:
             #     batch_scores_ = batch_scores.detach().numpy()
@@ -114,12 +116,13 @@ def evaluation_epoch(model, device, data_loader):
             all_labels.append(batch_labels_)
             all_scores.append(batch_scores_)
             all_vars.extend(batch_vars)
+            all_emb.append(batch_embeds_)
 
         epoch_loss = running_loss / n_sample
         all_labels = np.concatenate(all_labels, 0)
         all_scores = np.concatenate(all_scores, 0)
     
-    return epoch_loss, all_labels, all_scores, all_vars
+    return epoch_loss, all_labels, all_scores, all_vars, torch.cat(all_emb, dim=0)
 
 
 def parse_args():
@@ -163,7 +166,7 @@ def pipeline():
     struct_params = net_params['struct_params']
 
     if args.tensorboard:
-        tb_writer = SummaryWriter(log_dir='{}/logs'.format(config['exp_dir']))
+        tb_writer = SummaryWriter(log_dir='{}/tensorboard'.format(config['exp_dir']))
     else:
         tb_writer = None
 
@@ -201,6 +204,8 @@ def pipeline():
         test_dataset = MultiModalDataSet(df_test, var_db=var_db, **data_params)
 
     logging.info('Training set: {}; Positive: {}'.format(len(train_dataset), train_dataset.count_positive()))
+    logging.info("Sequential graph summary: (average) nodes {:.1f}, edges {:.1f}".format(*train_dataset.dataset_summary(train_dataset.seq_graph_stats)))
+    logging.info("Structural graph summary: (average) nodes {:.1f}, edges {:.1f}".format(*train_dataset.dataset_summary(train_dataset.struct_graph_stats)))
     # logging.info('Training data summary (average) nodes: {:.0f}; edges: {:.0f}'.format(*train_dataset.dataset_summary()))
     # logging.info('Average number of pathogenic variants in graph: {:.1f}'.format(train_dataset.get_patho_num()))
     logging.info('Test set: {}; Positive: {}'.format(len(test_dataset), test_dataset.count_positive()))
@@ -276,8 +281,9 @@ def pipeline():
     # best_ep_labels_train = None
     best_val_loss = float('inf')
     best_weights = None
+    best_optim = None
     best_epoch = 0
-    best_scores = {'train': None, 'test': None, 'val': None}
+    best_results = {'train': None, 'test': None, 'val': None}
 
     for epoch in range(net_params['epochs']):
         logging.info('Epoch %d' % epoch)
@@ -286,17 +292,19 @@ def pipeline():
 
         train_loss, optimizer = train_epoch(model, optimizer, device, train_loader, diagnostic=diagnostic)
         if epoch % args.save_freq == 0:
-            torch.save({'args': net_params, 'state_dict': model.state_dict()},
+            torch.save({'args': net_params, 
+                        'state_dict': model.state_dict(), 
+                        'optimizer_state_dict': optimizer.state_dict()},
                        model_save_path / 'model-ep{}.pt'.format(epoch))
             # torch.save(model.state_dict(), os.path.join(net_params['model_dir'], 'model%s.dat'%(str(epoch))))
-        train_loss, train_labels, train_scores, train_vars = evaluation_epoch(model, device, train_loader)
+        train_loss, train_labels, train_scores, train_vars, train_emb = evaluation_epoch(model, device, train_loader)
         train_aupr = compute_aupr(train_labels, train_scores)
         train_auc = compute_roc(train_labels, train_scores)
 
         data_name = 'train'
         logging.info(f'<{data_name}> loss={train_loss:.4f} auPR={train_aupr:.4f} auROC={train_auc:.4f}')
 
-        val_loss, val_labels, val_scores, val_vars = evaluation_epoch(model, device, validation_loader)
+        val_loss, val_labels, val_scores, val_vars, val_emb = evaluation_epoch(model, device, validation_loader)
         scheduler.step(val_loss)
 
         val_aupr = compute_aupr(val_labels, val_scores)
@@ -305,16 +313,17 @@ def pipeline():
         data_name = 'validation'
         logging.info(f'<{data_name}> loss={val_loss:.4f} auPR={val_aupr:.4f} auROC={val_auc:.4f}')
 
-        test_loss, test_labels, test_scores, test_vars = evaluation_epoch(model, device, test_loader)
+        test_loss, test_labels, test_scores, test_vars, test_emb = evaluation_epoch(model, device, test_loader)
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch
             best_weights = copy.deepcopy(model.state_dict())
+            best_optim = copy.deepcopy(optimizer.state_dict())
             # best_ep_scores_train = train_scores
             # best_ep_labels_train = train_labels
-            best_scores['train'] = (train_vars, train_labels, train_scores)
-            best_scores['test'] = (test_vars, test_labels, test_scores)
-            best_scores['val'] = (test_vars, val_labels, val_scores)
+            best_results['train'] = (train_vars, train_labels, train_scores, train_emb)
+            best_results['test'] = (test_vars, test_labels, test_scores, test_emb)
+            best_results['val'] = (test_vars, val_labels, val_scores, val_emb)
         # print('# Loss: train= {0:.5f}; validation= {1:.5f}; test= {2:.5f};'.format(train_loss, val_loss, test_loss))
 
         test_aupr = compute_aupr(test_labels, test_scores)
@@ -337,14 +346,19 @@ def pipeline():
             break
 
     if tb_writer:
-        tb_writer.add_pr_curve('Train/PR-curve', best_scores['train'][0], best_scores['train'][1], best_epoch)
+        tb_writer.add_pr_curve('Train/PR-curve', best_results['train'][1], best_results['train'][2], best_epoch)
+        tb_writer.add_pr_curve('Test/PR-curve', best_results['test'][1], best_results['test'][2], best_epoch)
+        tb_writer.add_pr_curve('Val/PR-curve', best_results['val'][1], best_results['val'][2], best_epoch)
+        tb_writer.add_embedding(best_results['train'][3], best_results['train'][1], tag='Train/Embedding')
+        tb_writer.add_embedding(best_results['test'][3], best_results['test'][1], tag='Test/Embedding')
+        tb_writer.add_embedding(best_results['val'][3], best_results['val'][1], tag='Val/Embedding')
         tb_writer.close()
     logging.info('Save best model at epoch {}:'.format(best_epoch))
     torch.save({'args': net_params, 'state_dict': best_weights,
-                'train_labels': best_scores['train'][0], 'train_scores': best_scores['train'][1]},
+                'optimizer_state_dict': best_optim},
                model_save_path / 'bestmodel-ep{}.pt'.format(best_epoch))
-    for key in best_scores:
-        _save_scores(best_scores[key][0], best_scores[key][1], best_scores[key][2], key, best_epoch, exp_dir)
+    for key in best_results:
+        _save_scores(best_results[key][0], best_results[key][1], best_results[key][2], key, best_epoch, exp_dir)
     # run_pipeline(net_params, train_dataset, validation_dataset, test_dataset, save_freq=args.save_freq,
     #              inf_check=args.inf_check, tb_writer=tb_writer, print_diagnostics=args.print_diagnostics)
 
