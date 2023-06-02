@@ -9,8 +9,8 @@
     "exp_dir": "/fs/cbsuhyfs1/storage1/yl986/experiments/3d_vip",
     "use_esm": false,
     "pretrained_esm": "facebook/esm2_t12_35M_UR50D",
-    "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/dataset/COSMIS",
-    "model_path": "/fs/cbsuhyfs1/storage1/yl986/experiments/3d_vip/mm_cosmis_comb1/2023-05-25-09-49-49/checkpoints/bestmodel-ep14.pt",
+    "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/dataset/full_v1",
+    "model_path": "/fs/cbsuhyfs1/storage1/yl986/experiments/3d_vip/mm_full/2023-06-01-12-59-35/checkpoints/bestmodel-ep21.pt",
     "data_params": {
         "struct_graph_cache": "/fs/cbsuhyfs1/storage1/yl986/var_graph_cache/struct",
         "seq_graph_cache": "/fs/cbsuhyfs1/storage1/yl986/var_graph_cache/seq",

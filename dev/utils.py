@@ -153,3 +153,16 @@ def _save_scores(var_ids, target, pred, name, epoch=None, exp_dir='./output', mo
         f.write('var\ttarget\tscore\n')
         for a, c, d in zip(var_ids, target, pred):
             f.write('{}\t{}\t{:f}\n'.format(a, c, d))
+
+
+def format_metadata(var_ids, labels):
+    """
+    Format metadata information for tensorboard projector
+    """
+    meta_info = []
+    for i in range(len(var_ids)):
+        prot_ids, pos, amino_acids = var_ids[i].split('_')
+        ref_aa, alt_aa = amino_acids.split('/')
+        meta_info.append((prot_ids, amino_acids, ref_aa, alt_aa, labels[i]))
+    
+    return meta_info

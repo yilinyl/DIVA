@@ -234,6 +234,15 @@ def load_cosmis_feats(uprot, feat_root, cols=['cosmis', 'cosmis_pvalue'], suffix
     return df_cosmis[cols].values
 
 
+def load_oe_feats(uprot, feat_root, cols=['obs_exp_mean', 'obs_exp_max']):
+    if isinstance(feat_root, str):
+        feat_root = Path(feat_root)
+    
+    df_oe = pd.read_csv(feat_root / f'{uprot}_oe.csv')
+
+    return df_oe[cols].values
+
+
 def add_seq_edges(uprot_pos, prot_len, window_size, option='star', max_dist=1, inverse=True):
     w = window_size // 2
 

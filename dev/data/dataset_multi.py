@@ -27,7 +27,7 @@ class MultiModalDataSet(GraphDataSetBase):
     def __init__(self, df_in, window_size, feat_dir, lap_pos_enc, wl_pos_enc, pos_enc_dim, cov_thres=0.5, seq_dict=None,
                  seq_graph_option='star', use_nsp=False, nsp_dir=None, use_cosmis=False, cosmis_dir=None, var_db=None,
                  norm_feat=False, var_graph_cache=None, struct_graph_cache=None, seq_graph_cache=None, use_patho_tag=False, 
-                 cosmis_cols=['cosmis'], cosmis_suffix='.pkl', **kwargs):
+                 cosmis_cols=['cosmis'], cosmis_suffix='.pkl', use_oe=False, oe_dir=None, **kwargs):
         super(MultiModalDataSet, self).__init__()
         # self.n_patho = []
         # self.aa_idx = []
@@ -44,6 +44,8 @@ class MultiModalDataSet(GraphDataSetBase):
         self.nsp_dir = nsp_dir
         self.use_cosmis = use_cosmis
         self.cosmis_dir = cosmis_dir
+        self.use_oe = use_oe
+        self.oe_dir = oe_dir
         self.use_patho_tag = use_patho_tag
         self.seq_graph_stats = {'nodes': [], 'edges': []}
         self.struct_graph_stats = {'nodes': [], 'edges': []}
@@ -142,8 +144,28 @@ class MultiModalDataSet(GraphDataSetBase):
                     str_cosmis_feat, cosmis_stats = impute_nan(torch.tensor(cosmis_feat_raw[list(map(lambda x: x - 1, pos_remain_str)), :]), cosmis_stats)
                     struct_graph.ndata['cosmis'] = str_cosmis_feat
 
-
                 except FileNotFoundError:
+                    continue
+            
+            if self.use_oe:
+                try:
+                    oe_feat_raw = load_oe_feats(uprot, self.oe_dir, cols=['obs_exp_mean', 'obs_exp_max'])
+                    if np.isnan(oe_feat_raw).all():
+                        logging.warning("NA in OE feature for {}".format(uprot))
+                        continue
+
+                    oe_stats = {'mean': torch.tensor(np.nanmean(oe_feat_raw, axis=0)),
+                                'min': torch.tensor(np.nanmin(oe_feat_raw, axis=0)),
+                                'max': torch.tensor(np.nanmax(oe_feat_raw, axis=0))}
+
+                    seq_oe_feat, oe_stats = impute_nan(torch.tensor(oe_feat_raw[list(map(lambda x: x - 1, pos_remain_seq)), :]), oe_stats)
+                    seq_graph.ndata['oe'] = seq_oe_feat
+
+                    str_oe_feat, oe_stats = impute_nan(torch.tensor(oe_feat_raw[list(map(lambda x: x - 1, pos_remain_str)), :]), oe_stats)
+                    struct_graph.ndata['oe'] = str_oe_feat
+
+                except (FileNotFoundError, ValueError, IndexError) as e:
+                    logging.warning(f'{e} in loading OE feature for {uprot}')
                     continue
 
             isolated_nodes = ((struct_graph.in_degrees() == 0) & (struct_graph.out_degrees() == 0)).nonzero().squeeze(1)

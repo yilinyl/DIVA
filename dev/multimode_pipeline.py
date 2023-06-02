@@ -14,7 +14,7 @@ from models.multimodal import MultiModel
 # from dev.models.graphtransformer import GraphTransformer
 from torch.utils.tensorboard import SummaryWriter
 from metrics import *
-from utils import str2bool, env_setup, _save_scores
+from utils import str2bool, env_setup, _save_scores, format_metadata
 from preprocess.utils import parse_fasta
 from hooks import register_inf_check_hooks
 import diagnostics
@@ -323,7 +323,7 @@ def pipeline():
             # best_ep_labels_train = train_labels
             best_results['train'] = (train_vars, train_labels, train_scores, train_emb)
             best_results['test'] = (test_vars, test_labels, test_scores, test_emb)
-            best_results['val'] = (test_vars, val_labels, val_scores, val_emb)
+            best_results['val'] = (val_vars, val_labels, val_scores, val_emb)
         # print('# Loss: train= {0:.5f}; validation= {1:.5f}; test= {2:.5f};'.format(train_loss, val_loss, test_loss))
 
         test_aupr = compute_aupr(test_labels, test_scores)
@@ -332,26 +332,33 @@ def pipeline():
         logging.info(f'<{data_name}> loss={test_loss:.4f} auPR={test_aupr:.4f} auROC={test_auc:.4f}')
 
         if epoch % args.save_freq == 0:
-            _save_scores(train_vars, train_labels, train_scores, 'train', epoch, exp_dir)
-            _save_scores(val_vars, val_labels, val_scores, 'val', epoch, exp_dir)
-            _save_scores(test_vars, test_labels, test_scores, 'test', epoch, exp_dir)
+            # _save_scores(train_vars, train_labels, train_scores, 'train', epoch, exp_dir)
+            # _save_scores(val_vars, val_labels, val_scores, 'val', epoch, exp_dir)
+            # _save_scores(test_vars, test_labels, test_scores, 'test', epoch, exp_dir)
+            if tb_writer:
+                tb_writer.add_pr_curve('Train/PR-curve', train_labels, train_scores, epoch)
+                tb_writer.add_pr_curve('Test/PR-curve', test_labels, test_scores, epoch)
+                tb_writer.add_pr_curve('Val/PR-curve', val_labels, val_scores, epoch)
 
         if tb_writer:
             tb_writer.add_scalar('train/loss', train_loss, epoch)
             tb_writer.add_scalar('validation/loss', val_loss, epoch)
-            tb_writer.add_scalar('test/loss', train_loss, epoch)
+            tb_writer.add_scalar('test/loss', test_loss, epoch)
 
         if optimizer.param_groups[0]['lr'] < net_params['min_lr']:
             logging.info("!! LR SMALLER OR EQUAL TO MIN LR THRESHOLD.")
             break
 
     if tb_writer:
-        tb_writer.add_pr_curve('Train/PR-curve', best_results['train'][1], best_results['train'][2], best_epoch)
-        tb_writer.add_pr_curve('Test/PR-curve', best_results['test'][1], best_results['test'][2], best_epoch)
-        tb_writer.add_pr_curve('Val/PR-curve', best_results['val'][1], best_results['val'][2], best_epoch)
-        tb_writer.add_embedding(best_results['train'][3], best_results['train'][1], tag='Train/Embedding')
-        tb_writer.add_embedding(best_results['test'][3], best_results['test'][1], tag='Test/Embedding')
-        tb_writer.add_embedding(best_results['val'][3], best_results['val'][1], tag='Val/Embedding')
+        # tb_writer.add_pr_curve('Train/PR-curve', best_results['train'][1], best_results['train'][2], best_epoch)
+        # tb_writer.add_pr_curve('Test/PR-curve', best_results['test'][1], best_results['test'][2], best_epoch)
+        # tb_writer.add_pr_curve('Val/PR-curve', best_results['val'][1], best_results['val'][2], best_epoch)
+        tb_writer.add_embedding(best_results['train'][3], metadata=format_metadata(*best_results['train'][:2]), 
+                                metadata_header=['UniProt', 'Amino_acids', 'REF', 'ALT', 'label'], tag='Train/Embedding')
+        tb_writer.add_embedding(best_results['test'][3], metadata=format_metadata(*best_results['test'][:2]), 
+                                metadata_header=['UniProt', 'Amino_acids', 'REF', 'ALT', 'label'], tag='Test/Embedding')
+        tb_writer.add_embedding(best_results['val'][3], metadata=format_metadata(*best_results['val'][:2]), 
+                                metadata_header=['UniProt', 'Amino_acids', 'REF', 'ALT', 'label'], tag='Val/Embedding')
         tb_writer.close()
     logging.info('Save best model at epoch {}:'.format(best_epoch))
     torch.save({'args': net_params, 'state_dict': best_weights,
