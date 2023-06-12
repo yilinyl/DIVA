@@ -242,6 +242,129 @@ def load_oe_feats(uprot, feat_root, cols=['obs_exp_mean', 'obs_exp_max']):
 
     return df_oe[cols].values
 
+def ss8_to_index(ss):
+    ss_all = ['-', 'B', 'E', 'G', 'H', 'I', 'P', 'S', 'T']
+    ss_dict = dict(zip(ss_all, range(len(ss_all))))
+
+    return ss_dict[ss]
+
+def load_dssp_feats(struct_id, pos_list, chain, model, seq2struct_pos, feat_root):
+    """
+    Load secondary structure feature for protein from DSSP file
+
+    Return:
+        - eight-state secondary structure (string)
+        - numeric secondary structure features (solvent accessibility, hydrogen bond information)
+    """
+    if isinstance(feat_root, str):
+        feat_root = Path(feat_root)
+    dssp_file = feat_root / f'{model}-{struct_id}.dssp'
+    if not dssp_file.exists():
+        raise FileNotFoundError
+    
+    with open(dssp_file, 'r') as f:
+        dssp_dict, keys = form_dssp_dict(f)
+    dssp_arr = np.array(list(map(lambda x: dssp_dict[':'.join([chain, seq2struct_pos[x]])], pos_list)))
+
+    return dssp_arr[:, 1], dssp_arr[:, 2:].astype(float)
+
+
+def form_dssp_dict(handle):
+    """Return a DSSP dictionary (modified from BioPython)
+
+    DSSP dictionary maps 'chainid:resid' to an amino acid,
+    secondary structure symbol (8-state), solvent accessibility value, and hydrogen bond
+    information (relative dssp indices and hydrogen bond energies) from an open
+    DSSP file object.
+
+    Parameters
+    ----------
+    handle : file
+        the open DSSP output file handle
+
+    """
+    dssp = {}
+    start = 0
+    keys = []
+    for line in handle:
+        sl = line.split()
+        if len(sl) < 2:
+            continue
+        if sl[1] == "RESIDUE":
+            # Start parsing from here
+            start = 1
+            continue
+        if not start:
+            continue
+        if line[9] == " ":
+            # Skip -- missing residue
+            continue
+
+        dssp_index = int(line[:5])
+        resseq = int(line[5:10])
+        icode = line[10]
+        chainid = line[11]
+        aa = line[13]
+        ss = line[16]
+        if ss == " ":
+            ss = "-"
+        try:
+            NH_O_1_relidx = int(line[38:45])
+            NH_O_1_energy = float(line[46:50])
+            O_NH_1_relidx = int(line[50:56])
+            O_NH_1_energy = float(line[57:61])
+            NH_O_2_relidx = int(line[61:67])
+            NH_O_2_energy = float(line[68:72])
+            O_NH_2_relidx = int(line[72:78])
+            O_NH_2_energy = float(line[79:83])
+
+            acc = int(line[34:38])
+            phi = float(line[103:109])
+            psi = float(line[109:115])
+        except ValueError as exc:
+            # DSSP output breaks its own format when there are >9999
+            # residues, since only 4 digits are allocated to the seq num
+            # field.  See 3kic chain T res 321, 1vsy chain T res 6077.
+            # Here, look for whitespace to figure out the number of extra
+            # digits, and shift parsing the rest of the line by that amount.
+            if line[34] != " ":
+                shift = line[34:].find(" ")
+
+                NH_O_1_relidx = int(line[38 + shift : 45 + shift])
+                NH_O_1_energy = float(line[46 + shift : 50 + shift])
+                O_NH_1_relidx = int(line[50 + shift : 56 + shift])
+                O_NH_1_energy = float(line[57 + shift : 61 + shift])
+                NH_O_2_relidx = int(line[61 + shift : 67 + shift])
+                NH_O_2_energy = float(line[68 + shift : 72 + shift])
+                O_NH_2_relidx = int(line[72 + shift : 78 + shift])
+                O_NH_2_energy = float(line[79 + shift : 83 + shift])
+
+                acc = int(line[34 + shift : 38 + shift])
+                phi = float(line[103 + shift : 109 + shift])
+                psi = float(line[109 + shift : 115 + shift])
+            else:
+                raise ValueError(exc) from None
+        res_id = (" ", resseq, icode)
+        key = f'{chainid}:{resseq}{icode}'.strip()
+        dssp[key] = (
+            aa,
+            ss,
+            acc,
+            phi,
+            psi,
+            dssp_index,
+            NH_O_1_relidx,
+            NH_O_1_energy,
+            O_NH_1_relidx,
+            O_NH_1_energy,
+            NH_O_2_relidx,
+            NH_O_2_energy,
+            O_NH_2_relidx,
+            O_NH_2_energy,
+        )
+        keys.append(key)
+    return dssp, keys
+
 
 def add_seq_edges(uprot_pos, prot_len, window_size, option='star', max_dist=1, inverse=True):
     w = window_size // 2

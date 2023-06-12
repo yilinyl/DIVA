@@ -156,6 +156,8 @@ def parse_args():
 
 
 def pipeline():
+    print(os.getcwd())
+    os.chdir('/fs/cbsuhyfs1/storage1/yl986/3d_vip/dev')
     args = parse_args()
 
     with open(args.config) as f:
@@ -180,6 +182,13 @@ def pipeline():
     df_test = pd.read_csv(data_path / args.test_data)
     prot_cols = ['UniProt','PDB', 'Chain']
     var_prot_df = pd.concat([df_train[prot_cols], df_val[prot_cols], df_test[prot_cols]]).drop_duplicates()
+    sift_map = pd.read_csv(data_params['sift_file'], sep='\t').dropna().reset_index(drop=True)
+    sift_map = sift_map.merge(var_prot_df, how='inner').drop_duplicates().reset_index(drop=True)
+
+    if Path(data_params['seq2struct_cache']).exists():
+        with open(data_params['seq2struct_cache'], 'rb') as f_pkl:
+            seq_struct_dict = pickle.load(f_pkl)
+        data_params['seq2struct_dict'] = seq_struct_dict
     
     seq_dict = dict()
     for fname in data_params['seq_fasta']:
@@ -197,11 +206,11 @@ def pipeline():
         validation_dataset = MultiModalLMDataset(df_val, tokenizer, lm_model, device, **data_params)
         test_dataset = MultiModalLMDataset(df_test, tokenizer, lm_model, device, **data_params)
     else:
-        train_dataset = MultiModalDataSet(df_train, **data_params)
+        train_dataset = MultiModalDataSet(df_train, sift_map=sift_map, **data_params)
         var_db = train_dataset.get_var_db()
-        validation_dataset = MultiModalDataSet(df_val, var_db=var_db, **data_params)
+        validation_dataset = MultiModalDataSet(df_val, var_db=var_db, sift_map=sift_map, **data_params)
         var_db = pd.concat([var_db, validation_dataset.get_var_db()])
-        test_dataset = MultiModalDataSet(df_test, var_db=var_db, **data_params)
+        test_dataset = MultiModalDataSet(df_test, var_db=var_db, sift_map=sift_map, **data_params)
 
     logging.info('Training set: {}; Positive: {}'.format(len(train_dataset), train_dataset.count_positive()))
     logging.info("Sequential graph summary: (average) nodes {:.1f}, edges {:.1f}".format(*train_dataset.dataset_summary(train_dataset.seq_graph_stats)))
@@ -331,16 +340,15 @@ def pipeline():
         data_name = 'test'
         logging.info(f'<{data_name}> loss={test_loss:.4f} auPR={test_aupr:.4f} auROC={test_auc:.4f}')
 
-        if epoch % args.save_freq == 0:
+        # if epoch % args.save_freq == 0:
             # _save_scores(train_vars, train_labels, train_scores, 'train', epoch, exp_dir)
             # _save_scores(val_vars, val_labels, val_scores, 'val', epoch, exp_dir)
             # _save_scores(test_vars, test_labels, test_scores, 'test', epoch, exp_dir)
-            if tb_writer:
-                tb_writer.add_pr_curve('Train/PR-curve', train_labels, train_scores, epoch)
-                tb_writer.add_pr_curve('Test/PR-curve', test_labels, test_scores, epoch)
-                tb_writer.add_pr_curve('Val/PR-curve', val_labels, val_scores, epoch)
-
         if tb_writer:
+            tb_writer.add_pr_curve('Train/PR-curve', train_labels, train_scores, epoch)
+            tb_writer.add_pr_curve('Test/PR-curve', test_labels, test_scores, epoch)
+            tb_writer.add_pr_curve('Val/PR-curve', val_labels, val_scores, epoch)
+
             tb_writer.add_scalar('train/loss', train_loss, epoch)
             tb_writer.add_scalar('validation/loss', val_loss, epoch)
             tb_writer.add_scalar('test/loss', test_loss, epoch)

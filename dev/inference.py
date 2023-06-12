@@ -12,7 +12,7 @@ import torch.optim as optim
 from data.dataset_multi import *
 from models.multimodal import MultiModel
 # from dev.models.graphtransformer import GraphTransformer
-# from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 from metrics import *
 from utils import str2bool, env_setup, _save_scores
 from preprocess.utils import parse_fasta
@@ -44,7 +44,8 @@ def parse_args():
     parser.add_argument('--exp_dir', help='Directory for all training related files, e.g. checkpoints, log')
     parser.add_argument('--experiment', help='Experiment name')
     parser.add_argument('--log_level', default='info', help='Log level')
-
+    parser.add_argument('--tensorboard', type=str2bool, default=False,
+                        help='Option to write log information in tensorboard')
     parser.add_argument('--test_data', default='test.csv', help='Testing data file')
     parser.add_argument('--save_freq', type=int, default=5, help='Frequency to save models')
     args = parser.parse_args()
@@ -55,6 +56,7 @@ def parse_args():
 def predict(model, device, data_loader):
     model.eval()
     all_vars, all_labels, all_scores = [], [], []
+    all_emb = []
     with torch.no_grad():
         for batch_idx, batch_data in enumerate(data_loader):
             batch_dict = batch_data[0]
@@ -73,10 +75,11 @@ def predict(model, device, data_loader):
             batch_scores = model.predict(batch_logits)
             batch_labels_ = batch_labels.detach().cpu().numpy()
             batch_scores_ = batch_scores.detach().cpu().numpy()
-            
+            # batch_embeds_ = batch_emb.detach().cpu()
             all_scores.append(batch_scores_)
             all_labels.append(batch_labels_)
             all_vars.extend(batch_vars)
+            # all_emb.append(batch_embeds_)
 
         all_labels = np.concatenate(all_labels, 0)
         all_scores = np.concatenate(all_scores, 0)
@@ -100,6 +103,14 @@ if __name__ == '__main__':
     data_path = Path(config['data_dir'])
     df_test = pd.read_csv(data_path / args.test_data)
     name_prefix = args.test_data.split('.')[0]
+    sift_map = pd.read_csv(data_params['sift_file'], sep='\t').dropna().reset_index(drop=True)
+    sift_map = sift_map.merge(df_test, how='inner').drop_duplicates().reset_index(drop=True)
+
+    if Path(data_params['seq2struct_cache']).exists():
+        with open(data_params['seq2struct_cache'], 'rb') as f_pkl:
+            seq_struct_dict = pickle.load(f_pkl)
+        data_params['seq2struct_dict'] = seq_struct_dict
+    
     seq_dict = dict()
     for fname in data_params['seq_fasta']:
         try:
@@ -112,7 +123,7 @@ if __name__ == '__main__':
         lm_model = lm_model.to(device)
         test_dataset = MultiModalLMDataset(df_test, tokenizer, lm_model, device, **data_params)
     else:
-        test_dataset = MultiModalDataSet(df_test, **data_params)  # TODO: var_db
+        test_dataset = MultiModalDataSet(df_test, sift_map=sift_map, **data_params)  # TODO: var_db
 
     logging.info("Sequential graph summary: (average) nodes {:.1f}, edges {:.1f}".format(*test_dataset.dataset_summary(test_dataset.seq_graph_stats)))
     logging.info("Structural graph summary: (average) nodes {:.1f}, edges {:.1f}".format(*test_dataset.dataset_summary(test_dataset.struct_graph_stats)))
@@ -136,6 +147,11 @@ if __name__ == '__main__':
     result_path = Path(exp_dir)
     if not result_path.exists():
         result_path.mkdir(parents=True)
+
+    if args.tensorboard:
+        tb_writer = SummaryWriter(log_dir='{}/tensorboard'.format(config['exp_dir']))
+    else:
+        tb_writer = None
 
     logging.info("Inference on test set...")
     test_scores, test_labels, test_vars = predict(model, device, test_loader)

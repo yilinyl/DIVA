@@ -25,9 +25,9 @@ class MultiModalData(object):
 
 class MultiModalDataSet(GraphDataSetBase):
     def __init__(self, df_in, window_size, feat_dir, lap_pos_enc, wl_pos_enc, pos_enc_dim, cov_thres=0.5, seq_dict=None,
-                 seq_graph_option='star', use_nsp=False, nsp_dir=None, use_cosmis=False, cosmis_dir=None, var_db=None,
+                 seq_graph_option='star', use_nsp=False, nsp_dir=None, use_cosmis=False, cosmis_dir=None, var_db=None, seq2struct_dict=None,
                  norm_feat=False, var_graph_cache=None, struct_graph_cache=None, seq_graph_cache=None, use_patho_tag=False, 
-                 cosmis_cols=['cosmis'], cosmis_suffix='.pkl', use_oe=False, oe_dir=None, **kwargs):
+                 cosmis_cols=['cosmis'], cosmis_suffix='.pkl', use_oe=False, oe_dir=None, use_dssp=False, dssp_dir=None, sift_map=None, **kwargs):
         super(MultiModalDataSet, self).__init__()
         # self.n_patho = []
         # self.aa_idx = []
@@ -46,6 +46,12 @@ class MultiModalDataSet(GraphDataSetBase):
         self.cosmis_dir = cosmis_dir
         self.use_oe = use_oe
         self.oe_dir = oe_dir
+        self.use_dssp = use_dssp
+        self.dssp_dir = dssp_dir
+        if not seq2struct_dict:
+            seq2struct_dict = dict()
+        self.seq2struct_dict = seq2struct_dict
+        self.sift_map = sift_map
         self.use_patho_tag = use_patho_tag
         self.seq_graph_stats = {'nodes': [], 'edges': []}
         self.struct_graph_stats = {'nodes': [], 'edges': []}
@@ -79,12 +85,22 @@ class MultiModalDataSet(GraphDataSetBase):
                 struct_id = record['PDB']
                 chain = record['Chain']
                 key = ':'.join([uprot, struct_id, chain])
+                if key not in self.seq2struct_dict:
+                    struct_info = self.sift_map.query('UniProt == @uprot & PDB == @struct_id & Chain == @chain').iloc[0]
+                    seq_pos = list(map(int, unzip_res_range(struct_info['MappableResInPDBChainOnUniprotBasis'])))
+                    struct_pos = unzip_res_range(struct_info['MappableResInPDBChainOnPDBBasis'])
+                    self.seq2struct_dict[key] = dict(zip(seq_pos, struct_pos))
 
             else:
                 model = 'AF'
                 struct_id = uprot
                 chain = 'A'
                 key = ':'.join([uprot, model, chain])
+                seq_pos = list(range(1, record['prot_length'] + 1))
+                struct_pos = list(map(str, seq_pos))
+                self.seq2struct_dict[key] = dict(zip(seq_pos, struct_pos))
+            
+            seq2struct_pos = self.seq2struct_dict[key]
 
             f_struct_graph = self.struct_graph_root / f'{model}-{struct_id}_{uprot_pos}.pkl'
             if not f_struct_graph.exists():
@@ -108,6 +124,8 @@ class MultiModalDataSet(GraphDataSetBase):
 
             with open(f_seq_graph, 'rb') as f_pkl:
                 seq_graph, pos_remain_seq, var_idx_seq = pickle.load(f_pkl)
+            
+            feat_exclude = ['_ID', 'ref_aa', 'lap_pos_enc', 'wl_pos_enc', 'coords']  # skip for feature concatenation
 
             if self.use_nsp:
                 try:
@@ -144,7 +162,8 @@ class MultiModalDataSet(GraphDataSetBase):
                     str_cosmis_feat, cosmis_stats = impute_nan(torch.tensor(cosmis_feat_raw[list(map(lambda x: x - 1, pos_remain_str)), :]), cosmis_stats)
                     struct_graph.ndata['cosmis'] = str_cosmis_feat
 
-                except FileNotFoundError:
+                except Exception as e:
+                    logging.warning(f'Exception {e} in loading COSMIS feature for {uprot}:{uprot_pos}')
                     continue
             
             if self.use_oe:
@@ -166,6 +185,17 @@ class MultiModalDataSet(GraphDataSetBase):
 
                 except (FileNotFoundError, ValueError, IndexError) as e:
                     logging.warning(f'{e} in loading OE feature for {uprot}')
+                    continue
+            
+            if self.use_dssp:
+                try:
+                    ss8, dssp_feat_raw = load_dssp_feats(struct_id, pos_remain_str, chain, model, seq2struct_pos, self.dssp_dir)
+                    struct_graph.ndata['ss'] = torch.tensor(list(map(ss8_to_index, ss8))).unsqueeze(-1)
+                    struct_graph.ndata['dssp'] = torch.tensor(dssp_feat_raw)
+                    feat_exclude.append('ss')
+                    # TODO: encode ss8
+                except Exception as e:
+                    logging.warning(f'{e} in loading DSSP feature for {uprot} at {uprot_pos}')
                     continue
 
             isolated_nodes = ((struct_graph.in_degrees() == 0) & (struct_graph.out_degrees() == 0)).nonzero().squeeze(1)
@@ -192,8 +222,6 @@ class MultiModalDataSet(GraphDataSetBase):
             if self.wl_pos_enc:
                 seq_graph.ndata['wl_pos_enc'] = wl_positional_encoding(seq_graph)
                 struct_graph.ndata['wl_pos_enc'] = wl_positional_encoding(struct_graph)
-
-            feat_exclude = ['_ID', 'ref_aa', 'lap_pos_enc', 'wl_pos_enc', 'coords']  # skip for current step
 
             struct_graph.ndata['feat'] = self._compile_feats(struct_graph, feat_exclude)
             # struct_graph.edata['feat'] =
@@ -258,7 +286,8 @@ class MultiModalDataSet(GraphDataSetBase):
 class MultiModalLMDataset(GraphDataSetBase):
     def __init__(self, df_in, tokenizer, lm_model, device, lap_pos_enc, wl_pos_enc, pos_enc_dim, cov_thres=0.5, seq_dict=None,
                  use_lm_cache=False, lm_cache=None, var_graph_cache=None, struct_graph_cache=None, seq_graph_cache=None, 
-                 use_nsp=False, nsp_dir=None, use_cosmis=False, cosmis_dir=None, cosmis_cols=['cosmis'], cosmis_suffix='.pkl', **kwargs):
+                 use_nsp=False, nsp_dir=None, use_cosmis=False, cosmis_dir=None, cosmis_cols=['cosmis'], cosmis_suffix='.pkl',
+                 use_oe=False, oe_dir=None, **kwargs):
         super(MultiModalLMDataset, self).__init__()
         self.seq_dict = seq_dict
         self.tokenizer = tokenizer
@@ -279,7 +308,10 @@ class MultiModalLMDataset(GraphDataSetBase):
         self.nsp_dir = nsp_dir
         self.use_cosmis = use_cosmis
         self.cosmis_dir = cosmis_dir
-
+        self.use_oe = use_oe
+        self.oe_dir = oe_dir
+        self.seq_graph_stats = {'nodes': [], 'edges': []}
+        self.struct_graph_stats = {'nodes': [], 'edges': []}
         # self.nfeat_key = 'feat_ref'
 
         if var_graph_cache:
@@ -377,6 +409,27 @@ class MultiModalLMDataset(GraphDataSetBase):
 
                 except FileNotFoundError:
                     continue
+            
+            if self.use_oe:
+                try:
+                    oe_feat_raw = load_oe_feats(uprot, self.oe_dir, cols=['obs_exp_mean', 'obs_exp_max'])
+                    if np.isnan(oe_feat_raw).all():
+                        logging.warning("NA in OE feature for {}".format(uprot))
+                        continue
+
+                    oe_stats = {'mean': torch.tensor(np.nanmean(oe_feat_raw, axis=0)),
+                                'min': torch.tensor(np.nanmin(oe_feat_raw, axis=0)),
+                                'max': torch.tensor(np.nanmax(oe_feat_raw, axis=0))}
+
+                    seq_oe_feat, oe_stats = impute_nan(torch.tensor(oe_feat_raw[list(map(lambda x: x - 1, pos_remain_seq)), :]), oe_stats)
+                    seq_graph.ndata['oe'] = seq_oe_feat
+
+                    str_oe_feat, oe_stats = impute_nan(torch.tensor(oe_feat_raw[list(map(lambda x: x - 1, pos_remain_str)), :]), oe_stats)
+                    struct_graph.ndata['oe'] = str_oe_feat
+
+                except (FileNotFoundError, ValueError, IndexError) as e:
+                    logging.warning(f'{e} in loading OE feature for {uprot}')
+                    continue
 
             if uprot not in self.seq_dict:
                 self.seq_dict[uprot] = fetch_prot_seq(uprot)
@@ -386,9 +439,12 @@ class MultiModalLMDataset(GraphDataSetBase):
             seq_alt = seq[:uprot_pos - 1] + record['ALT_AA'] + seq[uprot_pos:]
             emb_alt = calc_esm_emb(seq_alt, self.tokenizer, self.lm_model)
             # emb_alt = emb_alt.cpu()
-
-            struct_graph.ndata['esm_ref'] = emb_ref[list(map(lambda x: x - 1, pos_remain_str)), :]
-            struct_graph.ndata['feat_alt'] = emb_alt[list(map(lambda x: x - 1, pos_remain_str)), :]
+            try:
+                struct_graph.ndata['esm_ref'] = emb_ref[list(map(lambda x: x - 1, pos_remain_str)), :]
+                struct_graph.ndata['feat_alt'] = emb_alt[list(map(lambda x: x - 1, pos_remain_str)), :]
+            except IndexError as e:
+                logging.warning(f'{e} for {uprot}-{uprot_pos}')
+                continue
 
             seq_graph.ndata['esm_ref'] = emb_ref[list(map(lambda x: x - 1, pos_remain_seq)), :]
             seq_graph.ndata['feat_alt'] = emb_alt[list(map(lambda x: x - 1, pos_remain_seq)), :]
@@ -397,6 +453,8 @@ class MultiModalLMDataset(GraphDataSetBase):
                 nfeat_all.append('nsp_feat')
             if self.use_cosmis:
                 nfeat_all.append('cosmis')
+            if self.use_oe:
+                nfeat_all.append('oe')
             
             struct_graph.ndata['feat_ref'] = torch.cat(list(map(lambda x: struct_graph.ndata[x], nfeat_all)), dim=-1)
             seq_graph.ndata['feat_ref'] = torch.cat(list(map(lambda x: seq_graph.ndata[x], nfeat_all)), dim=-1)
@@ -431,6 +489,10 @@ class MultiModalLMDataset(GraphDataSetBase):
                                'struct_idx': var_idx_struct}
             self.data.append((graph_data_dict, record['label'], alt_aa, record['prot_var_id']))
             self.label.append(record['label'])
+            self.seq_graph_stats['nodes'].append(seq_graph.num_nodes())
+            self.seq_graph_stats['edges'].append(seq_graph.num_edges())
+            self.struct_graph_stats['nodes'].append(struct_graph.num_nodes())
+            self.struct_graph_stats['edges'].append(struct_graph.num_edges())
 
     def __getitem__(self, index):
         graph_data_dict, label, alt_aa, var_id = self.data[index]
