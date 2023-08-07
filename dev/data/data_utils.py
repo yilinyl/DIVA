@@ -242,6 +242,27 @@ def load_oe_feats(uprot, feat_root, cols=['obs_exp_mean', 'obs_exp_max']):
 
     return df_oe[cols].values
 
+
+def load_ires_feats(uprot, prot_len, pio_score_root, gt_ires_dict):
+    score_mat = np.zeros((prot_len, 1))
+    for gt_key in gt_ires_dict:
+        gt_ires_vec = np.zeros(prot_len)
+        try:
+            gt_ires = gt_ires_dict[gt_key][uprot]
+        except KeyError:
+            continue
+        
+        gt_ires_vec[list(map(lambda x: x-1, gt_ires))] = 1
+        score_mat = np.hstack([score_mat, gt_ires_vec.reshape(-1, 1)])
+    try:
+        pio_score = pd.read_pickle(pio_score_root / f'{uprot}_pio.pkl')
+        score_mat = np.hstack([score_mat, pio_score])
+    except FileNotFoundError:
+        pass
+    
+    return score_mat.max(axis=1)
+    
+
 def ss8_to_index(ss):
     ss_all = ['-', 'B', 'E', 'G', 'H', 'I', 'P', 'S', 'T']
     ss_dict = dict(zip(ss_all, range(len(ss_all))))

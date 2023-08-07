@@ -27,7 +27,8 @@ class MultiModalDataSet(GraphDataSetBase):
     def __init__(self, df_in, window_size, feat_dir, lap_pos_enc, wl_pos_enc, pos_enc_dim, cov_thres=0.5, seq_dict=None,
                  seq_graph_option='star', use_nsp=False, nsp_dir=None, use_cosmis=False, cosmis_dir=None, var_db=None, seq2struct_dict=None,
                  norm_feat=False, var_graph_cache=None, struct_graph_cache=None, seq_graph_cache=None, use_patho_tag=False, 
-                 cosmis_cols=['cosmis'], cosmis_suffix='.pkl', use_oe=False, oe_dir=None, use_dssp=False, dssp_dir=None, sift_map=None, **kwargs):
+                 cosmis_cols=['cosmis'], cosmis_suffix='.pkl', use_oe=False, oe_dir=None, use_dssp=False, dssp_dir=None, sift_map=None, 
+                 use_ires=False, ires_pred_dir=None, ires_gt_file=None, **kwargs):
         super(MultiModalDataSet, self).__init__()
         # self.n_patho = []
         # self.aa_idx = []
@@ -48,6 +49,16 @@ class MultiModalDataSet(GraphDataSetBase):
         self.oe_dir = oe_dir
         self.use_dssp = use_dssp
         self.dssp_dir = dssp_dir
+        self.use_ires = use_ires
+        if isinstance(ires_pred_dir, str):
+            ires_pred_dir = Path(ires_pred_dir)
+        self.ires_pred_dir = ires_pred_dir
+        if self.use_ires:
+            try:
+                self.ires_gt_dict = pd.read_pickle(ires_gt_file)
+            except FileNotFoundError:
+                self.ires_gt_dict = dict()
+
         if not seq2struct_dict:
             seq2struct_dict = dict()
         self.seq2struct_dict = seq2struct_dict
@@ -197,6 +208,16 @@ class MultiModalDataSet(GraphDataSetBase):
                 except Exception as e:
                     logging.warning(f'{e} in loading DSSP feature for {uprot} at {uprot_pos}')
                     continue
+            
+            if self.use_ires:
+                try:
+                    ires_feat = load_ires_feats(uprot, record['prot_length'], self.ires_pred_dir, self.ires_gt_dict)
+                    struct_graph.ndata['ires'] = torch.tensor(ires_feat[list(map(lambda x: x - 1, pos_remain_str))]).unsqueeze(-1)
+                    seq_graph.ndata['ires'] = torch.tensor(ires_feat[list(map(lambda x: x - 1, pos_remain_seq))]).unsqueeze(-1)
+                except Exception as e:
+                    logging.warning(f'{e} in loading IRES feature for {uprot}')
+                    struct_graph.ndata['ires'] = torch.zeros((struct_graph.num_nodes(), 1))
+                    seq_graph.ndata['ires'] = torch.zeros((seq_graph.num_nodes(), 1))
 
             isolated_nodes = ((struct_graph.in_degrees() == 0) & (struct_graph.out_degrees() == 0)).nonzero().squeeze(1)
             struct_graph = dgl.remove_nodes(struct_graph, isolated_nodes)

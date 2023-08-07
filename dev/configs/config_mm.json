@@ -1,9 +1,9 @@
 {
     "gpu": {
         "use": true,
-        "id": 1
+        "id": 0
     },
-    "experiment": "mm_dssp_full",
+    "experiment": "mm_ires_full",
     "mode": "train",
     "model_name": "gtn",
     "use_esm": false,
@@ -26,6 +26,9 @@
         "oe_dir": "/fs/cbsuhyfs1/storage1/yl986/data/oe_results/oe_by_protein",
         "use_dssp": true,
         "dssp_dir": "/fs/cbsuhyfs1/storage1/yl986/data/DSSP",
+        "use_ires": true,
+        "ires_pred_dir": "/fs/cbsuhyfs1/storage1/yl986/data/PIONEER_pred/score_by_prot",
+        "ires_gt_file": "/local/storage/yl986/3d_vip/data_prepare/data/IRES/ires_by_prot_gt.pkl",
         "sift_file": "/local/storage/yl986/data/pdb/sifts_20220526/pdbresiduemapping.txt",
         "seq_fasta": ["/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot.fasta",
                       "/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot_varsplic.fasta"],
