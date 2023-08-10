@@ -101,6 +101,7 @@ class MultiModalDataSet(GraphDataSetBase):
                     seq_pos = list(map(int, unzip_res_range(struct_info['MappableResInPDBChainOnUniprotBasis'])))
                     struct_pos = unzip_res_range(struct_info['MappableResInPDBChainOnPDBBasis'])
                     self.seq2struct_dict[key] = dict(zip(seq_pos, struct_pos))
+                    f_struct_graph = self.struct_graph_root / f'{model}-{struct_id}_{uprot}_{uprot_pos}.pkl'
 
             else:
                 model = 'AF'
@@ -110,10 +111,10 @@ class MultiModalDataSet(GraphDataSetBase):
                 seq_pos = list(range(1, record['prot_length'] + 1))
                 struct_pos = list(map(str, seq_pos))
                 self.seq2struct_dict[key] = dict(zip(seq_pos, struct_pos))
-            
-            seq2struct_pos = self.seq2struct_dict[key]
+                f_struct_graph = self.struct_graph_root / f'{model}-{struct_id}_{uprot_pos}.pkl'
 
-            f_struct_graph = self.struct_graph_root / f'{model}-{struct_id}_{uprot_pos}.pkl'
+            seq2struct_pos = self.seq2struct_dict[key]
+   
             if not f_struct_graph.exists():
                 continue
 
@@ -357,13 +358,14 @@ class MultiModalLMDataset(GraphDataSetBase):
                 model = 'PDB'
                 struct_id = record['PDB']
                 chain = record['Chain']
+                f_struct_graph = self.struct_graph_root / f'{model}-{struct_id}_{uprot}_{uprot_pos}.pkl'
 
             else:
                 model = 'AF'
                 struct_id = uprot
                 chain = 'A'
-
-            f_struct_graph = self.struct_graph_root / f'{model}-{struct_id}_{uprot_pos}.pkl'
+                f_struct_graph = self.struct_graph_root / f'{model}-{struct_id}_{uprot_pos}.pkl'
+            
             if not f_struct_graph.exists():  # only load pre-constructed protein structure graph
                 continue
             # if not f_struct_graph.exists():

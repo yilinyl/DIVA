@@ -45,7 +45,7 @@ def build_variant_graph(df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir,
                         cov_thres=0.5, num_neighbors=10, distance_type='centroid', method='radius', radius=10, df_ires=None, save=False,
                         anno_ires=False, coord_option=None, feat_stats=None, var_db=None, seq2struct_dict=None,
                         var_graph_radius=None, seq_dict=None, window_size=None, graph_type='hetero', norm_feat=True,
-                        save_var_graph=False, var_graph_cache='./var_graph_cache', nsp_dir='', **kwargs):
+                        save_var_graph=False, var_graph_cache='./var_graph_cache', nsp_dir='', overwrite=False, **kwargs):
     if not seq2struct_dict:
         seq2struct_dict = dict()
 
@@ -105,9 +105,13 @@ def build_variant_graph(df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir,
 
         f_graph = graph_cache_path / '{}_{}_graph.pkl'.format(model, struct_id)
         # f_graph = os.path.join(g_data_dir, '{}_{}_graph.pkl'.format(model, struct_id))
-        f_var_graph = var_graph_path / f'{model}-{struct_id}_{uprot_pos}.pkl'
-        if f_var_graph.exists():
-            continue
+        f_var_graph = var_graph_path / f'{model}-{struct_id}_{uprot}_{uprot_pos}.pkl'
+        if overwrite and f_var_graph.exists():
+            with open(f_var_graph, 'rb') as f_pkl:
+                var_graph_prev, seq_pos_prev, var_idx_prev = pickle.load(f_pkl)
+        else:
+            if f_var_graph.exists():
+                continue
         # if model != model_prev or struct_id != struct_prev:
         if f_graph.exists():
             with open(f_graph, 'rb') as f_pkl:
@@ -146,11 +150,11 @@ def build_variant_graph(df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir,
 
         if graph_type == 'struct':
             # Extract structure-based variant graph
-            var_graph, seq_pos_remain = extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos,
+            var_graph_new, seq_pos_remain = extract_variant_graph(uprot_pos, chain, chain_res_list, seq2struct_pos,
                                                               prot_graph, feat_data, feat_stats, coev_feat_df,
                                                               patch_radius=var_graph_radius, normalize=norm_feat)
             struct_etype = '_E'
-            struct_g = var_graph
+            struct_g = var_graph_new
             var_idx = 0
         else:
             seq_array = np.array(
@@ -178,25 +182,25 @@ def build_variant_graph(df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir,
                 ('residue', 'struct', 'residue'): struct_g.edges()
             }
 
-            var_graph = dgl.heterograph(edge_dict)
-            var_graph.edges['struct'].data['angle'], angle_stats = impute_nan(struct_g.edata['angle'], angle_stats)
-            var_graph.edges['struct'].data['dist'], dist_stats = impute_nan(struct_g.edata['dist'], dist_stats)
+            var_graph_new = dgl.heterograph(edge_dict)
+            var_graph_new.edges['struct'].data['angle'], angle_stats = impute_nan(struct_g.edata['angle'], angle_stats)
+            var_graph_new.edges['struct'].data['dist'], dist_stats = impute_nan(struct_g.edata['dist'], dist_stats)
 
             if norm_feat:
-                var_graph.edges['struct'].data['angle'] = normalize_feat(var_graph.edges['struct'].data['angle'], angle_stats)
-                var_graph.edges['struct'].data['dist'] = normalize_feat(var_graph.edges['struct'].data['dist'], dist_stats)
+                var_graph_new.edges['struct'].data['angle'] = normalize_feat(var_graph_new.edges['struct'].data['angle'], angle_stats)
+                var_graph_new.edges['struct'].data['dist'] = normalize_feat(var_graph_new.edges['struct'].data['dist'], dist_stats)
 
-            var_graph.ndata['aa_feat'] = torch.tensor(feat_data[start_idx: end_idx + 1])
-            var_graph.edges['sca'].data['sca'] = g_sca_sub.edata['sca'].unsqueeze(1)
-            var_graph.edges['dca'].data['dca'] = torch.cat([g_dca_sub.edata['di'].unsqueeze(1),
+            var_graph_new.ndata['aa_feat'] = torch.tensor(feat_data[start_idx: end_idx + 1])
+            var_graph_new.edges['sca'].data['sca'] = g_sca_sub.edata['sca'].unsqueeze(1)
+            var_graph_new.edges['dca'].data['dca'] = torch.cat([g_dca_sub.edata['di'].unsqueeze(1),
                                                             g_dca_sub.edata['mi'].unsqueeze(1)], dim=-1)
 
-            var_graph.ndata['ref_aa'] = torch.tensor(seq_array[start_idx:(end_idx + 1)], dtype=torch.int64)
+            var_graph_new.ndata['ref_aa'] = torch.tensor(seq_array[start_idx:(end_idx + 1)], dtype=torch.int64)
             seq_pos_remain = list(range(start_idx + 1, end_idx + 2))  # convert index to 1-based sequential positions
             struct_etype = 'struct'
-            struct_g = dgl.edge_type_subgraph(var_graph, etypes=['struct'])
+            struct_g = dgl.edge_type_subgraph(var_graph_new, etypes=['struct'])
 
-        if var_graph.num_nodes() == 0:
+        if var_graph_new.num_nodes() == 0:
             logging.warning('Empty graph for {}:{}'.format(uprot, uprot_pos))
             continue
 
@@ -207,10 +211,17 @@ def build_variant_graph(df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir,
         if struct_g.edata['dist'].isnan().any():
             logging.warning('NA in dist data for {}-{}'.format(model, record['prot_var_id']))
             continue
-
-        if save_var_graph and not f_var_graph.exists():
+        
+        if f_var_graph.exists():
+            if overwrite and var_graph_new.num_nodes() != var_graph_prev.num_nodes():
+                logging.warning('Rewrite variant graph for {}-{}; #nodes: {} -> {}'.format(struct_id, uprot_pos, 
+                                                                                           var_graph_prev.num_nodes(), var_graph_new.num_nodes()))
+                
+                with open(f_var_graph, 'wb') as f_pkl:
+                    pickle.dump((var_graph_new, seq_pos_remain, var_idx), f_pkl)
+        else:
             with open(f_var_graph, 'wb') as f_pkl:
-                pickle.dump((var_graph, seq_pos_remain, var_idx), f_pkl)
+                pickle.dump((var_graph_new, seq_pos_remain, var_idx), f_pkl)
 
         uprot_prev = uprot
 
@@ -221,6 +232,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='./configs/data_config.json', help="Config file path (.json)")
     parser.add_argument('--fname', default='train.csv', help="Input file name")
+    parser.add_argument('--overwrite', default=False, help="Overwrite variant graph or not")
 
     args = parser.parse_args()
 
@@ -254,4 +266,4 @@ if __name__ == '__main__':
             pass
     data_params['seq_dict'] = seq_dict
 
-    build_variant_graph(df_var, sift_map=sift_map, seq2struct_dict=seq_struct_dict, **data_params)
+    build_variant_graph(df_var, sift_map=sift_map, seq2struct_dict=seq_struct_dict, overwrite=args.overwrite, **data_params)
