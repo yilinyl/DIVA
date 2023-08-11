@@ -89,6 +89,7 @@ class MultiModalDataSet(GraphDataSetBase):
         for i, record in tqdm(df_in.iterrows(), total=df_in.shape[0]):
             uprot = record['UniProt']
             uprot_pos = record['Protein_position']
+            var_id = record['prot_var_id']
 
             # load structural graph
             if record['PDB_coverage'] >= self.cov_thres:
@@ -101,7 +102,7 @@ class MultiModalDataSet(GraphDataSetBase):
                     seq_pos = list(map(int, unzip_res_range(struct_info['MappableResInPDBChainOnUniprotBasis'])))
                     struct_pos = unzip_res_range(struct_info['MappableResInPDBChainOnPDBBasis'])
                     self.seq2struct_dict[key] = dict(zip(seq_pos, struct_pos))
-                    f_struct_graph = self.struct_graph_root / f'{model}-{struct_id}_{uprot}_{uprot_pos}.pkl'
+                f_struct_graph = self.struct_graph_root / f'{model}-{struct_id}_{uprot}_{uprot_pos}.pkl'
 
             else:
                 model = 'AF'
@@ -207,7 +208,7 @@ class MultiModalDataSet(GraphDataSetBase):
                     feat_exclude.append('ss')
                     # TODO: encode ss8
                 except Exception as e:
-                    logging.warning(f'{e} in loading DSSP feature for {uprot} at {uprot_pos}')
+                    logging.warning(f'{e} in loading DSSP feature for {var_id} struct-id={struct_id}')
                     continue
             
             if self.use_ires:

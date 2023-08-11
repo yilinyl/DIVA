@@ -73,6 +73,10 @@ def build_variant_graph(df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir,
     for i, record in tqdm(df_in.iterrows(), total=df_in.shape[0]):
         uprot = record['UniProt']
         uprot_pos = record['Protein_position']
+        if uprot_pos > record['prot_length']:
+            logging.warning('Invalid position {} for protein {} (length {})'.format(uprot_pos, uprot, record['prot_length']))
+            continue
+
         if uprot not in seq_dict:
             seq_dict[uprot] = fetch_prot_seq(uprot)
         seq = seq_dict[uprot]
@@ -81,7 +85,7 @@ def build_variant_graph(df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir,
             struct_id = record['PDB']
             chain = record['Chain']
             key = ':'.join([uprot, struct_id, chain])
-
+            f_var_graph = var_graph_path / f'{model}-{struct_id}_{uprot}_{uprot_pos}.pkl'
             if key not in seq2struct_dict:
                 struct_info = sift_map.query('UniProt == @uprot & PDB == @struct_id & Chain == @chain').iloc[0]
                 seq_pos = list(map(int, unzip_res_range(struct_info['MappableResInPDBChainOnUniprotBasis'])))
@@ -102,10 +106,11 @@ def build_variant_graph(df_in, graph_cache, pdb_root_dir, af_root_dir, feat_dir,
             struct_pos = list(map(str, seq_pos))
             seq2struct_dict[key] = dict(zip(seq_pos, struct_pos))
             seq2struct_pos = seq2struct_dict[key]
+            f_var_graph = var_graph_path / f'{model}-{struct_id}_{uprot_pos}.pkl'
 
         f_graph = graph_cache_path / '{}_{}_graph.pkl'.format(model, struct_id)
         # f_graph = os.path.join(g_data_dir, '{}_{}_graph.pkl'.format(model, struct_id))
-        f_var_graph = var_graph_path / f'{model}-{struct_id}_{uprot}_{uprot_pos}.pkl'
+        
         if overwrite and f_var_graph.exists():
             with open(f_var_graph, 'rb') as f_pkl:
                 var_graph_prev, seq_pos_prev, var_idx_prev = pickle.load(f_pkl)
@@ -232,7 +237,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='./configs/data_config.json', help="Config file path (.json)")
     parser.add_argument('--fname', default='train.csv', help="Input file name")
-    parser.add_argument('--overwrite', default=False, help="Overwrite variant graph or not")
+    parser.add_argument('--overwrite', action='store_true', help="Overwrite variant graph or not")
 
     args = parser.parse_args()
 
@@ -250,6 +255,7 @@ if __name__ == '__main__':
     data_params['graph_cache'] = os.fspath(graph_cache)
 
     df_var = pd.read_csv(data_path / args.fname)
+    df_var = df_var.drop_duplicates(['UniProt', 'Protein_position', 'PDB'])
     sift_map = pd.read_csv(data_params['sift_file'], sep='\t').dropna().reset_index(drop=True)
     sift_map = sift_map.merge(df_var, how='inner').drop_duplicates().reset_index(drop=True)
     if Path(data_params['seq2struct_cache']).exists():
