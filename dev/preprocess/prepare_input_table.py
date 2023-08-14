@@ -25,14 +25,18 @@ def compile_input_table(df_raw, pdb_sift_path, fasta_file):
 
     df_raw['prot_var_id'] = df_raw.apply(lambda x: '{}_{}_{}/{}'.format(x['UniProt'], x['Protein_position'], 
                                                                         x['REF_AA'], x['ALT_AA']), axis=1)
-    if 'prot_length' not in df_raw.columns:
+    if 'prot_length' in df_raw.columns:
+        uprot2len = dict(zip(df_raw['UniProt'], df_raw['prot_length']))
+    else:
         uprot2seq_dict = parse_fasta(fasta_file)
-        df_raw['prot_length'] = df_raw['UniProt'].apply(lambda x: len(uprot2seq_dict.get(x, '')))
+        uprot2len = {key: len(val) for key, val in uprot2seq_dict.items()}
+        # df_raw['prot_length'] = df_raw['UniProt'].apply(lambda x: len(uprot2seq_dict.get(x, '')))
 
     uprot_pdb = map_to_pdb(pdb_data, df_raw)
     uprot_pdb_merge = uprot_pdb.merge(pdb_data, how='left')
     uprot_pdb_merge['PDB_position'] = uprot_pdb_merge.apply(uprot2pdb_pos, axis=1)
-    uprot_pdb_merge['prot_length'] = uprot_pdb_merge['UniProt'].apply(lambda x: len(uprot2seq_dict.get(x, '')))
+    uprot_pdb_merge['prot_length'] = uprot_pdb_merge['UniProt'].apply(lambda x: uprot2len.get(x, ''))
+    # uprot_pdb_merge['prot_length'] = uprot_pdb_merge['UniProt'].apply(lambda x: len(uprot2seq_dict.get(x, '')))
     # uprot_pdb_merge['coverage'] = uprot_pdb_merge['n_mapped'] / uprot_pdb_merge['prot_length']
 
     cols = ['UniProt', 'Position', 'PDB', 'Chain', 'PDB_position', 'n_mapped', 'prot_length']
