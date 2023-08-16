@@ -1,0 +1,12 @@
+{
+    "input_dir": "/local/storage/yl986/3d_vip/data_prepare/data/uprot_to_struct",
+    "output_dir": "/fs/cbsuhyfs1/storage1/yl986/data/cosmis_scores_raw",
+    "ensembl_cds": "/local/storage/yl986/3d_vip/cosmis/Homo_sapiens.GRCh38.cds.all.fa.gz",
+    "seq_fasta": ["/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot.fasta",
+                    "/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot_varsplic.fasta"],
+    "gnomad_variants": "/local/storage/yl986/3d_vip/cosmis/mapping-files/gnomad_variant_counts_hg38.json",
+    "uniprot_to_enst": "/local/storage/yl986/3d_vip/cosmis/mapping-files/uprot_to_enst2023.json",
+    "enst_mp_counts": "/local/storage/yl986/3d_vip/cosmis/mapping-files/gnomad_all_enst_prob_vs_counts_obs_and_exp.tsv",
+    "pdb_root_dir": "/fs/cbsuhyfs1/storage/resources/pdb/data",
+    "af_root_dir": "/fs/cbsuhyfs1/storage1/dx38/mutation_pathogenicity/data/AF_structs"
+}
