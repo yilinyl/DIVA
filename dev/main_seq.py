@@ -78,7 +78,7 @@ def evaluation_epoch(model, device, data_loader):
             batch_graphs = batch_data[0].to(device)
             batch_labels = batch_data[1].to(device)
             batch_alt_aa = batch_data[2].to(device)
-            batch_var_idx = batch_data[3].to(device)
+            # batch_var_idx = batch_data[3].to(device)
             batch_vars = batch_data[-1]  # TODO: add var_id
 
             # if model.lap_pos_enc:
@@ -157,7 +157,7 @@ def pipeline():
     net_params, data_params = env_setup(args, config)
 
     if args.tensorboard:
-        tb_writer = SummaryWriter(log_dir='{}/logs'.format(config['exp_dir']))
+        tb_writer = SummaryWriter(log_dir='{}/tensorboard'.format(config['exp_dir']))
     else:
         tb_writer = None
 
@@ -245,11 +245,12 @@ def pipeline():
                                                   shuffle=False, pin_memory=True, drop_last=False)
 
     logging.info("Training starts...")
-    best_ep_scores_train = None
-    best_ep_labels_train = None
+    # best_ep_scores_train = None
+    # best_ep_labels_train = None
     best_val_loss = float('inf')
     best_weights = None
     best_epoch = 0
+    best_results = {'train': None, 'test': None, 'val': None}
 
     for epoch in range(net_params['epochs']):
         logging.info('Epoch %d' % epoch)
@@ -276,15 +277,19 @@ def pipeline():
 
         data_name = 'validation'
         logging.info(f'<{data_name}> loss={val_loss:.4f} auPR={val_aupr:.4f} auROC={val_auc:.4f}')
-
+        
+        test_loss, test_labels, test_scores, test_vars = evaluation_epoch(model, device, test_loader)
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch
             best_weights = copy.deepcopy(model.state_dict())
-            best_ep_scores_train = train_scores
-            best_ep_labels_train = train_labels
+            best_optim = copy.deepcopy(optimizer.state_dict())
+            # best_ep_scores_train = train_scores
+            # best_ep_labels_train = train_labels
+            best_results['train'] = (train_vars, train_labels, train_scores)
+            best_results['test'] = (test_vars, test_labels, test_scores)
+            best_results['val'] = (val_vars, val_labels, val_scores)
 
-        test_loss, test_labels, test_scores, test_vars = evaluation_epoch(model, device, test_loader)
         # print('# Loss: train= {0:.5f}; validation= {1:.5f}; test= {2:.5f};'.format(train_loss, val_loss, test_loss))
 
         test_aupr = compute_aupr(test_labels, test_scores)
@@ -298,21 +303,26 @@ def pipeline():
             _save_scores(test_vars, test_labels, test_scores, 'test', epoch, exp_dir)
 
         if tb_writer:
+            tb_writer.add_pr_curve('Train/PR-curve', train_labels, train_scores, epoch)
+            tb_writer.add_pr_curve('Test/PR-curve', test_labels, test_scores, epoch)
+            tb_writer.add_pr_curve('Val/PR-curve', val_labels, val_scores, epoch)
+
             tb_writer.add_scalar('train/loss', train_loss, epoch)
             tb_writer.add_scalar('validation/loss', val_loss, epoch)
-            tb_writer.add_scalar('test/loss', train_loss, epoch)
+            tb_writer.add_scalar('test/loss', test_loss, epoch)
 
         if optimizer.param_groups[0]['lr'] < net_params['min_lr']:
             logging.info("!! LR SMALLER OR EQUAL TO MIN LR THRESHOLD.")
             break
 
-    if tb_writer:
-        tb_writer.add_pr_curve('Train/PR-curve', best_ep_labels_train, best_ep_scores_train, best_epoch)
-        tb_writer.close()
+    # if tb_writer:
+    #     tb_writer.add_pr_curve('Train/PR-curve', best_ep_labels_train, best_ep_scores_train, best_epoch)
+    #     tb_writer.close()
     logging.info('Save best model at epoch {}:'.format(best_epoch))
-    torch.save({'args': net_params, 'state_dict': best_weights,
-                'train_labels': best_ep_labels_train, 'train_scores': best_ep_scores_train},
+    torch.save({'args': net_params, 'state_dict': best_weights, 'optimizer_state_dict': best_optim},
                model_save_path / 'bestmodel-ep{}.pt'.format(best_epoch))
+    for key in best_results:
+        _save_scores(best_results[key][0], best_results[key][1], best_results[key][2], key, best_epoch, exp_dir)
     # run_pipeline(net_params, train_dataset, validation_dataset, test_dataset, save_freq=args.save_freq,
     #              inf_check=args.inf_check, tb_writer=tb_writer, print_diagnostics=args.print_diagnostics)
 

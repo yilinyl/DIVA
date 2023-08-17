@@ -448,7 +448,8 @@ class VariantSeqGraphDataSet(GraphDataSetBase):
     def __init__(self, df_in, window_size, feat_dir, lap_pos_enc, wl_pos_enc, pos_enc_dim, graph_type='seq', seq_dict=None,
                  seq_graph_option='star', use_nsp=False, nsp_dir=None, use_cosmis=False, cosmis_dir=None,
                  norm_feat=False, cache_only=False, var_graph_cache='./var_graph_cache', 
-                 cosmis_cols=['cosmis'], cosmis_suffix='.pkl', **kwargs):
+                 cosmis_cols=['cosmis'], cosmis_suffix='.pkl', use_oe=False, oe_dir=None, 
+                 use_ires=False, ires_pred_dir=None, ires_gt_file=None, **kwargs):
         super(VariantSeqGraphDataSet, self).__init__()
         # self.n_patho = []
         # self.aa_idx = []
@@ -465,6 +466,17 @@ class VariantSeqGraphDataSet(GraphDataSetBase):
         self.use_cosmis = use_cosmis
         self.cosmis_dir = cosmis_dir
         self.var_graph_path = Path(var_graph_cache) / self.graph_type
+        self.use_oe = use_oe
+        self.oe_dir = oe_dir
+        self.use_ires = use_ires
+        if isinstance(ires_pred_dir, str):
+            ires_pred_dir = Path(ires_pred_dir)
+        self.ires_pred_dir = ires_pred_dir
+        if self.use_ires:
+            try:
+                self.ires_gt_dict = pd.read_pickle(ires_gt_file)
+            except FileNotFoundError:
+                self.ires_gt_dict = dict()
 
         if cache_only and self.var_graph_path.exists():
             self.load_cache_data(df_in, cosmis_cols, cosmis_suffix)
@@ -477,7 +489,7 @@ class VariantSeqGraphDataSet(GraphDataSetBase):
             uprot = record['UniProt']
             uprot_pos = record['Protein_position']
             f_var_graph = self.var_graph_path / f'{uprot}_{uprot_pos}.pkl'
-            if not self.var_graph_path.exists():
+            if not f_var_graph.exists():
                 continue
 
             with open(f_var_graph, 'rb') as f_pkl:
@@ -496,10 +508,41 @@ class VariantSeqGraphDataSet(GraphDataSetBase):
                     continue
             if self.use_cosmis:
                 try:
-                    cosmis_feat = load_cosmis_feats(uprot, self.cosmis_dir, cols=cosmis_cols, suffix=cosmis_suffix)
-                    var_graph.ndata['cosmis'] = torch.tensor(cosmis_feat[list(map(lambda x: x - 1, seq_pos_remain)), :])
-                except FileNotFoundError:
+                    cosmis_feat_raw = load_cosmis_feats(uprot, self.cosmis_dir, cols=cosmis_cols, suffix=cosmis_suffix)
+                    cosmis_stats = {'mean': torch.tensor(np.nanmean(cosmis_feat_raw, axis=0)),
+                                    'min': torch.tensor(np.nanmin(cosmis_feat_raw, axis=0)),
+                                    'max': torch.tensor(np.nanmax(cosmis_feat_raw, axis=0))}
+                    cosmis_feat, cosmis_stats = impute_nan(torch.tensor(cosmis_feat_raw[list(map(lambda x: x - 1, seq_pos_remain)), :]), cosmis_stats)
+                    var_graph.ndata['cosmis'] = cosmis_feat
+                except Exception as e:
+                    logging.warning(f'Exception {e} in loading COSMIS feature for {uprot}:{uprot_pos}')
                     continue
+            
+            if self.use_oe:
+                try:
+                    oe_feat_raw = load_oe_feats(uprot, self.oe_dir, cols=['obs_exp_mean', 'obs_exp_max'])
+                    if np.isnan(oe_feat_raw).all():
+                        logging.warning("NA in OE feature for {}".format(uprot))
+                        continue
+
+                    oe_stats = {'mean': torch.tensor(np.nanmean(oe_feat_raw, axis=0)),
+                                'min': torch.tensor(np.nanmin(oe_feat_raw, axis=0)),
+                                'max': torch.tensor(np.nanmax(oe_feat_raw, axis=0))}
+
+                    seq_oe_feat, oe_stats = impute_nan(torch.tensor(oe_feat_raw[list(map(lambda x: x - 1, seq_pos_remain)), :]), oe_stats)
+                    var_graph.ndata['oe'] = seq_oe_feat
+
+                except (FileNotFoundError, ValueError, IndexError) as e:
+                    logging.warning(f'{e} in loading OE feature for {uprot}')
+                    continue
+            
+            if self.use_ires:
+                try:
+                    ires_feat = load_ires_feats(uprot, record['prot_length'], self.ires_pred_dir, self.ires_gt_dict)
+                    var_graph.ndata['ires'] = torch.tensor(ires_feat[list(map(lambda x: x - 1, seq_pos_remain))]).unsqueeze(-1)
+                except Exception as e:
+                    logging.warning(f'{e} in loading IRES feature for {uprot}')
+                    var_graph.ndata['ires'] = torch.zeros((var_graph.num_nodes(), 1))
 
             if self.lap_pos_enc:
                 lap = laplacian_positional_encoding(var_graph, self.pos_enc_dim)

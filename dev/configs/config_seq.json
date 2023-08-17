@@ -3,20 +3,27 @@
         "use": true,
         "id": 1
     },
-    "experiment": "egat_seq_gene",
+    "experiment": "egat_seq_full",
     "mode": "train",
     "model_name": "gat",
-    "exp_dir": "./output",
-    "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/dataset/by_gene50k",
+    "exp_dir": "/local/storage/yl986/3d_vip/experiments",
+    "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/dataset/full_v1",
     "data_params": {
-        "var_graph_cache": "/fs/cbsuhyfs1/storage/yl986/3d_vip/dev/var_graph_cache",
+        "var_graph_cache": "/fs/cbsuhyfs1/storage1/yl986/var_graph_cache/",
         "pdb_root_dir": "/fs/cbsuhyfs1/storage/resources/pdb/data",
         "af_root_dir": "/fs/cbsuhyfs1/storage1/dx38/mutation_pathogenicity/data/AF_structs",
         "feat_dir": "/fs/cbsuhyfs1/storage1/dx38/mutation_pathogenicity/features",
         "use_nsp": true,
         "nsp_dir": "/fs/cbsuhyfs1/storage/yl986/data/nsp3_result/",
-        "use_cosmis": false,
-        "cosmis_dir": "/local/storage/yl986/3d_vip/data_prepare/data/cosmis_data",
+        "use_cosmis": true,
+        "cosmis_dir": "/fs/cbsuhyfs1/storage1/yl986/data/cosmis_scores",
+        "cosmis_cols": ["cosmis_min", "cosmis_mean", "cosmis_raw", "mis_p_value", "mis_pmt_mean", "mis_pmt_sd", "plddt"],
+        "cosmis_suffix": "_cosmis.tsv",
+        "use_oe": false,
+        "oe_dir": "/fs/cbsuhyfs1/storage1/yl986/data/oe_results/oe_by_protein",
+        "use_ires": true,
+        "ires_pred_dir": "/fs/cbsuhyfs1/storage1/yl986/data/PIONEER_pred/score_by_prot",
+        "ires_gt_file": "/local/storage/yl986/3d_vip/data_prepare/data/IRES/ires_by_prot_gt.pkl",
         "sift_file": "/local/storage/yl986/data/pdb/sifts_20220526/pdbresiduemapping.txt",
         "seq_fasta": ["/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot.fasta",
                       "/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot_varsplic.fasta"],
@@ -31,7 +38,7 @@
         "norm_feat": false,
         "lap_pos_enc": false,
         "pos_enc_dim": 3,
-        "wl_pos_enc": false
+        "wl_pos_enc": true
     },
 
     "net_params": {
