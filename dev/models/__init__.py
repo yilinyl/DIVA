@@ -1,11 +1,13 @@
 from .han import HAN
 from .graphtransformer_v0 import GraphTransformer
 from .gat import GAT
+from .multimodal import MultiModel
 
 __model_lib = {
     'han': HAN,
     'gtn': GraphTransformer,
-    'gat': GAT
+    'gat': GAT,
+    'multi': MultiModel
 }
 
 def build_model(model='', **kwargs):

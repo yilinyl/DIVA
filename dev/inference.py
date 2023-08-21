@@ -9,8 +9,10 @@ import random
 
 from datetime import datetime
 import torch.optim as optim
+from data import build_dataset
 from data.dataset_multi import *
-from models.multimodal import MultiModel
+from models import build_model
+# from models.multimodal import MultiModel
 # from dev.models.graphtransformer import GraphTransformer
 from torch.utils.tensorboard import SummaryWriter
 from metrics import *
@@ -53,22 +55,24 @@ def parse_args():
     return args
 
 
-def predict(model, device, data_loader):
+def predict(model, device, data_loader, dtype='multi'):
     model.eval()
     all_vars, all_labels, all_scores = [], [], []
     all_emb = []
     with torch.no_grad():
         for batch_idx, batch_data in enumerate(data_loader):
-            batch_dict = batch_data[0]
-            batch_seq_graph = batch_dict['seq_graph'].to(device)
-            batch_str_graph = batch_dict['struct_graph'].to(device)
-
             batch_labels = batch_data[1]  # binary label or experimental score
             batch_alt_aa = batch_data[2].to(device)
-            # batch_var_idx = batch_data[3].to(device)
             batch_vars = batch_data[-1]
+            if dtype == 'multi':
+                batch_dict = batch_data[0]
+                batch_seq_graph = batch_dict['seq_graph'].to(device)
+                batch_str_graph = batch_dict['struct_graph'].to(device)
+                batch_logits, batch_emb = model(batch_seq_graph, batch_str_graph, batch_alt_aa)
+            else:
+                batch_graphs = batch_data[0].to(device)
+                batch_logits = model.forward(batch_graphs, batch_alt_aa)
 
-            batch_logits, batch_emb = model(batch_seq_graph, batch_str_graph, batch_alt_aa)
             shapes = batch_logits.size()
             batch_logits = batch_logits.view(shapes[0] * shapes[1])
 
@@ -103,13 +107,15 @@ if __name__ == '__main__':
     data_path = Path(config['data_dir'])
     df_test = pd.read_csv(data_path / args.test_data)
     name_prefix = args.test_data.split('.')[0]
-    sift_map = pd.read_csv(data_params['sift_file'], sep='\t').dropna().reset_index(drop=True)
-    sift_map = sift_map.merge(df_test, how='inner').drop_duplicates().reset_index(drop=True)
+    sift_map = None
+    if config['data_type'] != 'seq':
+        sift_map = pd.read_csv(data_params['sift_file'], sep='\t').dropna().reset_index(drop=True)
+        sift_map = sift_map.merge(df_test, how='inner').drop_duplicates().reset_index(drop=True)
 
-    if Path(data_params['seq2struct_cache']).exists():
-        with open(data_params['seq2struct_cache'], 'rb') as f_pkl:
-            seq_struct_dict = pickle.load(f_pkl)
-        data_params['seq2struct_dict'] = seq_struct_dict
+        if Path(data_params['seq2struct_cache']).exists():
+            with open(data_params['seq2struct_cache'], 'rb') as f_pkl:
+                seq_struct_dict = pickle.load(f_pkl)
+            data_params['seq2struct_dict'] = seq_struct_dict
     
     seq_dict = dict()
     for fname in data_params['seq_fasta']:
@@ -123,20 +129,24 @@ if __name__ == '__main__':
         lm_model = lm_model.to(device)
         test_dataset = MultiModalLMDataset(df_test, tokenizer, lm_model, device, **data_params)
     else:
-        test_dataset = MultiModalDataSet(df_test, sift_map=sift_map, **data_params)  # TODO: var_db
-
-    logging.info("Sequential graph summary: (average) nodes {:.1f}, edges {:.1f}".format(*test_dataset.dataset_summary(test_dataset.seq_graph_stats)))
-    logging.info("Structural graph summary: (average) nodes {:.1f}, edges {:.1f}".format(*test_dataset.dataset_summary(test_dataset.struct_graph_stats)))
+        test_dataset = build_dataset(config['data_type'], df_test, sift_map=sift_map, **data_params)
+        # test_dataset = MultiModalDataSet(df_test, sift_map=sift_map, **data_params)  # TODO: var_db
+    if config['model_name'] == 'multi':
+        logging.info("Sequential graph summary: (average) nodes {:.1f}, edges {:.1f}".format(*test_dataset.dataset_summary(test_dataset.seq_graph_stats)))
+        logging.info("Structural graph summary: (average) nodes {:.1f}, edges {:.1f}".format(*test_dataset.dataset_summary(test_dataset.struct_graph_stats)))
+    else:
+        logging.info("Graph summary for {}: (average) nodes {:.1f}, edges {:.1f}".format(config['data_type'], *test_dataset.dataset_summary()))
     # Load model
     checkpt_dict = torch.load(config['model_path'], map_location='cpu')
     net_params = checkpt_dict['args']
     net_params.update(update_dict)
-    net_params['seq_params'].update(update_dict)
-    net_params['struct_params'].update(update_dict)
+    if config['model_name'] == 'multi':
+        net_params['seq_params'].update(update_dict)
+        net_params['struct_params'].update(update_dict)
     state_dict = checkpt_dict['state_dict']
     
     logging.info('Loading model weights...')
-    model = MultiModel(**net_params)
+    model = build_model(config['model_name'], **net_params)
     model.load_state_dict(state_dict)
     logging.info(f'Model Architecture:\n{model}')
     model = model.to(device)
@@ -154,5 +164,5 @@ if __name__ == '__main__':
         tb_writer = None
 
     logging.info("Inference on test set...")
-    test_scores, test_labels, test_vars = predict(model, device, test_loader)
+    test_scores, test_labels, test_vars = predict(model, device, test_loader, dtype=config['data_type'])
     _save_scores(test_vars, test_labels, test_scores, name_prefix, exp_dir=exp_dir, mode='pred')
