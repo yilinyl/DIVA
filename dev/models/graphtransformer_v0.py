@@ -247,6 +247,8 @@ class GraphTransformer(nn.Module):
                  batch_norm=False,
                  classify=True,
                  use_weight_in_loss=False,
+                 use_onehot=False,
+                 aa_classes=21,
                  **kwargs):
         super().__init__()
 
@@ -264,7 +266,8 @@ class GraphTransformer(nn.Module):
         self.classify = classify
         self.use_weight_in_loss = use_weight_in_loss
         max_wl_role_index = 100
-        
+        self.use_onehot = use_onehot
+        self.aa_classes = aa_classes
         
         if self.lap_pos_enc:
             pos_enc_dim = pos_enc_dim
@@ -279,8 +282,11 @@ class GraphTransformer(nn.Module):
         # self.ndata_encoder = nn.Sequential(nn.Linear(aa_embed_dim + ndata_dim_in, hidden_size), nn.ReLU())
         # self.edata_encoder = nn.Sequential(nn.Linear(edata_dim_in, hidden_size), nn.ReLU())
         if not self.use_esm:
-            self.aa_embedding = nn.Embedding(n_labels, aa_embed_dim)
-            self.ndata_encoder = nn.Linear(aa_embed_dim + ndata_dim_in, hidden_size)
+            if use_onehot:
+                self.ndata_encoder = nn.Linear(aa_classes + ndata_dim_in, hidden_size)
+            else:
+                self.aa_embedding = nn.Embedding(n_labels, aa_embed_dim)
+                self.ndata_encoder = nn.Linear(aa_embed_dim + ndata_dim_in, hidden_size)
         else:
             if isinstance(ndata_dim_in, (tuple, list)):
                 ndata_dim_in = sum(ndata_dim_in)  # sum of ref_dim & alt_dim
@@ -302,9 +308,14 @@ class GraphTransformer(nn.Module):
         self.predict = nn.Sigmoid()
 
     def add_aa_embedding(self, g, alt_aa):
-        h_aa = self.aa_embedding(g.ndata['ref_aa'])  # n_nodes x hidden_dim
+        if self.use_onehot:
+            h_aa = F.one_hot(g.ndata['ref_aa'], num_classes = self.aa_classes)
+            h_alt = F.one_hot(alt_aa, num_classes=self.aa_classes)
+        else:
+            h_aa = self.aa_embedding(g.ndata['ref_aa'])  # n_nodes x hidden_dim
+            h_alt = self.aa_embedding(alt_aa)  # n_batch x hidden_dim
+
         g.ndata['h_aa'] = h_aa
-        h_alt = self.aa_embedding(alt_aa)  # n_batch x hidden_dim
 
         seq_emb = []
         for b in range(g.batch_size):

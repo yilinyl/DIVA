@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-import torch.functional as F
+import torch.nn.functional as F
 import dgl
 from dgl.nn.pytorch import GATConv, EGATConv
 from .graphtransformer_v0 import MLPReadout
@@ -24,6 +24,8 @@ class GAT(nn.Module):
                  edata_dim_in=None,
                  dropout=0.0,
                  classify=True,
+                 use_onehot=False,
+                 aa_classes=21,
                  **kwargs):
         super(GAT, self).__init__()
         self.act = activation
@@ -36,14 +38,20 @@ class GAT(nn.Module):
         self.gat_layers = nn.ModuleList()
         self.n_heads = n_heads
         self.use_efeat = use_efeat
+        self.use_onehot = use_onehot
+        self.aa_classes = aa_classes
         # self.feat_dropout = nn.Dropout(dropout)
 
         if not isinstance(self.n_heads, list):
             self.n_heads = [n_heads] * n_layers
 
         if not self.use_esm:
-            self.aa_embedding = nn.Embedding(n_labels, aa_embed_dim)
-            h_dim_in = aa_embed_dim + ndata_dim_in
+            if use_onehot:
+                # self.ndata_encoder = nn.Linear(aa_classes + ndata_dim_in, hidden_size)
+                h_dim_in = aa_classes + ndata_dim_in
+            else:
+                self.aa_embedding = nn.Embedding(n_labels, aa_embed_dim)
+                h_dim_in = aa_embed_dim + ndata_dim_in
         else:
             if isinstance(ndata_dim_in, (tuple, list)):
                 ndata_dim_in = sum(ndata_dim_in)  # sum of ref_dim & alt_dim
@@ -100,9 +108,14 @@ class GAT(nn.Module):
 
 
     def add_aa_embedding(self, g, alt_aa):
-        h_aa = self.aa_embedding(g.ndata['ref_aa'])  # n_nodes x hidden_dim
+        if self.use_onehot:
+            h_aa = F.one_hot(g.ndata['ref_aa'], num_classes = self.aa_classes)
+            h_alt = F.one_hot(alt_aa, num_classes=self.aa_classes)
+        else:
+            h_aa = self.aa_embedding(g.ndata['ref_aa'])  # n_nodes x hidden_dim
+            h_alt = self.aa_embedding(alt_aa)  # n_batch x hidden_dim
+
         g.ndata['h_aa'] = h_aa
-        h_alt = self.aa_embedding(alt_aa)  # n_batch x hidden_dim
 
         seq_emb = []
         for b in range(g.batch_size):
@@ -127,6 +140,7 @@ class GAT(nn.Module):
 
             # h = self.ndata_encoder(torch.cat([g.ndata['h_aa'], g.ndata['feat']], dim=-1))
             h = torch.cat([g.ndata['h_aa'], g.ndata['feat']], dim=-1)
+            # h = self.ndata_encoder(h)
         else:
             nfeat_alt_key = 'feat_alt'
             h = torch.cat([g.ndata[nfeat_key], g.ndata[nfeat_alt_key]], dim=-1)
