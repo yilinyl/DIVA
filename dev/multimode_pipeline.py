@@ -157,7 +157,6 @@ def parse_args():
 
 def pipeline():
     print(os.getcwd())
-    os.chdir('/fs/cbsuhyfs1/storage1/yl986/3d_vip/dev')
     args = parse_args()
 
     with open(args.config) as f:
