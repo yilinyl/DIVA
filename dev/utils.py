@@ -148,7 +148,7 @@ def _save_scores(var_ids, target, pred, name, epoch=None, exp_dir='./output', mo
     if mode == 'train':
         fname = f'{exp_dir}/result/epoch_{epoch}_{name}_score.txt'
     else:
-        fname = f'{exp_dir}/predict_{name}_score.txt'
+        fname = f'{exp_dir}/pred_{name}_score.txt'
     with open(fname, 'w') as f:
         f.write('var\ttarget\tscore\n')
         for a, c, d in zip(var_ids, target, pred):

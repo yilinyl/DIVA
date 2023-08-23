@@ -106,7 +106,10 @@ if __name__ == '__main__':
 
     data_path = Path(config['data_dir'])
     df_test = pd.read_csv(data_path / args.test_data)
-    name_prefix = args.test_data.split('.')[0]
+    if not config['out_prefix']:
+        name_prefix = args.test_data.split('.')[0]
+    else:
+        name_prefix = config['out_prefix']
     sift_map = None
     if config['data_type'] != 'seq':
         sift_map = pd.read_csv(data_params['sift_file'], sep='\t').dropna().reset_index(drop=True)
