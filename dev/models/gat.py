@@ -42,8 +42,9 @@ class GAT(nn.Module):
         self.aa_classes = aa_classes
         # self.feat_dropout = nn.Dropout(dropout)
 
-        if not isinstance(self.n_heads, list):
-            self.n_heads = [n_heads] * n_layers
+        # if not isinstance(self.n_heads, list):
+        #     self.n_heads = [n_heads] * n_layers
+        self.n_heads = n_heads
 
         if not self.use_esm:
             if use_onehot:
@@ -66,38 +67,44 @@ class GAT(nn.Module):
                                             edata_dim_in,
                                             hidden_size,
                                             hidden_size,
-                                            self.n_heads[0]))
+                                            self.n_heads))
             for l in range(1, n_layers - 1):
-                self.gat_layers.append(EGATConv(hidden_size * self.n_heads[l-1],
-                                                hidden_size * self.n_heads[l-1],
+                self.gat_layers.append(EGATConv(hidden_size * self.n_heads,
+                                                hidden_size * self.n_heads,
                                                 hidden_size,
                                                 hidden_size,
-                                                self.n_heads[l]))
+                                                self.n_heads))
                 # h_dim_in = h_dim_out * self.n_heads[l]  # 128
                 # e_dim_in = f_dim_out * self.n_heads[l]
                 # h_dim_out = h_dim_in * 2
                 # f_dim_out = h_dim_out
 
-            self.gat_out_layer = EGATConv(hidden_size * self.n_heads[-2],
-                                          hidden_size * self.n_heads[-2],
+            self.gat_out_layer = EGATConv(hidden_size * self.n_heads,
+                                          hidden_size * self.n_heads,
                                           out_dim,
                                           out_dim,
-                                          self.n_heads[-1])
+                                          num_heads=1)
         else:
-            for l in range(n_layers - 1):
-                self.gat_layers.append(GATConv(h_dim_in,
-                                               h_dim_out,
-                                               self.n_heads[l],
+            self.gat_layers.append(GATConv(h_dim_in,
+                                           hidden_size,
+                                           self.n_heads,
+                                           attn_drop=dropout,
+                                           residual=residual,
+                                           activation=self.act))
+            for l in range(1, n_layers - 1):
+                self.gat_layers.append(GATConv(hidden_size * self.n_heads,
+                                               hidden_size,
+                                               self.n_heads,
                                                attn_drop=dropout,
                                                residual=residual,
                                                activation=self.act))
                 # d_out = h_dim_out * n_heads # 128
-                h_dim_in = h_dim_out * self.n_heads[l]  # 128
-                h_dim_out = h_dim_in * 2
+                # hidden_dim = h_dim_out * self.n_heads[l]  # 128
+                # h_dim_out = h_dim_in
 
-            self.gat_out_layer = GATConv(h_dim_in,
-                                         h_dim_out,
-                                         self.n_heads[-1],
+            self.gat_out_layer = GATConv(hidden_size * self.n_heads,
+                                         out_dim,
+                                         num_heads=1,
                                          attn_drop=dropout,
                                          residual=residual,
                                          activation=None)
@@ -161,7 +168,7 @@ class GAT(nn.Module):
                 h = h.flatten(1)  # concat embeddings from different heads
             h = self.gat_out_layer(g, h)
 
-        h = self.act(h.mean(dim=1))
+        # h = self.act(h.mean(dim=1))
 
         g.ndata['h'] = h
 
