@@ -262,7 +262,7 @@ class GraphTransformer(nn.Module):
         self.lap_pos_enc = lap_pos_enc
         self.wl_pos_enc = wl_pos_enc
         # self.embed_graph = net_params['embed_graph']
-        self.variant_processor = VariantEncoder(ndata_dim_in, hidden_size, self.device, n_labels,
+        self.variant_processor = VariantEncoder(ndata_dim_in, hidden_size, n_labels,
                                                 to_onehot, embed_aa, aa_embed_dim)
 
         self.use_weight_in_loss = use_weight_in_loss

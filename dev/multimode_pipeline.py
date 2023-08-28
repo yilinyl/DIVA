@@ -356,17 +356,17 @@ def pipeline():
             logging.info("!! LR SMALLER OR EQUAL TO MIN LR THRESHOLD.")
             break
 
-    if tb_writer:
-        # tb_writer.add_pr_curve('Train/PR-curve', best_results['train'][1], best_results['train'][2], best_epoch)
-        # tb_writer.add_pr_curve('Test/PR-curve', best_results['test'][1], best_results['test'][2], best_epoch)
-        # tb_writer.add_pr_curve('Val/PR-curve', best_results['val'][1], best_results['val'][2], best_epoch)
-        tb_writer.add_embedding(best_results['train'][3], metadata=format_metadata(*best_results['train'][:2]), 
-                                metadata_header=['UniProt', 'Amino_acids', 'REF', 'ALT', 'label'], tag='Train/Embedding')
-        tb_writer.add_embedding(best_results['test'][3], metadata=format_metadata(*best_results['test'][:2]), 
-                                metadata_header=['UniProt', 'Amino_acids', 'REF', 'ALT', 'label'], tag='Test/Embedding')
-        tb_writer.add_embedding(best_results['val'][3], metadata=format_metadata(*best_results['val'][:2]), 
-                                metadata_header=['UniProt', 'Amino_acids', 'REF', 'ALT', 'label'], tag='Val/Embedding')
-        tb_writer.close()
+    # if tb_writer:
+    #     # tb_writer.add_pr_curve('Train/PR-curve', best_results['train'][1], best_results['train'][2], best_epoch)
+    #     # tb_writer.add_pr_curve('Test/PR-curve', best_results['test'][1], best_results['test'][2], best_epoch)
+    #     # tb_writer.add_pr_curve('Val/PR-curve', best_results['val'][1], best_results['val'][2], best_epoch)
+    #     tb_writer.add_embedding(best_results['train'][3], metadata=format_metadata(*best_results['train'][:2]), 
+    #                             metadata_header=['UniProt', 'Amino_acids', 'REF', 'ALT', 'label'], tag='Train/Embedding')
+    #     tb_writer.add_embedding(best_results['test'][3], metadata=format_metadata(*best_results['test'][:2]), 
+    #                             metadata_header=['UniProt', 'Amino_acids', 'REF', 'ALT', 'label'], tag='Test/Embedding')
+    #     tb_writer.add_embedding(best_results['val'][3], metadata=format_metadata(*best_results['val'][:2]), 
+    #                             metadata_header=['UniProt', 'Amino_acids', 'REF', 'ALT', 'label'], tag='Val/Embedding')
+    #     tb_writer.close()
     logging.info('Save best model at epoch {}:'.format(best_epoch))
     torch.save({'args': net_params, 'state_dict': best_weights,
                 'optimizer_state_dict': best_optim},
