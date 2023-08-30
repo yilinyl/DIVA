@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from torch.nn.modules import GRUCell
 import torch.nn.functional as F
 import dgl
 from dgl.nn.pytorch import GATConv, EGATConv
@@ -26,6 +27,7 @@ class GAT(nn.Module):
                  classify=True,
                  use_onehot=False,
                  aa_classes=21,
+                 use_gate=False,
                  **kwargs):
         super(GAT, self).__init__()
         self.act = activation
@@ -45,7 +47,7 @@ class GAT(nn.Module):
         # if not isinstance(self.n_heads, list):
         #     self.n_heads = [n_heads] * n_layers
         self.n_heads = n_heads
-
+        self.out_dim = out_dim
         if not self.use_esm:
             if use_onehot:
                 # self.ndata_encoder = nn.Linear(aa_classes + ndata_dim_in, hidden_size)
@@ -108,8 +110,13 @@ class GAT(nn.Module):
                                          attn_drop=dropout,
                                          residual=residual,
                                          activation=None)
-        self.out_dim = out_dim
-        self.MLP_layer = MLPReadout(self.out_dim, n_classes)
+        # if self.use_gate:
+        #     self.gru = GRUCell(h_dim_in, gat_dim_out)
+
+        # self.MLP_layer = MLPReadout(self.out_dim, n_classes)
+        # self.MLP_layer = nn.Linear(self.out_dim, n_classes)
+        if self.classify:
+            self.MLP_layer = nn.Linear(self.out_dim, n_classes)
         self.predict = nn.Sigmoid()
         self.criterion = nn.BCEWithLogitsLoss()
 
@@ -134,7 +141,7 @@ class GAT(nn.Module):
         return h_aa
 
 
-    def forward(self, g, alt_aa):
+    def forward(self, g, alt_aa, var_idx=None):
         if self.use_esm:
             nfeat_key = 'feat_ref'
         else:
@@ -173,6 +180,9 @@ class GAT(nn.Module):
         g.ndata['h'] = h
 
         hg = dgl.readout_nodes(g, 'h', op=self.readout)
+
+        # if self.use_gate:
+        #     hg = self.gru(h_center, hg.squeeze(1))
 
         if self.classify:
             return self.MLP_layer(hg)
