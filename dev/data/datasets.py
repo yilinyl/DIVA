@@ -394,7 +394,7 @@ class VariantGraphCacheDataSet(GraphDataSetBase):
                                   'max': torch.tensor(np.nanmax(nsp_feat_raw, axis=0))}
                     nsp_feat, nsp_stats = impute_nan(
                         torch.tensor(nsp_feat_raw[list(map(lambda x: x - 1, seq_pos_remain)), :]), nsp_stats)
-                    var_graph.ndata['nps_feat'] = nsp_feat
+                    var_graph.ndata['nsp_feat'] = nsp_feat
                 except (FileNotFoundError, ValueError) as e:
                     logging.warning(f'{e} in loading feature for {uprot}')
                     continue
@@ -502,13 +502,16 @@ class VariantSeqGraphDataSet(GraphDataSetBase):
                                  'min': torch.tensor(np.nanmin(nsp_feat_raw, axis=0)),
                                  'max': torch.tensor(np.nanmax(nsp_feat_raw, axis=0))}
                     nsp_feat, nsp_stats = impute_nan(torch.tensor(nsp_feat_raw[list(map(lambda x: x - 1, seq_pos_remain)), :]), nsp_stats)
-                    var_graph.ndata['nps_feat'] = nsp_feat
+                    var_graph.ndata['nsp_feat'] = nsp_feat
                 except (FileNotFoundError, ValueError) as e:
                     logging.warning(f'{e} in loading feature for {uprot}')
                     continue
             if self.use_cosmis:
                 try:
                     cosmis_feat_raw = load_cosmis_feats(uprot, self.cosmis_dir, cols=cosmis_cols, suffix=cosmis_suffix)
+                    if np.isnan(cosmis_feat_raw).all():
+                        logging.warning("All NA in COSMIS feature for {}".format(uprot))
+                        continue
                     cosmis_stats = {'mean': torch.tensor(np.nanmean(cosmis_feat_raw, axis=0)),
                                     'min': torch.tensor(np.nanmin(cosmis_feat_raw, axis=0)),
                                     'max': torch.tensor(np.nanmax(cosmis_feat_raw, axis=0))}
@@ -522,7 +525,7 @@ class VariantSeqGraphDataSet(GraphDataSetBase):
                 try:
                     oe_feat_raw = load_oe_feats(uprot, self.oe_dir, cols=['obs_exp_mean', 'obs_exp_max'])
                     if np.isnan(oe_feat_raw).all():
-                        logging.warning("NA in OE feature for {}".format(uprot))
+                        logging.warning("All NA in OE feature for {}".format(uprot))
                         continue
 
                     oe_stats = {'mean': torch.tensor(np.nanmean(oe_feat_raw, axis=0)),
@@ -539,6 +542,9 @@ class VariantSeqGraphDataSet(GraphDataSetBase):
             if self.use_ires:
                 try:
                     ires_feat = load_ires_feats(uprot, record['prot_length'], self.ires_pred_dir, self.ires_gt_dict)
+                    if np.isnan(ires_feat).any():
+                        logging.warning("NA in IRES feature for {}".format(uprot))
+                        ires_feat[np.isnan(ires_feat)] = 0.5
                     var_graph.ndata['ires'] = torch.tensor(ires_feat[list(map(lambda x: x - 1, seq_pos_remain))]).unsqueeze(-1)
                 except Exception as e:
                     logging.warning(f'{e} in loading IRES feature for {uprot}')
@@ -564,7 +570,11 @@ class VariantSeqGraphDataSet(GraphDataSetBase):
 
             nfeat_comb = list(map(lambda x: var_graph.ndata[x], nfeat_all))
             var_graph.ndata['feat'] = torch.cat(nfeat_comb, dim=-1)
-            var_graph.edata['feat'] = var_graph.edata['coev']
+            if var_graph.ndata['feat'].isnan().any():
+                na_idx = torch.where(torch.isnan(var_graph.ndata['feat']))
+                logging.warning('NA in node feature (dim={}) for {}'.format(torch.unique(na_idx[1]), record['prot_var_id']))
+                continue
+            var_graph.edata['feat'] = var_graph.edata['coev'][:, 1:]
             alt_aa = aa_to_index(protein_letters_1to3_extended[record['ALT_AA']].upper())
 
             self.data.append((var_graph, record['label'], alt_aa, var_idx, record['prot_var_id']))
@@ -613,7 +623,7 @@ class VariantSeqGraphDataSet(GraphDataSetBase):
                                  'min': torch.tensor(np.nanmin(nsp_feat_raw, axis=0)),
                                  'max': torch.tensor(np.nanmax(nsp_feat_raw, axis=0))}
                     nsp_feat, nsp_stats = impute_nan(torch.tensor(nsp_feat_raw[start_idx: end_idx + 1, :]), nsp_stats)
-                    var_graph.ndata['nps_feat'] = nsp_feat
+                    var_graph.ndata['nsp_feat'] = nsp_feat
                 except (FileNotFoundError, ValueError) as e:
                     logging.warning(f'{e} in loading feature for {uprot}')
                     continue
