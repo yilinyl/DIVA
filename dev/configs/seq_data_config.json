@@ -2,7 +2,7 @@
     "experiment": "gtn_debug",
     "mode": "data_prepare",
     "exp_dir": "./output",
-    "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/dataset/COSMIS/subsets",
+    "data_dir": "/local/storage/yl986/3d_vip/data_prepare/data/dataset/DMS/gMVP",
     "data_params": {
         "graph_cache_root": "/fs/cbsuhyfs1/storage1/yl986/graph_cache_dir",
         "var_graph_cache": "/fs/cbsuhyfs1/storage1/yl986/var_graph_cache",
