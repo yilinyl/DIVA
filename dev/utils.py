@@ -106,9 +106,9 @@ def env_setup(args, config):
     net_params['use_gpu'] = config['gpu']['use']
     net_params['gpu_id'] = config['gpu']['id']
     net_params['exp_dir'] = config['exp_dir']
-    net_params['lap_pos_enc'] = data_params['lap_pos_enc']
-    net_params['wl_pos_enc'] = data_params['wl_pos_enc']
-    net_params['pos_enc_dim'] = data_params['pos_enc_dim']
+    for key in ['lap_pos_enc', 'wl_pos_enc', 'pos_enc_dim']:
+        if key in data_params:
+            net_params[key] = data_params[key]
     if 'net_params' in config:
         # net_params = config['net_params']
         net_params.update(config['net_params'])
