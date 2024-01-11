@@ -1,0 +1,40 @@
+exp_dir: ./scratch/debug
+experiment: dis_var_debug
+mode: debug
+device: cuda:1
+batch_size: 4
+scoring: wt-marginals  # one of wt-marginals, masked-marginals
+# output_file: ./dms_ontoprot_wt_score.csv
+init_lr: 0.001
+
+model:
+  type: ontoprotein
+  # protein_lm_path: /local/storage/yl986/script_hub/KeAP/pretrained  # KeAP model
+  protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
+  # protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
+  # protein_lm_path: facebook/esm1v_t33_650M_UR90S_1  # ESM-1v
+  # protein_lm_path: zjunlp/OntoProtein
+  text_lm_path: microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext  # PubMedBERT
+  # decoder_config_path: /local/storage/yl986/script_hub/KeAP/initial_decoder_config/config.json
+  frozen_bert: True
+
+dataset:
+  task_name: var_pred
+  data_dir: /local/storage/yl986/data/variant_data/
+  seq_fasta: ["/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot.fasta",
+              "/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot_varsplic.fasta"]
+  input_file:
+    train: var_sample15.csv
+    # test: test.csv
+    # val: val.csv
+  phenotype_vocab_file: /local/storage/yl986/data/variant_data/phenotype_all.txt
+  # pheno_emb_cache_file:
+  pid_col: UniProt
+  pos_col: Protein_position
+  label_col: label
+  load_variant: True
+  use_protein_desc: True
+  max_protein_seq_length: 1024
+  # max_phenotype_length: null
+  use_protein_desc: True
+

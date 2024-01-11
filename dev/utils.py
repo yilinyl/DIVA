@@ -76,6 +76,31 @@ def gpu_setup(use_gpu, gpu_id):
         logging.info('GPU not available, running on CPU')
     return device
 
+def set_seed(seed: int, device=None):
+    """
+    Helper function for reproducible behavior to set the seed in `random`, `numpy`, `torch` and/or `tf` (if installed).
+
+    Args:
+        seed (`int`): The seed to set.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    if device is not None and device.type == 'cuda':
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        # ^^ safe to call this function even if cuda is not available
+
+
+def load_input_to_device(input_data, device, exclude_keys=None):
+    if not exclude_keys:
+        exclude_keys = []
+    if isinstance(input_data, dict):
+        for k, v in input_data.items():
+            if k not in exclude_keys:
+                input_data[k] = v.to(device)
+    
+    return input_data
+
 
 def env_setup(args, config):
     # device
