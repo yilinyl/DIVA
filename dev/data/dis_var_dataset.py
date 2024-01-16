@@ -122,6 +122,7 @@ class ProteinVariantDatset(Dataset):
         label_col='label',
         pheno_col='phenotype',
         split='train',
+        var_db=None,
         **kwargs
     ):
         super(ProteinVariantDatset, self).__init__()
@@ -150,6 +151,7 @@ class ProteinVariantDatset(Dataset):
         self.label = []
         self.label_col = label_col
         self.pheno_col = pheno_col
+        self.var_db = var_db  # external variant information
 
         self.split = split
 
@@ -181,8 +183,16 @@ class ProteinVariantDatset(Dataset):
                     seq = prot_info
                 else:
                     seq = prot_info['sequence']['value']
-                    prot_desc = prot_info['proteinDescription']['recommendedName']['fullName']['value']
+                    prot_desc_dict = prot_info['proteinDescription']
+                    if 'recommendedName' in prot_desc_dict:
+                        prot_desc = prot_desc_dict['recommendedName']['fullName']['value']
+                    elif 'submissionNames' in prot_desc_dict:
+                        prot_desc = prot_desc_dict['submissionNames'][0]['fullName']['value']
+                    else:
+                        prot_desc = self.text_tokenizer.unk_token
+
                     self.protein_info_dict[uprot] = prot_desc
+                    
                     # cur_protein['desc'] = prot_desc
                 
                 # cur_protein['seq'] = seq
@@ -202,17 +212,41 @@ class ProteinVariantDatset(Dataset):
             neg_pheno_desc = [self.text_tokenizer.pad_token] * len(seq)
             # neg_pheno_desc = np.full(len(seq), fill_value=self.text_tokenizer.pad_token)
             prot_var_pos = []
-            prot_var_idx = []
+            prot_var_idx_target = []
             is_pathogenic = np.zeros(len(seq))
             # pos_phenotypes = []
             # neg_phenotypes = []
             ref_aa = []
             alt_aa = []
+            var_names = []
             labels = []
             # patho_var_pos = []
             # patho_var_pheno_idx = []
+            prot_var_idx_all = []
+            if isinstance(self.var_db, type(None)):
+                ext_var_info = None
+            else:
+                ext_var_info = self.var_db[self.var_db[pid_col] == uprot]
+            if not isinstance(ext_var_info, type(None)):
+                for k, var_record in ext_var_info.iterrows():
+                    pheno_cur = var_record[self.pheno_col]
+                    var_idx = var_record[pos_col] - self.pos_offset
+                    if var_record[pos_col] > self.max_protein_seq_length:  # skip out-of-bound variants for now
+                        continue
+                    try:
+                        pheno_idx = self.pheno_descs.index(pheno_cur)
+                    except ValueError:
+                        pheno_idx = self.text_tokenizer.unk_token_id
+                        pheno_cur = self.text_tokenizer.unk_token
+                    
+                    pos_pheno_idx[var_idx] = pheno_idx
+                    pos_pheno_desc[var_idx] = pheno_cur
+                    prot_var_idx_all.append(var_idx)
+
             for j, record in df_prot.iterrows():
                 pheno_cur = record[self.pheno_col]
+                if record[pos_col] > self.max_protein_seq_length:  # skip out-of-bound variants for now
+                    continue
                 sample_mask = np.zeros(len(self.pheno_descs), dtype=bool)
                 try:
                     pheno_idx = self.pheno_descs.index(pheno_cur)
@@ -224,15 +258,15 @@ class ProteinVariantDatset(Dataset):
                 var_idx = record[pos_col] - self.pos_offset
                 is_var[var_idx] = 1
 
-                if self.split != 'test':
-                    neg_sample_idx = np.random.choice(self.pheno_idx_all[~sample_mask], size=1, replace=False)[0]  # scalar
-                    neg_pheno_idx[var_idx] = neg_sample_idx
-                    neg_pheno_cur = self.pheno_descs[neg_sample_idx]
-                    # neg_pheno_desc.append(neg_pheno_cur)
-                    neg_pheno_desc[var_idx] = neg_pheno_cur
-                    # neg_phenotypes.append(neg_sample_idx[0])
-                else:
-                    neg_sample_idx = None
+                # if self.split != 'test':
+                neg_sample_idx = np.random.choice(self.pheno_idx_all[~sample_mask], size=1, replace=False)[0]  # scalar
+                neg_pheno_idx[var_idx] = neg_sample_idx
+                neg_pheno_cur = self.pheno_descs[neg_sample_idx]
+                # neg_pheno_desc.append(neg_pheno_cur)
+                neg_pheno_desc[var_idx] = neg_pheno_cur
+                # neg_phenotypes.append(neg_sample_idx[0])
+                # else:
+                #     neg_sample_idx = None
                 
                 if self.label_col in record:
                     labels.append(record[self.label_col])
@@ -244,23 +278,28 @@ class ProteinVariantDatset(Dataset):
                 # pos_phenotypes.append(pheno_idx)
                 ref_aa.append(record['REF_AA'])
                 alt_aa.append(record['ALT_AA'])
+                var_names.append('{}_{}_{}/{}'.format(uprot, record[pos_col], record['REF_AA'], record['ALT_AA']))
+                # var_names.append(''.join([record['REF_AA'], str(record[pos_col]), record['ALT_AA']]))
                 prot_var_pos.append(record[pos_col])
-                prot_var_idx.append(var_idx)
+                prot_var_idx_target.append(var_idx)
+                prot_var_idx_all.append(var_idx)
 
                 if self.label_col in record and record[self.label_col] == 1:
                     is_pathogenic[var_idx] = 1
             
-            seq_input_ids = self.encode_protein_seq(seq)
+            # seq_input_ids = self.encode_protein_seq(seq)
             cur_protein = {'id': uprot,
                            'seq': seq,
                            'seq_length': len(seq),
-                           'desc': prot_desc,
-                           'seq_input_ids': seq_input_ids,
+                           'prot_desc': prot_desc,
+                        #    'seq_input_ids': seq_input_ids,
                            'var_pos': prot_var_pos,
-                           'var_idx': prot_var_idx,
+                           'var_idx': prot_var_idx_target,  # not sorted
+                           'var_idx_on_prot': prot_var_idx_all,
                            'variant_mask': is_var,
                            'ref_aa': self.protein_tokenizer.convert_tokens_to_ids(ref_aa),
                            'alt_aa': self.protein_tokenizer.convert_tokens_to_ids(alt_aa),
+                           'var_names': var_names,  # [REF][POS][ALT]
                            'is_pathogenic': is_pathogenic,
                            'pos_pheno_idx': pos_pheno_idx,  # array with shape (seq_length, )
                            'pos_pheno_desc': pos_pheno_desc,
@@ -268,8 +307,8 @@ class ProteinVariantDatset(Dataset):
                            'neg_pheno_desc': neg_pheno_desc,
                            'label': labels
                            }
-            if not seq_only:
-                cur_protein['desc_input_ids'] = self.text_tokenizer.encode(prot_desc)
+            # if not seq_only:
+            #     cur_protein['desc_input_ids'] = self.text_tokenizer.encode(prot_desc)
                 # if self.split != 'test':
                 #     pos_pheno_input_ids = self.text_tokenizer(pos_pheno_desc)['input_ids']  # nested list: length=seq_length
                 #     neg_pheno_input_ids = self.text_tokenizer(neg_pheno_desc)['input_ids']
@@ -285,8 +324,8 @@ class ProteinVariantDatset(Dataset):
         if self.max_protein_seq_length is not None:
             aa_list = aa_list[:self.max_protein_seq_length]
 
-        prot_input_ids = self.protein_tokenizer.encode(aa_list, padding='max_length',
-                                                       max_length=self.max_protein_seq_length, 
+        prot_input_ids = self.protein_tokenizer.encode(aa_list, padding=True,
+                                                    #    max_length=self.max_protein_seq_length, 
                                                        is_split_into_words=True)
         
         return prot_input_ids
@@ -337,6 +376,7 @@ class ProteinVariantDataCollator:
     label_pad_idx: int = -100
     pheno_descs: List = None
     n_phenotypes: int = None  # total number of phenotype terms
+    window_size: int = 64
 
     def __post_init__(self):
         if self.mlm and self.protein_tokenizer.mask_token is None:
@@ -355,7 +395,9 @@ class ProteinVariantDataCollator:
         #     batch['attention_mask'] = (batch['input_ids'] != self.protein_tokenizer.pad_token_id).long()
         #     batch['token_type_ids'] = torch.zeros_like(batch['input_ids'], dtype=torch.long)
         # else:
-        batch = protein_variant_collate_fn(batch_data_raw, self.protein_tokenizer, self.text_tokenizer, self.same_length, self.use_desc, label_pad_idx=self.label_pad_idx)   
+        batch = protein_variant_collate_fn(batch_data_raw, self.protein_tokenizer, self.text_tokenizer, 
+                                           self.same_length, self.use_desc, label_pad_idx=self.label_pad_idx,
+                                           window_size=self.window_size)
 
         # seq_token_mask = batch['seq_input_feat']['attention_mask'].logical_not()
         # only pahtogenic positions are eligible for phenotype prediction
@@ -363,49 +405,45 @@ class ProteinVariantDataCollator:
         if not self.n_phenotypes:
             self.n_phenotypes = len(self.pheno_descs)
         
-        seq_lengths = batch['seq_length']
-        batch_size = len(seq_lengths)
-
-        # TODO: decide to use variant_mask or pathogenic_mask
-        pheno_pos_masked_idx, pheno_mlm_label, variant_mask, indices_replaced, indices_random = \
-            self.mask_variants(batch['phenotype']['positive']['pheno_idx'], self.text_tokenizer, variant_mask=batch['variant_mask'], vocab_size=self.n_phenotypes)
+        # pheno_pos_masked_idx, pheno_mlm_label, variant_mask, indices_replaced, indices_random = \
+        #     self.mask_variants(batch['phenotype']['positive']['pheno_idx'], self.text_tokenizer, variant_mask=batch['variant_mask'], vocab_size=self.n_phenotypes)
         
         # mlm_token_mask = batch['pathogenic_mask'].logical_not()
         # pheno_masked_idx, pheno_mlm_label, pheno_masked_indices, indices_replaced, indices_random = \
         #     self.mask_tokens(batch['phenotype']['pos_pheno_idx'], self.text_tokenizer, special_tokens_mask=mlm_token_mask, vocab_size=self.n_phenotypes)
-        pos_pheno_desc_lst = [' '.join(s) for s in batch['phenotype']['positive']['pheno_desc']]
-        neg_pheno_desc_lst = [' '.join(s) for s in batch['phenotype']['negative']['pheno_desc']]
+        # pos_pheno_desc_lst = [' '.join(s) for s in batch['phenotype']['positive']['pheno_desc']]
+        # neg_pheno_desc_lst = [' '.join(s) for s in batch['phenotype']['negative']['pheno_desc']]
 
-        pos_pheno_tokenized = self.text_tokenizer(pos_pheno_desc_lst, padding=True, return_tensors='pt')
-        neg_pheno_tokenized = self.text_tokenizer(neg_pheno_desc_lst, padding=True, return_tensors='pt')
+        # pos_pheno_tokenized = self.text_tokenizer(pos_pheno_desc_lst, padding=True, return_tensors='pt')
+        # neg_pheno_tokenized = self.text_tokenizer(neg_pheno_desc_lst, padding=True, return_tensors='pt')
 
-        pos_mlm_pheno_descs = copy.deepcopy(batch['phenotype']['positive']['pheno_desc'])
+        # pos_mlm_pheno_descs = copy.deepcopy(batch['phenotype']['positive']['pheno_desc'])
         
-        for b in range(batch_size):
-            idx_replace_cur = torch.where(indices_replaced[b])[0].tolist()
-            idx_random_cur = torch.where(indices_random[b])[0].tolist()
+        # for b in range(batch_size):
+        #     idx_replace_cur = torch.where(indices_replaced[b])[0].tolist()
+        #     idx_random_cur = torch.where(indices_random[b])[0].tolist()
 
-            for idx in idx_random_cur:
-                pos_mlm_pheno_descs[b][idx] = self.pheno_descs[pheno_pos_masked_idx[b, idx].item()]
+        #     for idx in idx_random_cur:
+        #         pos_mlm_pheno_descs[b][idx] = self.pheno_descs[pheno_pos_masked_idx[b, idx].item()]
             
-            for idx in idx_replace_cur:
-                pos_mlm_pheno_descs[b][idx] = self.text_tokenizer.mask_token
+        #     for idx in idx_replace_cur:
+        #         pos_mlm_pheno_descs[b][idx] = self.text_tokenizer.mask_token
 
-        pos_pheno_mlm_tokenized = self.text_tokenizer([' '.join(pheno_seq) for pheno_seq in pos_mlm_pheno_descs], padding=True,
-                                                      return_tensors='pt')
+        # pos_pheno_mlm_tokenized = self.text_tokenizer([' '.join(pheno_seq) for pheno_seq in pos_mlm_pheno_descs], padding=True,
+        #                                               return_tensors='pt')
         
-        batch['phenotype']['positive'].update({
-            'input_ids': pos_pheno_tokenized['input_ids'],
-            'attention_mask': pos_pheno_tokenized['attention_mask'],
-            'mlm_input_ids': pos_pheno_mlm_tokenized['input_ids'],
-            'mlm_attention_mask': pos_pheno_mlm_tokenized['attention_mask'],
-            'mlm_label': pheno_mlm_label
-        })
+        # batch['phenotype']['positive'].update({
+        #     'input_ids': pos_pheno_tokenized['input_ids'],
+        #     'attention_mask': pos_pheno_tokenized['attention_mask'],
+        #     'mlm_input_ids': pos_pheno_mlm_tokenized['input_ids'],
+        #     'mlm_attention_mask': pos_pheno_mlm_tokenized['attention_mask'],
+        #     'mlm_label': pheno_mlm_label
+        # })
 
-        batch['phenotype']['negative'].update({
-            'input_ids': neg_pheno_tokenized['input_ids'],
-            'attention_mask': neg_pheno_tokenized['attention_mask'],
-        })
+        # batch['phenotype']['negative'].update({
+        #     'input_ids': neg_pheno_tokenized['input_ids'],
+        #     'attention_mask': neg_pheno_tokenized['attention_mask'],
+        # })
 
         # random_phenos = [self.pheno_descs[idx.item()] for idx in pheno_pos_masked_idx[indices_random]]  # MLM for positive label
         # pos_pheno_mlm_input = batch['phenotype']['positive']['input_ids'].clone()
@@ -535,13 +573,42 @@ def protein_seq_collate_fn(
     return batch_data_dict
 
 
+def fetch_phenotypes_in_frame(
+            var_idx: int,
+            seq_length: int,
+            var_idx_on_prot: List[int],
+            pos_pheno_descs: List[str],
+            window_size: int = 64
+    ):
+        # assert len(pos_pheno_descs) == len(var_mask)
+
+        start = max(var_idx - window_size, 0)
+        end = min(var_idx + window_size, seq_length - 1)
+        target_idx = var_idx - start
+
+        pheno_in_frame = []
+        for idx in sorted(var_idx_on_prot):
+            if idx in range(start, end+1) and idx != var_idx:
+                pheno_in_frame.append(pos_pheno_descs[idx])
+            if idx > end:
+                break
+        # pheno_mask = copy.deepcopy(var_mask)
+        # pheno_mask[var_idx] = False
+
+        # pheno_in_frame = pos_pheno_descs[start:(end+1)][pheno_mask[start:(end+1)]]
+
+        return pheno_in_frame
+
+
 def protein_variant_collate_fn(
     batch_data_raw: List[Dict],
     protein_tokenizer: PreTrainedTokenizerBase,
     text_tokenizer: PreTrainedTokenizerBase,
     same_length: bool = False,
     use_desc: bool = True,
-    label_pad_idx: int = -100
+    label_pad_idx: int = -100,
+    window_size: int = 64,
+    max_protein_length: int = None
 ):   
     """
     Collate function for protein using both sequence and description text
@@ -550,138 +617,156 @@ def protein_variant_collate_fn(
     batch_size = len(batch_prot_ids)
     # protein sequence
     prot_lengths = [elem['seq_length'] for elem in batch_data_raw]
-    max_seq_length = max(prot_lengths)
+    # max_seq_length = max(prot_lengths)
+    if not max_protein_length:
+        max_protein_length = protein_tokenizer.model_max_length
 
-    batch_seq_input_ids = [torch.tensor(elem['seq_input_ids'], dtype=torch.long) for elem in batch_data_raw] # list -> tensor
+    seq_lst = [elem['seq'] for elem in batch_data_raw]
+    batch_seq_tokenized = protein_tokenizer(seq_lst, padding=True, truncation=True, return_tensors='pt', max_length=max_protein_length)
+    seq_tokenized_length = batch_seq_tokenized['input_ids'].shape[-1]
+    # batch_seq_input_ids = [torch.tensor(elem['seq_input_ids'], dtype=torch.long) for elem in batch_data_raw] # list -> tensor
     batch_var_mask = [torch.LongTensor(elem['variant_mask']) for elem in batch_data_raw]
     batch_patho_mask = [torch.LongTensor(elem['is_pathogenic']) for elem in batch_data_raw]
-    batch_desc_input_ids = [torch.LongTensor(elem['desc_input_ids']) for elem in batch_data_raw]
-    max_desc_length = max([len(elem['desc_input_ids']) for elem in batch_data_raw])
-    # TODO: pad phenotype input ids to same length: (batch_size, max_seq_length, max_pheno_length)
-    # max_pheno_length = max([elem['max_pheno_length'] for elem in batch_data_raw])
+    # batch_desc_input_ids = [torch.LongTensor(elem['desc_input_ids']) for elem in batch_data_raw]
+    # max_desc_length = max([len(elem['desc_input_ids']) for elem in batch_data_raw])
            
     if same_length:
-        batch_seq_input_ids = torch.stack(batch_seq_input_ids, dim=0)
+        # batch_seq_input_ids = torch.stack(batch_seq_input_ids, dim=0)
         batch_var_mask = torch.stack(batch_var_mask, dim=0)
         batch_patho_mask = torch.stack(batch_patho_mask, dim=0)
     # protein sequence padding, pad id = 0
     else:  # after padding: (batch_size, max_seq_length)
-        batch_seq_input_ids = prep_padded_input(batch_seq_input_ids, max_seq_length, 
-                                                padding_side=protein_tokenizer.padding_side, 
-                                                init_value=protein_tokenizer.pad_token_id)
-        batch_var_mask = prep_padded_input(batch_var_mask, max_seq_length, 
+        # batch_seq_input_ids = prep_padded_input(batch_seq_input_ids, max_seq_length, 
+        #                                         padding_side=protein_tokenizer.padding_side, 
+        #                                         init_value=protein_tokenizer.pad_token_id)
+        batch_var_mask = prep_padded_input(batch_var_mask, seq_tokenized_length, 
                                            padding_side=protein_tokenizer.padding_side, 
                                            init_value=0)
-        batch_patho_mask = prep_padded_input(batch_patho_mask, max_seq_length, 
+        batch_patho_mask = prep_padded_input(batch_patho_mask, seq_tokenized_length, 
                                              padding_side=protein_tokenizer.padding_side, 
                                              init_value=0)
-        
-    
-    pos_pheno_input_all = []
-    neg_pheno_input_all = []
-    pos_pheno_idx_all = [torch.LongTensor(elem['pos_pheno_idx']) for elem in batch_data_raw]
-    neg_pheno_idx_all = [torch.LongTensor(elem['neg_pheno_idx']) for elem in batch_data_raw]
-    pos_attention_mask_all = []
-    neg_attention_mask_all = []
-    # for b, prot_data in enumerate(batch_data_raw):
-    #     # prot_var_idx = torch.where(batch_var_mask[b])[0].tolist()
 
-    #     pos_input_padded = pad_phenotype_input(prot_data['pos_pheno_input_ids'],  # (max_seq_length, max_pheno_length)
-    #                                         #    prot_var_idx,
-    #                                            max_pheno_length,
-    #                                            max_seq_length,
-    #                                            padding_side=text_tokenizer.padding_side,
-    #                                            fill_val=text_tokenizer.pad_token_id)
-    #     pos_attention_mask = (pos_input_padded != text_tokenizer.pad_token_id).long()
+    prot_idx = []  # index of protein in the batch (for tracking)
+    var_idx_all = []
+    ref_aa = []
+    alt_aa = []
+    pos_pheno_label_all = []
+    neg_pheno_label_all = []
+    phenos_in_frame_all = []
+    var_names_all = []
+    # phenos_in_frame_input_ids = [] # List[torch.Tensor] --> length=n_variants
+    max_pheno_length = 0
 
-    #     neg_input_padded = pad_phenotype_input(prot_data['neg_pheno_input_ids'],
-    #                                         #    prot_var_idx,
-    #                                            max_pheno_length,
-    #                                            max_seq_length,
-    #                                            padding_side=text_tokenizer.padding_side,
-    #                                            fill_val=text_tokenizer.pad_token_id)
-    #     neg_attention_mask = (neg_input_padded != text_tokenizer.pad_token_id).long()
-        
-    #     pos_pheno_input_all.append(pos_input_padded)
-    #     neg_pheno_input_all.append(neg_input_padded)
-    #     pos_attention_mask_all.append(pos_attention_mask)
-    #     neg_attention_mask_all.append(neg_attention_mask)
-        # pos_pheno_idx_all.append(pos_id_padded)
-        # neg_pheno_idx_all.append(neg_id_padded)
-    
-    # batch_pos_input_ids = torch.stack(pos_pheno_input_all)  # (batch_size, max_seq_length, max_pheno_length)
-    # batch_neg_input_ids = torch.stack(neg_pheno_input_all)
-    # batch_pos_attention_mask = torch.stack(pos_attention_mask_all)
-    # batch_neg_attention_mask = torch.stack(neg_attention_mask_all)
-    
-    batch_pos_pheno_idx = prep_padded_input(pos_pheno_idx_all, max_seq_length,
-                                      padding_side=protein_tokenizer.padding_side,
-                                      init_value=text_tokenizer.pad_token_id)
-    
-    batch_neg_pheno_idx = prep_padded_input(neg_pheno_idx_all, max_seq_length,
-                                        padding_side=protein_tokenizer.padding_side,
-                                        init_value=text_tokenizer.pad_token_id)
-    # batch_pos_pheno_idx = torch.stack(pos_pheno_idx_all)
-    # batch_neg_pheno_idx = torch.stack(neg_pheno_idx_all)
-    
-    batch_seq_attention_mask = (batch_seq_input_ids != protein_tokenizer.pad_token_id).long()
-    batch_seq_token_type_ids = torch.zeros_like(batch_seq_input_ids, dtype=torch.long)
+    for b, elem in enumerate(batch_data_raw):
+        var_idx_lst = elem['var_idx']
+        var_idx_all_on_prot = elem['var_idx_on_prot']
+        prot_desc = elem['prot_desc']
+        pos_pheno_descs = elem['pos_pheno_desc']
+        neg_pheno_descs = elem['neg_pheno_desc']
+        ref_aa.extend(elem['ref_aa'])
+        alt_aa.extend(elem['alt_aa'])
+        var_names_all.extend(elem['var_names'])
+        for var_idx in var_idx_lst:
+            phenos_in_frame_cur = fetch_phenotypes_in_frame(var_idx, prot_lengths[b], var_idx_all_on_prot, 
+                                                           elem['pos_pheno_desc'], window_size)
+            # if not phenos_in_frame_cur:
+            #     phenos_in_frame_cur = [prot_desc]
 
+            prot_idx.append(b)
+            var_idx_all.append(var_idx)
+            pos_pheno_label_all.append(pos_pheno_descs[var_idx])
+            neg_pheno_label_all.append(neg_pheno_descs[var_idx])
+            phenos_in_frame_all.append([prot_desc] + phenos_in_frame_cur)
+            
+            # max_pheno_length = max(max_pheno_length, phenos_input_ids_cur.shape[-1])
+            # phenos_in_frame_input_ids.append(phenos_input_ids_cur) 
+
+    pos_pheno_tokenized = text_tokenizer(pos_pheno_label_all, padding=True, return_tensors='pt')
+    neg_pheno_tokenized = text_tokenizer(neg_pheno_label_all, padding=True, return_tensors='pt')
+
+    max_desc_length = 0
+    if use_desc:
+        desc_lst = [elem['prot_desc'] for elem in batch_data_raw]
+        batch_desc_tokenized = text_tokenizer(desc_lst, padding=True, return_tensors='pt')   
+        max_desc_length = batch_desc_tokenized['input_ids'].shape[-1]
+
+    max_pheno_length = max(max_desc_length, pos_pheno_tokenized['input_ids'].shape[-1])
+    max_phenos_in_frame = max([len(ph) for ph in phenos_in_frame_all])
+    pheno_input_ids_padded = []
+    for i, phenos_in_frame_cur in enumerate(phenos_in_frame_all):
+        n_phenos = len(phenos_in_frame_cur)
+        if n_phenos < max_phenos_in_frame:
+            phenos_in_frame_cur = phenos_in_frame_cur + [text_tokenizer.pad_token] * (max_phenos_in_frame - n_phenos)
+
+        phenos_input_ids_cur = text_tokenizer(phenos_in_frame_cur, padding='max_length', return_tensors='pt', max_length=max_pheno_length)['input_ids']
+        # pheno_input_ids_padded_ = prep_padded_input(phenos_input_ids_cur, max_pheno_length,
+        #                                             padding_side=text_tokenizer.padding_side, 
+        #                                             init_value=text_tokenizer.pad_token_id)
+        pheno_input_ids_padded.append(phenos_input_ids_cur)
+
+    batch_pheno_input_ids = torch.stack(pheno_input_ids_padded)  # n_variants, max_phenos_in_frame + 1, max_pheno_length
+    batch_pheno_attenton_mask = (batch_pheno_input_ids != text_tokenizer.pad_token_id).long()
+    
     # batch_desc_input_ids = torch.tensor([elem['desc_input_ids'] for elem in batch_data_raw], dtype=torch.long)
     batch_label = torch.full_like(batch_patho_mask, fill_value=label_pad_idx)
     batch_label[batch_var_mask.bool()] = 0  # benign
     batch_label[batch_patho_mask.bool()] = 1  # pathogenic
-
-    if use_desc:
-        batch_desc_input_ids = prep_padded_input(batch_desc_input_ids, max_desc_length,  # (batch_size, max_desc_length)
-                                                 padding_side=text_tokenizer.padding_side, 
-                                                 init_value=text_tokenizer.pad_token_id)
-        batch_desc_attention_mask = (batch_desc_input_ids != text_tokenizer.pad_token_id).long()
-        batch_desc_token_type_ids = torch.zeros_like(batch_desc_input_ids, dtype=torch.long)
-        
-    return {
-        'id': batch_prot_ids,
-        'seq_length': prot_lengths, 
-        'variant_mask': batch_var_mask,  # true for variant (batch_size, max_length)
-        'pathogenic_mask': batch_patho_mask,  # true for pathogenic (batch_size, max_length)
-        'label': batch_label,  # 1: pathogenic, 0: benign, -100: non-variant spots
-        'var_pos': [elem['var_pos'] for elem in batch_data_raw],
-        'var_idx': [elem['var_idx'] for elem in batch_data_raw],
-        'ref_aa': [elem['ref_aa'] for elem in batch_data_raw],
-        'alt_aa': [elem['alt_aa'] for elem in batch_data_raw],
-        'seq_input_feat': {
-            'input_ids': batch_seq_input_ids,  # batch_size x max_length
-            'attention_mask': batch_seq_attention_mask,  # 1 if token should be attended to
-            'token_type_ids': batch_seq_token_type_ids,
-        },
-        'desc_input_feat': {
-            'input_ids': batch_desc_input_ids,
-            'attention_mask': batch_desc_attention_mask,
-            'token_type_ids': batch_desc_token_type_ids
-        },
-        'phenotype':
-        {
-            # 'max_length': max_pheno_length,
-            'positive': {
-                # 'pheno_idx': [elem['pos_pheno_idx'] for elem in batch_data_raw]
-                # 'input_ids': batch_pos_input_ids,  # (batch_size, max_seq_length, max_pheno_length)
-                # 'attention_mask': batch_pos_attention_mask,  # (batch_size, max_seq_length, max_pheno_length)
-                'pheno_idx': batch_pos_pheno_idx,  # Tensor
-                'pheno_desc': [elem['pos_pheno_desc'] for elem in batch_data_raw]
-            },
-            'negative': {
-                # 'pheno_idx': [elem['neg_pheno_idx'] for elem in batch_data_raw]
-                # 'input_ids': batch_neg_input_ids,
-                # 'attention_mask': batch_neg_attention_mask,
-                'pheno_idx': batch_neg_pheno_idx,
-                'pheno_desc': [elem['neg_pheno_desc'] for elem in batch_data_raw]
-            }
-            # 'pos_input_ids': batch_pos_input_ids,  # phenotype input ids (batch_size, max_seq_length, max_pheno_length)
-            # 'pos_pheno_idx': batch_pos_pheno_idx,
-            # 'neg_input_ids': batch_neg_input_ids,
-            # 'neg_pheno_idx': batch_neg_pheno_idx,
+    
+    return {'seq_input_ids': batch_seq_tokenized['input_ids'][prot_idx],
+            'var_pos': [elem['var_pos'] for elem in batch_data_raw],
+            'var_idx': var_idx_all,
+            'var_names': var_names_all,
+            'label': batch_label[(prot_idx, var_idx_all)],
+            'ref_aa': ref_aa,
+            'alt_aa': alt_aa,
+            'pos_pheno_desc': pos_pheno_label_all,
+            'pos_pheno_input_ids': pos_pheno_tokenized['input_ids'],
+            'pos_pheno_attention_mask': pos_pheno_tokenized['attention_mask'],
+            'neg_pheno_desc': neg_pheno_label_all,
+            'neg_pheno_input_ids': neg_pheno_tokenized['input_ids'],
+            'neg_pheno_attention_mask': neg_pheno_tokenized['attention_mask'],
+            'inframe_pheno_input_ids': batch_pheno_input_ids,
+            'inframe_pheno_attention_mask': batch_pheno_attenton_mask,
+            'n_variants': [len(elem['alt_aa']) for elem in batch_data_raw],
+            'prot_idx': prot_idx
         }
-    }
+    # return {
+    #     'id': batch_prot_ids,
+    #     'seq_length': prot_lengths, 
+    #     'variant_mask': batch_var_mask,  # true for variant (batch_size, max_length)
+    #     'pathogenic_mask': batch_patho_mask,  # true for pathogenic (batch_size, max_length)
+    #     'label': batch_label,  # 1: pathogenic, 0: benign, -100: non-variant spots
+        
+    #     'seq_input_feat': {
+    #         'input_ids': batch_seq_tokenized['input_ids'],  # batch_size x max_length
+    #         'attention_mask': batch_seq_tokenized['attention_mask'],  # 1 if token should be attended to
+    #         'token_type_ids': torch.zeros_like(batch_seq_tokenized['input_ids'], dtype=torch.long)
+    #     },
+    #     'desc_input_feat': {
+    #         'input_ids': batch_desc_tokenized['input_ids'],
+    #         'attention_mask': batch_desc_tokenized['attention_mask'],
+    #         'token_type_ids': torch.zeros_like(batch_desc_tokenized['input_ids'], dtype=torch.long)
+    #     },
+    #     'variant':
+    #     {
+    #         'var_pos': [elem['var_pos'] for elem in batch_data_raw],
+    #         'var_idx': var_idx_all,
+    #         'var_names': var_names_all,
+    #         'label': batch_label[(prot_idx, var_idx_all)],
+    #         'ref_aa': ref_aa,
+    #         'alt_aa': alt_aa,
+    #         'pos_pheno_desc': pos_pheno_label_all,
+    #         'pos_pheno_input_ids': pos_pheno_tokenized['input_ids'],
+    #         'pos_pheno_attention_mask': pos_pheno_tokenized['attention_mask'],
+    #         'neg_pheno_desc': neg_pheno_label_all,
+    #         'neg_pheno_input_ids': neg_pheno_tokenized['input_ids'],
+    #         'neg_pheno_attention_mask': neg_pheno_tokenized['attention_mask'],
+    #         'inframe_pheno_input_ids': batch_pheno_input_ids,
+    #         'inframe_pheno_attention_mask': batch_pheno_attenton_mask,
+    #         'n_variants': [len(elem['alt_aa']) for elem in batch_data_raw],
+    #         'prot_idx': prot_idx
+    #     }
+    # }
     
 
 def pad_phenotype_input(raw_input_ids: List[List[int]],  
@@ -709,11 +794,13 @@ def prep_padded_input(x: List[torch.Tensor], max_length, padding_side='right', i
     x_pad = torch.full((batch_size, max_length), fill_value=init_value)
     for i, x_cur in enumerate(x):
         cur_length = x_cur.size(0)
-
-        if padding_side == 'right':
-            x_pad[i, :cur_length] = x_cur
-        else:
-            x_pad[i, -cur_length:] = x_cur
+        if cur_length <= max_length:
+            if padding_side == 'right':
+                x_pad[i, :cur_length] = x_cur
+            else:
+                x_pad[i, -cur_length:] = x_cur
+        elif cur_length > max_length:
+            x_pad[i] = x_cur[:max_length]
     
     return x_pad
             

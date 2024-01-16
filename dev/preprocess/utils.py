@@ -547,7 +547,7 @@ def parse_fasta_info(fasta_file):
     return seq_dict, desc_dict
 
 
-def fetch_prot_seq(pid):
+def fetch_prot_seq(pid, seq_only=True):
     """
     Fetch protein sequence from UniProt protal
 
@@ -563,7 +563,9 @@ def fetch_prot_seq(pid):
         content = response.read().decode("utf-8")
         # info = re.findall('<name type="common">(.*?)</name>', content)
     js_dict = json.loads(content)
-    return js_dict['sequence']['value']
+    if seq_only:
+        return js_dict['sequence']['value']
+    return js_dict
 
 
 def get_prot_length(uprot_all, uprot2seq_dict):

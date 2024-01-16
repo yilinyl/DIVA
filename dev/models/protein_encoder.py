@@ -95,39 +95,39 @@ def clipped_sigmoid_cross_entropy(
     return loss
 
 
-class LogitDiffPathogenicityHead(nn.Module):
-  """Variant pathogenicity classification head. (modified from AlphaMissense)"""
+# class LogitDiffPathogenicityHead(nn.Module):
+#   """Variant pathogenicity classification head. (modified from AlphaMissense)"""
 
-  def __init__(self,
-               n_residue_types: int,
-               name: str = 'logit_diff_head',
-               pad_label_idx: int = -100
-               ):
-    super().__init__(name=name)
+#   def __init__(self,
+#                n_residue_types: int,
+#                name: str = 'logit_diff_head',
+#                pad_label_idx: int = -100
+#                ):
+#     super().__init__(name=name)
    
-    self.n_residue_types = n_residue_types
-    self.variant_row = 1
-    self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)
+#     self.n_residue_types = n_residue_types
+#     self.variant_row = 1
+#     self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)
 
-  def forward(self, logits, ref_aa, alt_aa, variant_mask):
-    ref_score = torch.einsum('ij, ij->i', logits, F.one_hot(ref_aa, num_classes=self.n_residue_types))
-    variant_score = torch.einsum('ij, ij->i', logits, F.one_hot(alt_aa, num_classes=self.n_residue_types))
-    logit_diff = ref_score - variant_score
-    var_pathogenicity = torch.sum(logit_diff * variant_mask)
+#   def forward(self, logits, ref_aa, alt_aa, variant_mask):
+#     ref_score = torch.einsum('ij, ij->i', logits, F.one_hot(ref_aa, num_classes=self.n_residue_types))
+#     variant_score = torch.einsum('ij, ij->i', logits, F.one_hot(alt_aa, num_classes=self.n_residue_types))
+#     logit_diff = ref_score - variant_score
+#     var_pathogenicity = torch.sum(logit_diff * variant_mask)
 
-    return logit_diff, var_pathogenicity
+#     return logit_diff, var_pathogenicity
 
-  def loss(self, pred, labels, variant_mask):
-    # loss = clipped_sigmoid_cross_entropy(logits=value['variant_row_logit_diff'],
-    #                                      labels=batch['pathogenicity'],
-    #                                      clip_negative_at_logit=0.0,
-    #                                      clip_positive_at_logit=-1.0)
-    # loss = (torch.sum(loss * batch['variant_mask'], axis=(-2, -1)) /
-    #         (1e-8 + torch.sum(batch['variant_mask'], axis=(-2, -1))))
-    loss = self.patho_loss_fn(pred, labels)
-    # loss = (torch.sum(loss * variant_mask, axis=(-2, -1)) / (1e-8 + torch.sum(variant_mask, axis=(-2, -1))))
+#   def loss(self, pred, labels, variant_mask):
+#     # loss = clipped_sigmoid_cross_entropy(logits=value['variant_row_logit_diff'],
+#     #                                      labels=batch['pathogenicity'],
+#     #                                      clip_negative_at_logit=0.0,
+#     #                                      clip_positive_at_logit=-1.0)
+#     # loss = (torch.sum(loss * batch['variant_mask'], axis=(-2, -1)) /
+#     #         (1e-8 + torch.sum(batch['variant_mask'], axis=(-2, -1))))
+#     loss = self.patho_loss_fn(pred, labels)
+#     # loss = (torch.sum(loss * variant_mask, axis=(-2, -1)) / (1e-8 + torch.sum(variant_mask, axis=(-2, -1))))
     
-    return loss
+#     return loss
 
 class DiseaseVariantEncoder(nn.Module):
 
@@ -144,7 +144,7 @@ class DiseaseVariantEncoder(nn.Module):
 
         self.protein_encoder = ProteinEncoder(seq_encoder=seq_encoder,
                                               text_encoder=text_encoder,
-                                              use_desc=use_desc)  # requires initialization
+                                              use_desc=False)  # requires initialization
         self.seq_encoder = seq_encoder
         self.text_encoder = text_encoder
 
@@ -158,91 +158,105 @@ class DiseaseVariantEncoder(nn.Module):
 
         self.seq_pheno_comb = nn.Linear(self.seq_emb_dim + self.text_emb_dim, self.hidden_size)
 
-        # multihead attention along sequence
-        self.W_K = nn.Linear(self.hidden_size, self.hidden_size)
-        self.W_Q = nn.Linear(self.hidden_size, self.hidden_size)
-        self.W_V = nn.Linear(self.hidden_size, self.hidden_size)
+        self.proj_head = nn.Linear(self.text_emb_dim, self.hidden_size)
 
-        self.mha = MultiheadAttention(self.hidden_size, num_heads=num_heads, batch_first=True)
-
-        self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)
+        # self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)
+        self.patho_loss_fn = nn.BCEWithLogitsLoss()
+        # self.desc_loss_fn = nn.CosineEmbeddingLoss()
+        self.cos_sim_loss_fn = nn.CosineEmbeddingLoss()
     
 
-    def forward(self, seq_input_feat, batch_data, desc_input_feat=None):
+    def forward(self, seq_input_feat, batch_data, desc_input_feat=None, max_vars_per_batch=32):
         
-        # with torch.no_grad():
-        seq_embs, mlm_logits, desc_embs = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
+        seq_embs, mlm_logits, _ = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
         batch_size = batch_data['label'].size(0)
         batch_label = batch_data['label'].to(self.device)
-        pheno_feat_dict = batch_data['phenotype']
-        # TODO: mask/replace token at target position
-        pheno_pos_feat = load_input_to_device(pheno_feat_dict['positive'], self.device, exclude_keys=['pheno_desc'])
-        pheno_neg_feat = load_input_to_device(pheno_feat_dict['negative'], self.device, exclude_keys=['pheno_desc'])
-        # pheno_pos_input_ids = pheno_feat_dict['pos_input_ids'].to(self.device)
-        # pheno_neg_input_ids = pheno_feat_dict['neg_input_ids'].to(self.device)
-        # seq_embs_agg = seq_embs.mean(dim=1)
-        desc_embs_agg = desc_embs.mean(dim=1)  # batch_size, max_desc_length, desc_emb_dim --> batch_size, desc_emb_dim
-        
-        variant_idx = torch.where(batch_data['variant_mask'])
+        # pheno_feat_dict = batch_data['phenotype']
+
+        variant_data = load_input_to_device(batch_data['variant'], device=self.device, 
+                                                  exclude_keys=['var_names', 'ref_aa', 'alt_aa'])
+        n_variants_total = sum(variant_data['n_variants'])
+        max_text_length = self.text_encoder.config.max_position_embeddings
+        pheno_input_ids = variant_data['inframe_pheno_input_ids'].view(n_variants_total, -1)
+        if pheno_input_ids.shape[-1] > max_text_length:
+            pheno_input_ids = pheno_input_ids[:, :max_text_length]
+
+        # if n_variants_total > max_vars_per_batch:
+        #     n_mini_batch = n_variants_total // max_vars_per_batch
+        #     for b in range(n_mini_batch):
+        #         variant_pheno_emb = self.text_encoder(
+        #             pheno_input_ids[b*max_vars_per_batch],
+        #             attention_mask=variant_data['inframe_pheno_attention_mask'].view(n_variants_total, -1)[:, :max_text_length],
+        #             token_type_ids=torch.zeros(pheno_input_ids.size(), dtype=torch.long, device=self.device),
+        #             output_attentions=False,
+        #             output_hidden_states=True,
+        #             return_dict=None
+        #         ).hidden_states[-1]
+        variant_pheno_emb = self.text_encoder(
+                pheno_input_ids,
+                attention_mask=variant_data['inframe_pheno_attention_mask'].view(n_variants_total, -1)[:, :max_text_length],
+                token_type_ids=torch.zeros(pheno_input_ids.size(), dtype=torch.long, device=self.device),
+                output_attentions=False,
+                output_hidden_states=True,
+                return_dict=None
+            ).hidden_states[-1]
         
         pos_pheno_embs = self.text_encoder(
-            pheno_pos_feat['input_ids'],
-            attention_mask=pheno_pos_feat['attention_mask'],
-            token_type_ids=torch.zeros_like(pheno_pos_feat['input_ids']),
+            variant_data['pos_pheno_input_ids'],
+            attention_mask=variant_data['pos_pheno_attention_mask'],
+            token_type_ids=torch.zeros(variant_data['pos_pheno_input_ids'].size(), dtype=torch.long, device=self.device),
             output_attentions=False,
             output_hidden_states=True,
             return_dict=None
-        ).hidden_states[-1]
+        ).hidden_states[-1]  # n_var, max_pos_pheno_length, pheno_emb_dim
 
         neg_pheno_embs = self.text_encoder(
-            pheno_neg_feat['input_ids'],
-            attention_mask=pheno_neg_feat['attention_mask'],
+            variant_data['neg_pheno_input_ids'],
+            attention_mask=variant_data['neg_pheno_attention_mask'],
+            token_type_ids=torch.zeros(variant_data['neg_pheno_input_ids'].size(), dtype=torch.long, device=self.device),
             output_attentions=False,
             output_hidden_states=True,
             return_dict=None
-        ).hidden_states[-1]
+        ).hidden_states[-1]  # n_var, max_neg_pheno_length, pheno_emb_dim
 
-        variant_pheno_emb = self.text_encoder(
-            pheno_pos_feat['mlm_input_ids'],
-            attention_mask=pheno_pos_feat['mlm_attention_mask'],
-            output_attentions=False,
-            output_hidden_states=True,
-            return_dict=None
-        )
+        seq_var_embs = seq_embs.mean(1)[variant_data['prot_idx']]  # aggregate embedding for whole sequence
+        # seq_var_embs = seq_embs[(variant_data['prot_idx'], variant_data['var_idx'])]  # extract embedding for target position
+        seq_pheno_emb_raw = torch.cat([seq_var_embs, variant_pheno_emb.mean(1)], dim=-1)  # n_var, (seq_emb_dim + pheno_emb_dim)
+        seq_pheno_emb = self.seq_pheno_comb(seq_pheno_emb_raw)  # n_var, hidden_size
 
-        # var_pheno_emb_lst = []
-        # for b in range(batch_size):
-        #     var_pheno_emb_cur = self.text_encoder(
-        #         pheno_pos_feat['mlm_input_ids'][b],  # batch_size, max_seq_length, max_pheno_length
-        #         attention_mask=pheno_pos_feat['mlm_attention_mask'][b],
-        #         # token_type_ids=desc_input_data['token_type_ids'],
-        #         output_attentions=False,
-        #         output_hidden_states=True,
-        #         return_dict=None,
-        #     ).hidden_states[-1].mean(-2)
-        #     var_pheno_emb_lst.append(var_pheno_emb_cur)
-        # # batch_size, max_seq_length, max_pheno_length, text_emb_dim
-        # variant_pheno_emb = torch.stack(var_pheno_emb_lst, 0)
-        # variant_pheno_emb = torch.cat([desc_embs_agg, variant_pheno_emb], dim=1)  # concatenation of global and variant-specific functional embedding
-        # pheno_pos_emb = pheno_pos_outputs.hidden_states[-1].mean(-2)
-        seq_pheno_emb_raw = torch.cat([seq_embs, variant_pheno_emb], dim=-1)  # batch_size, max_seq_length, seq_emb_dim+text_emb_dim
-        seq_pheno_emb = self.seq_pheno_comb(seq_pheno_emb_raw)  # batch_size, max_seq_length, hidden_size
+        pos_emb_proj = self.proj_head(pos_pheno_embs).mean(1)
+        neg_emb_proj = self.proj_head(neg_pheno_embs).mean(1)
 
-        k = self.W_K(seq_pheno_emb)
-        q = self.W_Q(seq_pheno_emb)
-        v = self.W_V(seq_pheno_emb)
+        var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
+        ref_aa = torch.tensor(variant_data['ref_aa'], device=self.device)
+        alt_aa = torch.tensor(variant_data['alt_aa'], device=self.device)
+        logit_diff = self.log_diff_patho_score(mlm_logits[var_indices], ref_aa, alt_aa)
 
-        attn_outputs, attn_weights = self.mha(q, k, v)
+        return seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff
 
-        return seq_embs, mlm_logits, desc_embs
+    def contrast_loss(self, var_emb, pos_emb, neg_emb):
+        # pos_emb_dist = (var_emb - pos_emb).norm(p, dim=-1)
+        # neg_emb_dist = (var_emb - neg_emb).norm(p, dim=-1)
+        targets = [torch.tensor([1], device=self.device, dtype=torch.long), 
+                  torch.tensor([-1], device=self.device, dtype=torch.long)]
+        
+        return self.cos_sim_loss_fn(var_emb, pos_emb, targets[0]) + \
+            self.cos_sim_loss_fn(var_emb, neg_emb, targets[1])
 
     # TODO: ref_aa, alt_aa, label format, how to convert into mask / 1-hot matrix 
-    def log_diff_patho_score(self, logits, ref_aa, alt_aa, variant_mask):
+    def log_diff_patho_score(self, logits, ref_aa, alt_aa):
         # modified from AlphaMissense
-        ref_score = torch.einsum('ij, ij->i', logits, F.one_hot(ref_aa, num_classes=self.n_residue_types))
-        alt_score = torch.einsum('ij, ij->i', logits, F.one_hot(alt_aa, num_classes=self.n_residue_types))
-        logit_diff = ref_score - alt_score
-        var_pathogenicity = torch.sum(logit_diff * variant_mask)
+        ref_score = torch.einsum('ij, ij->i', logits, F.one_hot(ref_aa, num_classes=self.n_residue_types).float())
+        alt_score = torch.einsum('ij, ij->i', logits, F.one_hot(alt_aa, num_classes=self.n_residue_types).float())
+        logit_diff = (ref_score - alt_score).unsqueeze(1)
+        # var_pathogenicity = torch.sum(logit_diff)
 
-        return logit_diff, var_pathogenicity
-
+        return logit_diff
+    
+    def pathogenicity_loss(self, logit_diff, labels, clip_negative_at_logit=0.0, clip_positive_at_logit=-1.0):
+        loss = clipped_sigmoid_cross_entropy(logits=logit_diff,
+                                             labels=labels,
+                                             clip_negative_at_logit=clip_negative_at_logit,
+                                             clip_positive_at_logit=clip_positive_at_logit)
+        
+        loss = (torch.sum(loss, axis=(-2, -1)) / (1e-8 + torch.sum(labels.size(0), axis=(-2, -1))))

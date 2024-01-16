@@ -96,7 +96,7 @@ def load_input_to_device(input_data, device, exclude_keys=None):
         exclude_keys = []
     if isinstance(input_data, dict):
         for k, v in input_data.items():
-            if k not in exclude_keys:
+            if k not in exclude_keys and isinstance(v, torch.Tensor):
                 input_data[k] = v.to(device)
     
     return input_data
