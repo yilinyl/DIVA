@@ -712,24 +712,24 @@ def protein_variant_collate_fn(
     batch_label[batch_var_mask.bool()] = 0  # benign
     batch_label[batch_patho_mask.bool()] = 1  # pathogenic
     
-    return {'seq_input_ids': batch_seq_tokenized['input_ids'][prot_idx],
-            'var_pos': [elem['var_pos'] for elem in batch_data_raw],
-            'var_idx': var_idx_all,
-            'var_names': var_names_all,
-            'label': batch_label[(prot_idx, var_idx_all)],
-            'ref_aa': ref_aa,
-            'alt_aa': alt_aa,
-            'pos_pheno_desc': pos_pheno_label_all,
-            'pos_pheno_input_ids': pos_pheno_tokenized['input_ids'],
-            'pos_pheno_attention_mask': pos_pheno_tokenized['attention_mask'],
-            'neg_pheno_desc': neg_pheno_label_all,
-            'neg_pheno_input_ids': neg_pheno_tokenized['input_ids'],
-            'neg_pheno_attention_mask': neg_pheno_tokenized['attention_mask'],
-            'inframe_pheno_input_ids': batch_pheno_input_ids,
-            'inframe_pheno_attention_mask': batch_pheno_attenton_mask,
-            'n_variants': [len(elem['alt_aa']) for elem in batch_data_raw],
-            'prot_idx': prot_idx
-        }
+    # return {'seq_input_ids': batch_seq_tokenized['input_ids'][prot_idx],
+    #         'var_pos': [elem['var_pos'] for elem in batch_data_raw],
+    #         'var_idx': var_idx_all,
+    #         'var_names': var_names_all,
+    #         'label': batch_label[(prot_idx, var_idx_all)],
+    #         'ref_aa': ref_aa,
+    #         'alt_aa': alt_aa,
+    #         'pos_pheno_desc': pos_pheno_label_all,
+    #         'pos_pheno_input_ids': pos_pheno_tokenized['input_ids'],
+    #         'pos_pheno_attention_mask': pos_pheno_tokenized['attention_mask'],
+    #         'neg_pheno_desc': neg_pheno_label_all,
+    #         'neg_pheno_input_ids': neg_pheno_tokenized['input_ids'],
+    #         'neg_pheno_attention_mask': neg_pheno_tokenized['attention_mask'],
+    #         'inframe_pheno_input_ids': batch_pheno_input_ids,
+    #         'inframe_pheno_attention_mask': batch_pheno_attenton_mask,
+    #         'n_variants': [len(elem['alt_aa']) for elem in batch_data_raw],
+    #         'prot_idx': prot_idx
+    #     }
     # return {
     #     'id': batch_prot_ids,
     #     'seq_length': prot_lengths, 
