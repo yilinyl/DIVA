@@ -139,6 +139,7 @@ class DiseaseVariantEncoder(nn.Module):
                  use_desc=True,
                  pad_label_idx=-100,
                  num_heads=4,
+                 max_vars_per_batch=32,
                  **kwargs):
         super(DiseaseVariantEncoder, self).__init__()
 
@@ -156,6 +157,8 @@ class DiseaseVariantEncoder(nn.Module):
         self.text_emb_dim = self.text_encoder.config.hidden_size
         self.hidden_size = hidden_size
 
+        self.max_vars_per_batch = max_vars_per_batch
+
         self.seq_pheno_comb = nn.Linear(self.seq_emb_dim + self.text_emb_dim, self.hidden_size)
 
         self.proj_head = nn.Linear(self.text_emb_dim, self.hidden_size)
@@ -166,40 +169,46 @@ class DiseaseVariantEncoder(nn.Module):
         self.cos_sim_loss_fn = nn.CosineEmbeddingLoss()
     
 
-    def forward(self, seq_input_feat, batch_data, desc_input_feat=None, max_vars_per_batch=32):
+    def forward(self, seq_input_feat, batch_data, desc_input_feat=None):
         
         seq_embs, mlm_logits, _ = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
-        batch_size = batch_data['label'].size(0)
-        batch_label = batch_data['label'].to(self.device)
-        # pheno_feat_dict = batch_data['phenotype']
 
-        variant_data = load_input_to_device(batch_data['variant'], device=self.device, 
-                                                  exclude_keys=['var_names', 'ref_aa', 'alt_aa'])
-        n_variants_total = sum(variant_data['n_variants'])
+        variant_data = load_input_to_device(batch_data['variant'], device=self.device, exclude_keys=['var_names'])
+        # n_variants_total = sum(variant_data['n_variants'])
+        n_variants = len(variant_data['var_idx'])
         max_text_length = self.text_encoder.config.max_position_embeddings
-        pheno_input_ids = variant_data['inframe_pheno_input_ids'].view(n_variants_total, -1)
+        pheno_input_ids = variant_data['context_pheno_input_ids'].view(n_variants, -1)
+        pheno_attn_mask = variant_data['context_pheno_attention_mask'].view(n_variants, -1)
         if pheno_input_ids.shape[-1] > max_text_length:
             pheno_input_ids = pheno_input_ids[:, :max_text_length]
+            pheno_attn_mask = pheno_attn_mask[:, :max_text_length]
 
-        # if n_variants_total > max_vars_per_batch:
-        #     n_mini_batch = n_variants_total // max_vars_per_batch
-        #     for b in range(n_mini_batch):
-        #         variant_pheno_emb = self.text_encoder(
-        #             pheno_input_ids[b*max_vars_per_batch],
-        #             attention_mask=variant_data['inframe_pheno_attention_mask'].view(n_variants_total, -1)[:, :max_text_length],
-        #             token_type_ids=torch.zeros(pheno_input_ids.size(), dtype=torch.long, device=self.device),
+        # if n_variants_total <= self.max_vars_per_batch:
+        variant_pheno_emb = self.text_encoder(
+            pheno_input_ids,
+            attention_mask=pheno_attn_mask,
+            token_type_ids=torch.zeros(pheno_input_ids.size(), dtype=torch.long, device=self.device),
+            output_attentions=False,
+            output_hidden_states=True,
+            return_dict=None
+        ).hidden_states[-1]
+        # else:
+        #     variant_pheno_emb_all = []
+        #     n_mini_batch = n_variants_total // self.max_vars_per_batch
+        #     split_sizes = [self.max_vars_per_batch] * n_mini_batch + [n_variants_total % self.max_vars_per_batch]
+        #     pheno_input_chunks = torch.split(pheno_input_ids, split_sizes)
+        #     pheno_attn_mask_chunks = torch.split(pheno_attn_mask, split_sizes)
+        #     for b, pheno_input_cur in enumerate(pheno_input_chunks):
+        #         variant_pheno_emb_cur = self.text_encoder(
+        #             pheno_input_cur,
+        #             attention_mask=pheno_attn_mask_chunks[b],
+        #             token_type_ids=torch.zeros(pheno_input_cur.size(), dtype=torch.long, device=self.device),
         #             output_attentions=False,
         #             output_hidden_states=True,
         #             return_dict=None
         #         ).hidden_states[-1]
-        variant_pheno_emb = self.text_encoder(
-                pheno_input_ids,
-                attention_mask=variant_data['inframe_pheno_attention_mask'].view(n_variants_total, -1)[:, :max_text_length],
-                token_type_ids=torch.zeros(pheno_input_ids.size(), dtype=torch.long, device=self.device),
-                output_attentions=False,
-                output_hidden_states=True,
-                return_dict=None
-            ).hidden_states[-1]
+        #         variant_pheno_emb_all.append(variant_pheno_emb_cur)
+        #     variant_pheno_emb = torch.stack(variant_pheno_emb_all)
         
         pos_pheno_embs = self.text_encoder(
             variant_data['pos_pheno_input_ids'],
@@ -228,9 +237,9 @@ class DiseaseVariantEncoder(nn.Module):
         neg_emb_proj = self.proj_head(neg_pheno_embs).mean(1)
 
         var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
-        ref_aa = torch.tensor(variant_data['ref_aa'], device=self.device)
-        alt_aa = torch.tensor(variant_data['alt_aa'], device=self.device)
-        logit_diff = self.log_diff_patho_score(mlm_logits[var_indices], ref_aa, alt_aa)
+        # ref_aa = torch.tensor(variant_data['ref_aa'], device=self.device)
+        # alt_aa = torch.tensor(variant_data['alt_aa'], device=self.device)
+        logit_diff = self.log_diff_patho_score(mlm_logits[var_indices], variant_data['ref_aa'], variant_data['alt_aa'])
 
         return seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff
 

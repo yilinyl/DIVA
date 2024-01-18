@@ -2,7 +2,7 @@ exp_dir: ./scratch/
 experiment: dis_var
 mode: train
 device: cuda:0
-batch_size: 6
+batch_size: 8
 scoring: wt-marginals  # one of wt-marginals, masked-marginals
 # output_file: ./dms_ontoprot_wt_score.csv
 init_lr: 0.001
@@ -21,11 +21,11 @@ model:
 
 dataset:
   task_name: var_pred
-  data_dir: /local/storage/yl986/data/variant_data/pred/debug_sample
+  data_dir: /local/storage/yl986/data/variant_data/pred/
   seq_fasta: ["/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot.fasta",
               "/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot_varsplic.fasta"]
   input_file:
-    train: train1.csv
+    train: train.csv
     test: test.csv
     val: val.csv
   phenotype_vocab_file: /local/storage/yl986/data/variant_data/phenotype_all.txt

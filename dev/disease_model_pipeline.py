@@ -68,12 +68,12 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5)
         #                    'token_type_ids': batch_data['desc_token_type_ids'].to(device)}
         # batch_var_idx = batch_data[3].to(device)
         seq_feat_dict = load_input_to_device(batch_data['seq_input_feat'], device)
-        desc_feat_dict = load_input_to_device(batch_data['desc_input_feat'], device)
+        # desc_feat_dict = load_input_to_device(batch_data['desc_input_feat'], device)
         batch_labels = batch_data['variant']['label'].unsqueeze(1).to(device)
         optimizer.zero_grad()
         # batch_pheno_feat = batch_data['phenotype']
         # TODO: parse phenotype information
-        seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, batch_data, desc_feat_dict)
+        seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, batch_data)
         # shapes = batch_logits.size()
         # batch_logits = batch_logits.view(shapes[0]*shapes[1])
 
@@ -259,36 +259,41 @@ def main():
                                          phenotype_vocab=phenotype_vocab, 
                                          protein_tokenizer=protein_tokenizer, 
                                          text_tokenizer=text_tokenizer)
-    var_db = pd.read_csv(data_root / data_configs['input_file']['train']).query('label == 1').\
-        drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
-    
+    # var_db = pd.read_csv(data_root / data_configs['input_file']['train']).query('label == 1').\
+    #     drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
+    prot_var_cache = train_dataset.get_protein_cache()
     val_dataset = ProteinVariantDatset(**data_configs, 
                                          variant_file=data_configs['input_file']['val'], 
                                          split='val', 
                                          phenotype_vocab=phenotype_vocab, 
                                          protein_tokenizer=protein_tokenizer, 
                                          text_tokenizer=text_tokenizer,
-                                         var_db=var_db)
-    val_variants = pd.read_csv(data_root / data_configs['input_file']['val']).query('label == 1').\
-        drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
-    var_db = pd.concat([var_db, val_variants])
+                                        #  var_db=var_db,
+                                         prot_var_cache=prot_var_cache)
+    # val_variants = pd.read_csv(data_root / data_configs['input_file']['val']).query('label == 1').\
+    #     drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
+    # var_db = pd.concat([var_db, val_variants])
+    prot_var_cache = val_dataset.get_protein_cache()
+    
     test_dataset = ProteinVariantDatset(**data_configs, 
                                          variant_file=data_configs['input_file']['test'], 
                                          split='test', 
                                          phenotype_vocab=phenotype_vocab, 
                                          protein_tokenizer=protein_tokenizer, 
                                          text_tokenizer=text_tokenizer,
-                                         var_db=var_db)
+                                        #  var_db=var_db,
+                                         prot_var_cache=prot_var_cache)
     
     # Initilize pretrained encoders:
     seq_encoder = EsmForMaskedLM.from_pretrained(model_args['protein_lm_path'])
     text_encoder = BertForMaskedLM.from_pretrained(model_args['text_lm_path'])
 
-    var_collator = ProteinVariantDataCollator(protein_tokenizer, text_tokenizer, use_desc=True, pheno_descs=phenotype_vocab)
-    train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], collate_fn=var_collator)
-    validation_loader = DataLoader(val_dataset, batch_size=config['batch_size'], collate_fn=var_collator)
-    test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=var_collator)
-
+    train_collator = ProteinVariantDataCollator(train_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, use_desc=True)
+    train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], collate_fn=train_collator)
+    val_collator = ProteinVariantDataCollator(val_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, use_desc=True)
+    validation_loader = DataLoader(val_dataset, batch_size=config['batch_size'], collate_fn=val_collator)
+    test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, use_desc=True)
+    test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
 
     if model_args['frozen_bert']:
         prot_unfreeze_layers = ['esm.encoder.layer.11']
