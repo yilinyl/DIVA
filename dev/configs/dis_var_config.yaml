@@ -11,13 +11,16 @@ epochs: 50
 model:
   type: ontoprotein
   # protein_lm_path: /local/storage/yl986/script_hub/KeAP/pretrained  # KeAP model
-  protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
-  # protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
+  # protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
+  protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
   # protein_lm_path: facebook/esm1v_t33_650M_UR90S_1  # ESM-1v
+  # protein_lm_path: facebook/esm1b_t33_650M_UR50S  # ESM-1b
   # protein_lm_path: zjunlp/OntoProtein
   text_lm_path: microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext  # PubMedBERT
   # decoder_config_path: /local/storage/yl986/script_hub/KeAP/initial_decoder_config/config.json
   frozen_bert: True
+  prot_bert_unfreeze: ['esm.encoder.layer.32']  # for esm-2 1280
+  text_bert_unfreeze: ['bert.encoder.layer.11']
 
 dataset:
   task_name: var_pred
