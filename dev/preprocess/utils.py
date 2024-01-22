@@ -496,7 +496,58 @@ def parse_fasta(fasta_file):
     return result_dict
 
 
-def fetch_prot_seq(pid):
+def parse_fasta_info(fasta_file):
+    """
+    (Modified from Charles)
+    Load protein sequence and definition from FASTA file. Supports both *.fasta and *.fasta.gz.
+
+    Args:
+      fasta_file: str, path to the fasta file.
+
+    Returns:
+      1) dictionary of sequences, 2) dictionary of protein name (definition)
+    """
+    seq_dict = {}
+    desc_dict = {}
+    if fasta_file.endswith('.gz'):
+        zipped = True
+        f = gzip.open(fasta_file, 'rb')
+    else:
+        zipped = False
+        f = open(fasta_file, 'r')
+    seq = ''
+    for line in f:
+        if zipped:
+            is_header = line.startswith(b'>')
+        else:
+            is_header = line.startswith('>')
+        if is_header:
+            if seq:
+                seq_dict[identifier] = seq
+            if zipped:
+                info = line.decode('utf-8').split('|')
+                # identifier = line.decode('utf-8').split('|')[1]  # YL: SwissProt ID as key
+                
+            else:
+                info = line.split('|')
+            seq = ''
+            identifier = info[1]
+            bound_idx = info[2].find('OS=')  # extract information before species name
+            desc = info[2][:bound_idx].strip()
+            desc_dict[identifier] = ' '.join(desc.split(' ')[1:])
+        else:
+            if zipped:
+                seq += line.decode('utf-8').strip()
+            else:
+                seq += line.strip()
+
+    seq_dict[identifier] = seq
+    
+    f.close()
+    return seq_dict, desc_dict
+
+
+def fetch_prot_seq(pid, seq_only=True):
     """
     Fetch protein sequence from UniProt protal
 
@@ -512,7 +563,9 @@ def fetch_prot_seq(pid):
         content = response.read().decode("utf-8")
         # info = re.findall('<name type="common">(.*?)</name>', content)
     js_dict = json.loads(content)
-    return js_dict['sequence']['value']
+    if seq_only:
+        return js_dict['sequence']['value']
+    return js_dict
 
 
 def get_prot_length(uprot_all, uprot2seq_dict):
