@@ -1,0 +1,227 @@
+import os
+import json
+from typing import Dict, List, Optional, Tuple, Union
+import numpy as np
+import dataclasses
+from dataclasses import dataclass
+import tqdm
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.nn import MultiheadAttention
+from torch.utils.data import DataLoader, Dataset
+from transformers import BertModel, BertTokenizer
+from transformers import PreTrainedTokenizerBase, PreTrainedModel
+import pandas as pd
+
+from dev.utils import load_input_to_device
+
+
+class ProteinEncoder(nn.Module):
+    def __init__(self, 
+                 seq_encoder: Union[nn.Module, PreTrainedModel], 
+                 text_encoder: Union[nn.Module, PreTrainedModel],
+                 use_desc: bool = False):
+        super().__init__()
+
+        self.seq_encoder = seq_encoder
+        self.text_encoder = text_encoder
+        self.use_desc = use_desc
+        self.device = self.seq_encoder.device
+    
+    def forward(self, seq_input_data, desc_input_data=None):
+        seq_outputs = self.seq_encoder(
+            seq_input_data['input_ids'],
+            attention_mask=seq_input_data['attention_mask'],
+            # token_type_ids=seq_input_data['token_type_ids'],
+            output_attentions=False,
+            output_hidden_states=True,
+        )
+        # attn_mask = seq_input_data['attention_mask'].bool()
+        # num_batch_size = seq_input_data['attention_mask'].size(0)
+        # seq_embs = torch.stack([seq_outputs.last_hidden_state[i, attn_mask[i, :], :][1:-1].mean(dim=0) for i in range(num_batch_size)], dim=0)
+        seq_embs, mlm_logits = seq_outputs.hidden_states[-1], seq_outputs.logits
+
+        # embedding protein functional description
+        if self.use_desc:
+            desc_outputs = self.text_encoder(
+                desc_input_data['input_ids'],
+                attention_mask=desc_input_data['attention_mask'],
+                # token_type_ids=desc_input_data['token_type_ids'],
+                output_attentions=False,
+                output_hidden_states=True,
+                return_dict=None,
+            )
+
+            # attn_mask = desc_input_data['attention_mask'].bool()
+            # num_batch_size = desc_input_data['attention_mask'].size(0)
+            desc_embs = desc_outputs.hidden_states[-1]  # (batch_size, max_desc_length, emb_dim)
+            # desc_embs = torch.stack([desc_outputs.last_hidden_state[i, attn_mask[i, :], :][1:-1].mean(dim=0) for i in range(num_batch_size)], dim=0)
+
+            return seq_embs, mlm_logits, desc_embs
+        
+        return seq_embs, mlm_logits, None
+
+
+def clipped_sigmoid_cross_entropy(
+    logits: torch.Tensor,
+    labels: torch.Tensor,
+    clip_negative_at_logit: float,
+    clip_positive_at_logit: float,
+    epsilon: float = 1e-07,
+    ):
+    """Computes sigmoid xent loss with clipped input logits. (from AlphaMissense)
+
+    Args:
+    logits: The predicted values.
+    labels: The ground truth values.
+    clip_negative_at_logit: clip the loss to 0 if prediction smaller than this
+        value for the negative class.
+    clip_positive_at_logit: clip the loss to this value if prediction smaller
+        than this value for the positive class.
+    epsilon: A small increment to add to avoid taking a log of zero.
+
+    Returns:
+    Loss value.
+    """
+    prob = torch.sigmoid(logits)
+    prob = torch.clip(prob, epsilon, 1. - epsilon)
+    loss = -labels * torch.log(prob) - (1. - labels) * torch.log(1. - prob)  # cross-entropy
+
+    loss_at_clip = np.log(np.exp(clip_negative_at_logit) + 1)
+    loss = torch.where((1 - labels) * (logits < clip_negative_at_logit), loss_at_clip, loss)
+    loss_at_clip = np.log(np.exp(-clip_positive_at_logit) + 1)
+    loss = torch.where(labels * (logits < clip_positive_at_logit), loss_at_clip, loss)
+    return loss
+
+class DiseaseVariantEncoder(nn.Module):
+
+    def __init__(self,
+                 seq_encoder: Union[nn.Module, PreTrainedModel],
+                 text_encoder: Union[nn.Module, PreTrainedModel],
+                 n_residue_types,
+                 hidden_size,
+                 use_desc=True,
+                 pad_label_idx=-100,
+                 num_heads=4,
+                 max_vars_per_batch=32,
+                 **kwargs):
+        super(DiseaseVariantEncoder, self).__init__()
+
+        self.protein_encoder = ProteinEncoder(seq_encoder=seq_encoder,
+                                              text_encoder=text_encoder,
+                                              use_desc=False)  # requires initialization
+        self.seq_encoder = seq_encoder
+        self.text_encoder = text_encoder
+
+        self.n_residue_types = n_residue_types
+        self.use_desc = use_desc
+        self.device = self.protein_encoder.device
+
+        self.seq_emb_dim = self.seq_encoder.config.hidden_size
+        self.text_emb_dim = self.text_encoder.config.hidden_size
+        self.hidden_size = hidden_size
+
+        self.max_vars_per_batch = max_vars_per_batch
+
+        self.seq_pheno_comb = nn.Linear(self.seq_emb_dim + self.text_emb_dim, self.hidden_size)
+
+        self.proj_head = nn.Linear(self.text_emb_dim, self.hidden_size)
+
+        # self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)
+        self.patho_loss_fn = nn.BCEWithLogitsLoss()
+        # self.desc_loss_fn = nn.CosineEmbeddingLoss()
+        self.cos_sim_loss_fn = nn.CosineEmbeddingLoss()
+    
+
+    def forward(self, seq_input_feat, batch_data, desc_input_feat=None):
+        
+        seq_embs, mlm_logits, _ = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
+
+        variant_data = load_input_to_device(batch_data['variant'], device=self.device, exclude_keys=['var_names'])
+        # n_variants_total = sum(variant_data['n_variants'])
+        # n_variants = len(variant_data['var_idx'])
+        
+        if variant_data['infer_phenotype']:
+            n_pheno_vars = len(variant_data['patho_var_prot_idx'])
+            max_text_length = self.text_encoder.config.max_position_embeddings
+            pheno_input_ids = variant_data['context_pheno_input_ids'].view(n_pheno_vars, -1)
+            pheno_attn_mask = variant_data['context_pheno_attention_mask'].view(n_pheno_vars, -1)
+            if pheno_input_ids.shape[-1] > max_text_length:
+                pheno_input_ids = pheno_input_ids[:, :max_text_length]
+                pheno_attn_mask = pheno_attn_mask[:, :max_text_length]
+
+            # if n_variants_total <= self.max_vars_per_batch:
+            variant_pheno_emb = self.text_encoder(
+                pheno_input_ids,
+                attention_mask=pheno_attn_mask,
+                token_type_ids=torch.zeros(pheno_input_ids.size(), dtype=torch.long, device=self.device),
+                output_attentions=False,
+                output_hidden_states=True,
+                return_dict=None
+            ).hidden_states[-1]
+            
+            pos_pheno_embs = self.text_encoder(
+                variant_data['pos_pheno_input_ids'],
+                attention_mask=variant_data['pos_pheno_attention_mask'],
+                token_type_ids=torch.zeros(variant_data['pos_pheno_input_ids'].size(), dtype=torch.long, device=self.device),
+                output_attentions=False,
+                output_hidden_states=True,
+                return_dict=None
+            ).hidden_states[-1]  # n_var, max_pos_pheno_length, pheno_emb_dim
+
+            neg_pheno_embs = self.text_encoder(
+                variant_data['neg_pheno_input_ids'],
+                attention_mask=variant_data['neg_pheno_attention_mask'],
+                token_type_ids=torch.zeros(variant_data['neg_pheno_input_ids'].size(), dtype=torch.long, device=self.device),
+                output_attentions=False,
+                output_hidden_states=True,
+                return_dict=None
+            ).hidden_states[-1]  # n_var, max_neg_pheno_length, pheno_emb_dim
+
+            seq_var_embs = seq_embs.mean(1)[variant_data['patho_var_prot_idx']]  # aggregate embedding for whole sequence
+            # seq_var_embs = seq_embs[(variant_data['prot_idx'], variant_data['var_idx'])]  # extract embedding for target position
+            seq_pheno_emb_raw = torch.cat([seq_var_embs, variant_pheno_emb.mean(1)], dim=-1)  # n_var, (seq_emb_dim + pheno_emb_dim)
+            seq_pheno_emb = self.seq_pheno_comb(seq_pheno_emb_raw)  # n_var, hidden_size
+
+            pos_emb_proj = self.proj_head(pos_pheno_embs).mean(1)
+            neg_emb_proj = self.proj_head(neg_pheno_embs).mean(1)
+        
+        else:  # no valid phenotype label in the batch, skip phenotype inference
+            seq_pheno_emb = None
+            pos_emb_proj = None
+            neg_emb_proj = None
+
+        var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
+        # ref_aa = torch.tensor(variant_data['ref_aa'], device=self.device)
+        # alt_aa = torch.tensor(variant_data['alt_aa'], device=self.device)
+        logit_diff = self.log_diff_patho_score(mlm_logits[var_indices], variant_data['ref_aa'], variant_data['alt_aa'])
+
+        return seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff
+
+    def contrast_loss(self, var_emb, pos_emb, neg_emb):
+        # pos_emb_dist = (var_emb - pos_emb).norm(p, dim=-1)
+        # neg_emb_dist = (var_emb - neg_emb).norm(p, dim=-1)
+        targets = [torch.tensor([1], device=self.device, dtype=torch.long), 
+                  torch.tensor([-1], device=self.device, dtype=torch.long)]
+        
+        return self.cos_sim_loss_fn(var_emb, pos_emb, targets[0]) + \
+            self.cos_sim_loss_fn(var_emb, neg_emb, targets[1])
+
+    # TODO: ref_aa, alt_aa, label format, how to convert into mask / 1-hot matrix 
+    def log_diff_patho_score(self, logits, ref_aa, alt_aa):
+        # modified from AlphaMissense
+        ref_score = torch.einsum('ij, ij->i', logits, F.one_hot(ref_aa, num_classes=self.n_residue_types).float())
+        alt_score = torch.einsum('ij, ij->i', logits, F.one_hot(alt_aa, num_classes=self.n_residue_types).float())
+        logit_diff = (ref_score - alt_score).unsqueeze(1)
+        # var_pathogenicity = torch.sum(logit_diff)
+
+        return logit_diff
+    
+    def pathogenicity_loss(self, logit_diff, labels, clip_negative_at_logit=0.0, clip_positive_at_logit=-1.0):
+        loss = clipped_sigmoid_cross_entropy(logits=logit_diff,
+                                             labels=labels,
+                                             clip_negative_at_logit=clip_negative_at_logit,
+                                             clip_positive_at_logit=clip_positive_at_logit)
+        
+        loss = (torch.sum(loss, axis=(-2, -1)) / (1e-8 + torch.sum(labels.size(0), axis=(-2, -1))))
