@@ -354,6 +354,7 @@ class ProteinVariantDataCollator:
     label_pad_idx: int = -100
     # pheno_descs: List = None
     window_size: int = 64
+    max_protein_length: int = 1024
 
     def __post_init__(self):
         if self.mlm and self.protein_tokenizer.mask_token is None:
@@ -368,7 +369,7 @@ class ProteinVariantDataCollator:
     ) -> Dict[str, torch.Tensor]:
         batch = protein_variant_collate_fn(batch_data_raw, self.protein_tokenizer, self.text_tokenizer, self.protein_data,
                                            self.same_length, self.use_desc, label_pad_idx=self.label_pad_idx,
-                                           window_size=self.window_size)
+                                           window_size=self.window_size, max_protein_length=self.max_protein_length)
 
         return batch
     
@@ -536,6 +537,8 @@ def protein_variant_collate_fn(
     # max_seq_length = max(prot_lengths)
     if not max_protein_length:
         max_protein_length = protein_tokenizer.model_max_length
+    else:
+        max_protein_length = min(max_protein_length, protein_tokenizer.model_max_length)
 
     # seq_lst = [elem['seq'] for elem in batch_data_raw]
     batch_seq_tokenized = protein_tokenizer(seq_lst, padding=True, truncation=True, return_tensors='pt', max_length=max_protein_length)

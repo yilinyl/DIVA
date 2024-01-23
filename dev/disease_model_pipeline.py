@@ -56,7 +56,10 @@ def parse_args():
 def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5):
     model.train()
     running_loss = 0
+    running_patho_loss = 0
+    running_pheno_loss = 0
     n_sample = 0
+    n_pheno_sample = 0
     for batch_idx, batch_data in enumerate(data_loader):
         # TODO: check batch_data structure
         # seq_input_data = {'input_ids': batch_data['seq_input_ids'].to(device),
@@ -80,7 +83,8 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5)
         # patho_loss = model.pathogenicity_loss(logit_diff, batch_labels)
         patho_loss = model.patho_loss_fn(logit_diff, batch_labels.float())
         if batch_data['variant']['infer_phenotype']:
-            loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj) + patho_loss * w_l
+            contrast_loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj)
+            loss = contrast_loss + patho_loss * w_l
         else:
             loss = patho_loss
         loss.backward()
@@ -88,21 +92,32 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5)
         
         loss_ = loss.detach().item()
         size = batch_labels.size()[0]
-        running_loss += loss_* size
+        cur_pheno_size = batch_labels.sum().item()
+        running_patho_loss += patho_loss.detach().item() * size
+        if batch_data['variant']['infer_phenotype']:
+            running_pheno_loss += contrast_loss.detach().item() * cur_pheno_size
+        # running_loss += loss_* size
         n_sample += size
+        n_pheno_sample += cur_pheno_size
 
         if diagnostic and batch_idx == 5:
             diagnostic.print_diagnostics()
             break
-    epoch_loss = running_loss / n_sample
+    epoch_patho_loss = running_patho_loss / n_sample
+    epoch_pheno_loss = running_pheno_loss / n_pheno_sample
+    epoch_loss = w_l * epoch_patho_loss + epoch_pheno_loss
+    # epoch_loss = running_loss / n_sample
     
-    return epoch_loss, optimizer
+    return epoch_patho_loss, epoch_pheno_loss, epoch_loss, optimizer
 
 
 def eval_epoch(model, device, data_loader, diagnostic=None, w_l=0.5):
     model.eval()
     running_loss = 0
+    running_patho_loss = 0
+    running_pheno_loss = 0
     n_sample = 0
+    n_pheno_sample = 0
     all_vars, all_scores, all_labels, all_pheno_scores = [], [], [], []
     all_pheno_emb_pred, all_pheno_emb_label, all_pos_pheno_descs = [], [], []
     all_patho_vars, all_pheno_emb_neg, all_neg_pheno_descs, all_pheno_neg_scores = [], [], [], []
@@ -117,14 +132,20 @@ def eval_epoch(model, device, data_loader, diagnostic=None, w_l=0.5):
             # patho_loss = model.pathogenicity_loss(logit_diff, batch_labels)
             patho_loss = model.patho_loss_fn(logit_diff, batch_labels.float())
             if batch_data['variant']['infer_phenotype']:
-                loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj) + patho_loss * w_l
+                contrast_loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj)
+                loss = contrast_loss + patho_loss * w_l
             else:
                 loss = patho_loss
             
             loss_ = loss.detach().item()
             size = batch_labels.size()[0]
-            running_loss += loss_* size
+            cur_pheno_size = batch_labels.sum().item()
+            running_patho_loss += patho_loss.detach().item() * size
+            if batch_data['variant']['infer_phenotype']:
+                running_pheno_loss += contrast_loss.detach().item() * cur_pheno_size
+            # running_loss += loss_* size
             n_sample += size
+            n_pheno_sample += cur_pheno_size
             batch_patho_scores = torch.sigmoid(logit_diff)
 
             all_scores.append(batch_patho_scores.squeeze(1).detach().cpu().numpy())
@@ -145,7 +166,10 @@ def eval_epoch(model, device, data_loader, diagnostic=None, w_l=0.5):
                 all_pos_pheno_descs.extend(batch_data['variant']['pos_pheno_desc'])
                 all_neg_pheno_descs.extend(batch_data['variant']['neg_pheno_desc'])
 
-        epoch_loss = running_loss / n_sample
+        epoch_patho_loss = running_patho_loss / n_sample
+        epoch_pheno_loss = running_pheno_loss / n_pheno_sample
+        epoch_loss = epoch_patho_loss + epoch_pheno_loss
+        # epoch_loss = running_loss / n_sample
         all_labels = np.concatenate(all_labels, 0)
         all_scores = np.concatenate(all_scores, 0)
         all_pheno_scores = np.concatenate(all_pheno_scores, 0)
@@ -164,7 +188,7 @@ def eval_epoch(model, device, data_loader, diagnostic=None, w_l=0.5):
                          'pos_score': all_pheno_scores,
                          'neg_score': all_pheno_neg_scores}
     
-    return epoch_loss, all_labels, all_scores, all_vars, all_pheno_results
+    return epoch_patho_loss, epoch_pheno_loss, epoch_loss, all_labels, all_scores, all_vars, all_pheno_results
 
 
 def load_config(cfg_file, format='yaml'):
@@ -215,6 +239,22 @@ def env_setup(args, config):
     return config, device
 
 
+def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=False):
+    if isinstance(save_path, str):
+        save_path = Path(save_path)
+
+    df_pheno_results = pd.DataFrame({'prot_var_id': pheno_result_dict['var_names'], 
+                                        'phenotype': pheno_result_dict['pos_pheno_desc'], 
+                                        'neg_phenotype': pheno_result_dict['neg_pheno_desc'], 
+                                        'pos_score': pheno_result_dict['pos_score'],
+                                        'neg_score': pheno_result_dict['neg_score']})
+    df_pheno_results.to_csv(save_path / f'{split}_pheno_score.tsv', sep='\t', index=False)
+    if save_emb:
+        pd.DataFrame(pheno_result_dict['pred_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_pred_emb.tsv', sep='\t', index=False, header=False)
+        pd.DataFrame(pheno_result_dict['pos_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_true_emb.tsv', sep='\t', index=False, header=False)
+        pd.DataFrame(pheno_result_dict['neg_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_neg_emb.tsv', sep='\t', index=False, header=False)
+    
+
 def main():
     args = parse_args()
     config = load_config(args.config, format=args.config_fmt)
@@ -231,8 +271,12 @@ def main():
         model_save_path.mkdir(parents=True)
 
     result_path = Path(exp_dir) / 'result'
-    if not result_path.exists():
-        result_path.mkdir(parents=True)
+    # if not result_path.exists():
+    #     result_path.mkdir(parents=True)
+
+    pheno_result_path = result_path / 'phenotype'
+    if not pheno_result_path.exists():
+        pheno_result_path.mkdir(parents=True)
 
     if args.tensorboard:
         tb_writer = SummaryWriter(log_dir='{}/tensorboard'.format(config['exp_dir']))
@@ -295,14 +339,15 @@ def main():
                                          prot_var_cache=prot_var_cache)
     
     # Initilize pretrained encoders:
-    seq_encoder = EsmForMaskedLM.from_pretrained(model_args['protein_lm_path'])
+    # seq_encoder = EsmForMaskedLM.from_pretrained(model_args['protein_lm_path'])
+    seq_encoder = AutoModelForMaskedLM.from_pretrained(model_args['protein_lm_path'])
     text_encoder = BertForMaskedLM.from_pretrained(model_args['text_lm_path'])
 
-    train_collator = ProteinVariantDataCollator(train_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, use_desc=True)
+    train_collator = ProteinVariantDataCollator(train_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, use_desc=True, max_protein_length=data_configs['max_protein_seq_length'])
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], collate_fn=train_collator)
-    val_collator = ProteinVariantDataCollator(val_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, use_desc=True)
+    val_collator = ProteinVariantDataCollator(val_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, use_desc=True, max_protein_length=data_configs['max_protein_seq_length'])
     validation_loader = DataLoader(val_dataset, batch_size=config['batch_size'], collate_fn=val_collator)
-    test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, use_desc=True)
+    test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, use_desc=True, max_protein_length=data_configs['max_protein_seq_length'])
     test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
 
     if model_args['frozen_bert']:
@@ -355,24 +400,24 @@ def main():
         # if tb_writer:
         #     tb_writer.add_scalar("train/epoch", epoch)
 
-        train_loss, optimizer = train_epoch(model, optimizer, device, train_loader)
-        train_loss, train_labels, train_scores, train_vars, train_pheno_results = eval_epoch(model, device, train_loader)
+        train_patho_loss, train_pheno_loss, train_loss, optimizer = train_epoch(model, optimizer, device, train_loader)
+        train_patho_loss, train_pheno_loss, train_loss, train_labels, train_scores, train_vars, train_pheno_results = eval_epoch(model, device, train_loader)
         train_aupr = compute_aupr(train_labels, train_scores)
         train_auc = compute_roc(train_labels, train_scores)
 
         data_name = 'train'
-        logging.info(f'<{data_name}> loss={train_loss:.4f} auPR={train_aupr:.4f} auROC={train_auc:.4f}')
+        logging.info(f'<{data_name}> loss={train_loss:.4f} patho-loss={train_patho_loss:.4f} pheno-loss={train_pheno_loss:.4f} auPR={train_aupr:.4f} auROC={train_auc:.4f}')
 
-        val_loss, val_labels, val_scores, val_vars, val_pheno_results = eval_epoch(model, device, validation_loader)
+        val_patho_loss, val_pheno_loss, val_loss, val_labels, val_scores, val_vars, val_pheno_results = eval_epoch(model, device, validation_loader)
         # scheduler.step(val_loss)
 
         val_aupr = compute_aupr(val_labels, val_scores)
         val_auc = compute_roc(val_labels, val_scores)
 
         data_name = 'validation'
-        logging.info(f'<{data_name}> loss={val_loss:.4f} auPR={val_aupr:.4f} auROC={val_auc:.4f}')
+        logging.info(f'<{data_name}> loss={val_loss:.4f} patho-loss={val_patho_loss:.4f} pheno-loss={val_pheno_loss:.4f} auPR={val_aupr:.4f} auROC={val_auc:.4f}')
 
-        test_loss, test_labels, test_scores, test_vars, test_pheno_results = eval_epoch(model, device, test_loader)
+        test_patho_loss, test_pheno_loss, test_loss, test_labels, test_scores, test_vars, test_pheno_results = eval_epoch(model, device, test_loader)
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch
@@ -386,20 +431,30 @@ def main():
         test_aupr = compute_aupr(test_labels, test_scores)
         test_auc = compute_roc(test_labels, test_scores)
         data_name = 'test'
-        logging.info(f'<{data_name}> loss={test_loss:.4f} auPR={test_aupr:.4f} auROC={test_auc:.4f}')
+        logging.info(f'<{data_name}> loss={test_loss:.4f} patho-loss={test_patho_loss:.4f} pheno-loss={test_pheno_loss:.4f} auPR={test_aupr:.4f} auROC={test_auc:.4f}')
 
         if epoch % args.save_freq == 0:
             _save_scores(train_vars, train_labels, train_scores, 'train', epoch, exp_dir)
             _save_scores(val_vars, val_labels, val_scores, 'val', epoch, exp_dir)
             _save_scores(test_vars, test_labels, test_scores, 'test', epoch, exp_dir)
+            save_pheno_results(train_pheno_results, pheno_result_path, epoch, split='train', save_emb=False)
+            save_pheno_results(val_pheno_results, pheno_result_path, epoch, split='val', save_emb=False)
+            save_pheno_results(test_pheno_results, pheno_result_path, epoch, split='test', save_emb=False)
+
         if tb_writer:
             tb_writer.add_pr_curve('Train/PR-curve', train_labels, train_scores, epoch)
             tb_writer.add_pr_curve('Test/PR-curve', test_labels, test_scores, epoch)
             tb_writer.add_pr_curve('Val/PR-curve', val_labels, val_scores, epoch)
 
             tb_writer.add_scalar('train/loss', train_loss, epoch)
+            tb_writer.add_scalar('train/patho_loss', train_patho_loss, epoch)
+            tb_writer.add_scalar('train/pheno_loss', train_pheno_loss, epoch)
             tb_writer.add_scalar('validation/loss', val_loss, epoch)
+            tb_writer.add_scalar('validation/patho_loss', val_patho_loss, epoch)
+            tb_writer.add_scalar('validation/pheno_loss', val_pheno_loss, epoch)
             tb_writer.add_scalar('test/loss', test_loss, epoch)
+            tb_writer.add_scalar('test/patho_loss', test_patho_loss, epoch)
+            tb_writer.add_scalar('test/pheno_loss', test_pheno_loss, epoch)
             # tb_writer.add_embedding(best_results['train'][3]['pred_emb'], metadata=[best_results['train'][0]], 
             #                         metadata_header=['prot_var_id', 'phenotype'], tag='Train/Embedding')
 
@@ -409,16 +464,7 @@ def main():
                model_save_path / 'bestmodel-ep{}.pt'.format(best_epoch))
     for key in best_results:
         _save_scores(best_results[key][0], best_results[key][1], best_results[key][2], key, best_epoch, exp_dir)
-        pheno_results_final = best_results[key][3]
-        df_pheno_results = pd.DataFrame({'prot_var_id': pheno_results_final['var_names'], 
-                                         'phenotype': pheno_results_final['pos_pheno_desc'], 
-                                         'neg_phenotype': pheno_results_final['neg_pheno_desc'], 
-                                         'pos_score': pheno_results_final['pos_score'],
-                                         'neg_score': pheno_results_final['neg_score']})
-        df_pheno_results.to_csv(f'{exp_dir}/{key}_pheno_score.tsv', sep='\t', index=False)
-        pd.DataFrame(pheno_results_final['pred_emb']).to_csv(f'{exp_dir}/result/{key}_pheno_pred_emb.tsv', sep='\t', index=False, header=False)
-        pd.DataFrame(pheno_results_final['pos_emb']).to_csv(f'{exp_dir}/result/{key}_pheno_true_emb.tsv', sep='\t', index=False, header=False)
-        pd.DataFrame(pheno_results_final['neg_emb']).to_csv(f'{exp_dir}/result/{key}_pheno_neg_emb.tsv', sep='\t', index=False, header=False)
+        save_pheno_results(best_results[key][3], pheno_result_path, epoch=best_epoch, split=f'best_{key}', save_emb=True)
 
     
 if __name__ == '__main__':
