@@ -94,6 +94,15 @@ def clipped_sigmoid_cross_entropy(
     loss = torch.where(labels * (logits < clip_positive_at_logit), loss_at_clip, loss)
     return loss
 
+def sigmoid_cosine_distance_p(x, y, p=1):
+    sig = torch.nn.Sigmoid()
+    cosine_sim = torch.nn.CosineSimilarity()
+    return (1 - sig(cosine_sim(x, y))) ** p
+
+
+_dist_fn_map = {'euclidean': nn.PairwiseDistance(),
+                'cosine_sigmoid': sigmoid_cosine_distance_p}
+
 class DiseaseVariantEncoder(nn.Module):
 
     def __init__(self,
@@ -105,6 +114,8 @@ class DiseaseVariantEncoder(nn.Module):
                  pad_label_idx=-100,
                  num_heads=4,
                  max_vars_per_batch=32,
+                 dist_fn_name='cosine_sigmoid',
+                 init_margin=1,
                  **kwargs):
         super(DiseaseVariantEncoder, self).__init__()
 
@@ -128,10 +139,12 @@ class DiseaseVariantEncoder(nn.Module):
 
         self.proj_head = nn.Linear(self.text_emb_dim, self.hidden_size)
 
+        self.dist_fn = _dist_fn_map[dist_fn_name]
         # self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)
         self.patho_loss_fn = nn.BCEWithLogitsLoss()
         # self.desc_loss_fn = nn.CosineEmbeddingLoss()
-        self.cos_sim_loss_fn = nn.CosineEmbeddingLoss()
+        # self.cos_sim_loss_fn = nn.CosineEmbeddingLoss()
+        self.contrast_loss_fn = nn.TripletMarginWithDistanceLoss(distance_function=self.dist_fn, margin=init_margin)
     
 
     def forward(self, seq_input_feat, batch_data, desc_input_feat=None):
@@ -143,7 +156,8 @@ class DiseaseVariantEncoder(nn.Module):
         # n_variants = len(variant_data['var_idx'])
         
         if variant_data['infer_phenotype']:
-            n_pheno_vars = len(variant_data['patho_var_prot_idx'])
+            # n_pheno_vars = len(variant_data['patho_var_prot_idx'])
+            n_pheno_vars = variant_data['infer_pheno_vec'].sum().item()
             max_text_length = self.text_encoder.config.max_position_embeddings
             pheno_input_ids = variant_data['context_pheno_input_ids'].view(n_pheno_vars, -1)
             pheno_attn_mask = variant_data['context_pheno_attention_mask'].view(n_pheno_vars, -1)
@@ -198,15 +212,31 @@ class DiseaseVariantEncoder(nn.Module):
         logit_diff = self.log_diff_patho_score(mlm_logits[var_indices], variant_data['ref_aa'], variant_data['alt_aa'])
 
         return seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff
+    
+    def get_pheno_emb(self, pheno_input_dict, proj=True):
+        pheno_embs = self.text_encoder(
+                pheno_input_dict['input_ids'],
+                attention_mask=pheno_input_dict['attention_mask'],
+                token_type_ids=pheno_input_dict['token_type_ids'],
+                # token_type_ids=torch.zeros(pheno_input_dict['input_ids'].size(), dtype=torch.long, device=self.device),
+                output_attentions=False,
+                output_hidden_states=True,
+                return_dict=None
+            ).hidden_states[-1]  # n_var, max_pos_pheno_length, pheno_emb_dim
+        
+        if proj:
+            pheno_embs = self.proj_head(pheno_embs).mean(1)
+        return pheno_embs
 
     def contrast_loss(self, var_emb, pos_emb, neg_emb):
         # pos_emb_dist = (var_emb - pos_emb).norm(p, dim=-1)
         # neg_emb_dist = (var_emb - neg_emb).norm(p, dim=-1)
-        targets = [torch.tensor([1], device=self.device, dtype=torch.long), 
-                  torch.tensor([-1], device=self.device, dtype=torch.long)]
+        return self.contrast_loss_fn(var_emb, pos_emb, neg_emb)
+        # targets = [torch.tensor([1], device=self.device, dtype=torch.long), 
+        #           torch.tensor([-1], device=self.device, dtype=torch.long)]
         
-        return self.cos_sim_loss_fn(var_emb, pos_emb, targets[0]) + \
-            self.cos_sim_loss_fn(var_emb, neg_emb, targets[1])
+        # return self.cos_sim_loss_fn(var_emb, pos_emb, targets[0]) + \
+        #     self.cos_sim_loss_fn(var_emb, neg_emb, targets[1])
 
     # TODO: ref_aa, alt_aa, label format, how to convert into mask / 1-hot matrix 
     def log_diff_patho_score(self, logits, ref_aa, alt_aa):

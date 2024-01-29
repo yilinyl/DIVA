@@ -24,7 +24,7 @@ from torch.utils.tensorboard import SummaryWriter
 from transformers import AutoModel, AutoTokenizer, BertTokenizer, BertModel, BertForMaskedLM, EsmForMaskedLM, AutoModelForMaskedLM
 from transformers.models.bert.modeling_bert import BertOnlyMLMHead
 
-from data.dis_var_dataset import ProteinVariantDatset, ProteinVariantDataCollator
+from data.dis_var_dataset import ProteinVariantDatset, ProteinVariantDataCollator, PhenotypeDataset, TextDataCollator
 import logging
 from datetime import datetime
 from utils import str2bool, setup_logger, set_seed, load_input_to_device, _save_scores
@@ -162,13 +162,13 @@ def eval_epoch(model, device, data_loader, diagnostic=None, w_l=0.5):
                 all_pheno_emb_label.append(pos_emb_proj.detach().cpu().numpy())
                 all_pheno_emb_neg.append(neg_emb_proj.detach().cpu().numpy())
 
-                all_patho_vars.extend(batch_data['variant']['patho_var_names'])
+                all_patho_vars.extend(batch_data['variant']['pheno_var_names'])
                 all_pos_pheno_descs.extend(batch_data['variant']['pos_pheno_desc'])
                 all_neg_pheno_descs.extend(batch_data['variant']['neg_pheno_desc'])
 
         epoch_patho_loss = running_patho_loss / n_sample
         epoch_pheno_loss = running_pheno_loss / n_pheno_sample
-        epoch_loss = epoch_patho_loss + epoch_pheno_loss
+        epoch_loss = w_l * epoch_patho_loss + epoch_pheno_loss
         # epoch_loss = running_loss / n_sample
         all_labels = np.concatenate(all_labels, 0)
         all_scores = np.concatenate(all_scores, 0)
@@ -248,7 +248,7 @@ def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=Fals
                                         'neg_phenotype': pheno_result_dict['neg_pheno_desc'], 
                                         'pos_score': pheno_result_dict['pos_score'],
                                         'neg_score': pheno_result_dict['neg_score']})
-    df_pheno_results.to_csv(save_path / f'{split}_pheno_score.tsv', sep='\t', index=False)
+    df_pheno_results.to_csv(save_path / f'ep{epoch}_{split}_pheno_score.tsv', sep='\t', index=False)
     if save_emb:
         pd.DataFrame(pheno_result_dict['pred_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_pred_emb.tsv', sep='\t', index=False, header=False)
         pd.DataFrame(pheno_result_dict['pos_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_true_emb.tsv', sep='\t', index=False, header=False)
@@ -307,6 +307,9 @@ def main():
     with open(data_configs['phenotype_vocab_file'], 'r') as f:
         phenotype_vocab = f.read().splitlines()
 
+    pheno_dataset = PhenotypeDataset(phenotype_vocab)
+    pheno_collator = TextDataCollator(text_tokenizer, padding=True)
+    phenotype_loader = DataLoader(pheno_dataset, batch_size=config['pheno_batch_size'], collate_fn=pheno_collator, shuffle=False)
     train_dataset = ProteinVariantDatset(**data_configs, 
                                          variant_file=data_configs['input_file']['train'], 
                                          split='train', 
@@ -344,7 +347,7 @@ def main():
     text_encoder = BertForMaskedLM.from_pretrained(model_args['text_lm_path'])
 
     train_collator = ProteinVariantDataCollator(train_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, use_desc=True, max_protein_length=data_configs['max_protein_seq_length'])
-    train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], collate_fn=train_collator)
+    train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], collate_fn=train_collator, shuffle=True)
     val_collator = ProteinVariantDataCollator(val_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, use_desc=True, max_protein_length=data_configs['max_protein_seq_length'])
     validation_loader = DataLoader(val_dataset, batch_size=config['batch_size'], collate_fn=val_collator)
     test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, use_desc=True, max_protein_length=data_configs['max_protein_seq_length'])
@@ -374,7 +377,9 @@ def main():
                                   n_residue_types=protein_tokenizer.vocab_size,
                                   hidden_size=512,
                                   use_desc=True,
-                                  pad_label_idx=-100)
+                                  pad_label_idx=-100,
+                                  dist_fn_name=model_args['dist_fn_name'],
+                                  init_margin=model_args['margin'])
     total_param = 0
     total_param_with_grad = 0
     for p in model.parameters():
@@ -390,25 +395,28 @@ def main():
     # best_ep_scores_train = None
     # best_ep_labels_train = None
     best_val_loss = float('inf')
+    best_patho_loss = float('inf')
+    best_pheno_loss = float('inf')
     best_weights = None
     best_optim = None
     best_epoch = 0
     best_results = {'train': None, 'test': None, 'val': None}
 
     for epoch in range(config['epochs']):
+        save_emb = False
         logging.info('Epoch %d' % epoch)
         # if tb_writer:
         #     tb_writer.add_scalar("train/epoch", epoch)
 
-        train_patho_loss, train_pheno_loss, train_loss, optimizer = train_epoch(model, optimizer, device, train_loader)
-        train_patho_loss, train_pheno_loss, train_loss, train_labels, train_scores, train_vars, train_pheno_results = eval_epoch(model, device, train_loader)
+        train_patho_loss, train_pheno_loss, train_loss, optimizer = train_epoch(model, optimizer, device, train_loader, w_l=model_args['w_l'])
+        train_patho_loss, train_pheno_loss, train_loss, train_labels, train_scores, train_vars, train_pheno_results = eval_epoch(model, device, train_loader, w_l=model_args['w_l'])
         train_aupr = compute_aupr(train_labels, train_scores)
         train_auc = compute_roc(train_labels, train_scores)
 
         data_name = 'train'
         logging.info(f'<{data_name}> loss={train_loss:.4f} patho-loss={train_patho_loss:.4f} pheno-loss={train_pheno_loss:.4f} auPR={train_aupr:.4f} auROC={train_auc:.4f}')
 
-        val_patho_loss, val_pheno_loss, val_loss, val_labels, val_scores, val_vars, val_pheno_results = eval_epoch(model, device, validation_loader)
+        val_patho_loss, val_pheno_loss, val_loss, val_labels, val_scores, val_vars, val_pheno_results = eval_epoch(model, device, validation_loader, w_l=model_args['w_l'])
         # scheduler.step(val_loss)
 
         val_aupr = compute_aupr(val_labels, val_scores)
@@ -417,7 +425,7 @@ def main():
         data_name = 'validation'
         logging.info(f'<{data_name}> loss={val_loss:.4f} patho-loss={val_patho_loss:.4f} pheno-loss={val_pheno_loss:.4f} auPR={val_aupr:.4f} auROC={val_auc:.4f}')
 
-        test_patho_loss, test_pheno_loss, test_loss, test_labels, test_scores, test_vars, test_pheno_results = eval_epoch(model, device, test_loader)
+        test_patho_loss, test_pheno_loss, test_loss, test_labels, test_scores, test_vars, test_pheno_results = eval_epoch(model, device, test_loader, w_l=model_args['w_l'])
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch
@@ -432,14 +440,18 @@ def main():
         test_auc = compute_roc(test_labels, test_scores)
         data_name = 'test'
         logging.info(f'<{data_name}> loss={test_loss:.4f} patho-loss={test_patho_loss:.4f} pheno-loss={test_pheno_loss:.4f} auPR={test_aupr:.4f} auROC={test_auc:.4f}')
+        
+        if val_pheno_loss < best_pheno_loss:
+            best_pheno_loss = val_pheno_loss
+            save_emb = True
 
         if epoch % args.save_freq == 0:
             _save_scores(train_vars, train_labels, train_scores, 'train', epoch, exp_dir)
             _save_scores(val_vars, val_labels, val_scores, 'val', epoch, exp_dir)
             _save_scores(test_vars, test_labels, test_scores, 'test', epoch, exp_dir)
-            save_pheno_results(train_pheno_results, pheno_result_path, epoch, split='train', save_emb=False)
-            save_pheno_results(val_pheno_results, pheno_result_path, epoch, split='val', save_emb=False)
-            save_pheno_results(test_pheno_results, pheno_result_path, epoch, split='test', save_emb=False)
+            save_pheno_results(train_pheno_results, pheno_result_path, epoch, split='train', save_emb=save_emb)
+            save_pheno_results(val_pheno_results, pheno_result_path, epoch, split='val', save_emb=save_emb)
+            save_pheno_results(test_pheno_results, pheno_result_path, epoch, split='test', save_emb=save_emb)
 
         if tb_writer:
             tb_writer.add_pr_curve('Train/PR-curve', train_labels, train_scores, epoch)
