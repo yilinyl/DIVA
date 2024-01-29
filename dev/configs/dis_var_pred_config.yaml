@@ -1,0 +1,53 @@
+exp_dir: ./scratch/
+experiment: dis_var_esm640_pred
+mode: inference
+device: cuda:0
+batch_size: 6
+pheno_batch_size: 32
+model_path: ./scratch/dis_var_esm640_triloss/2024-01-24-12-09-56/checkpoints/bestmodel-ep10.pt
+# output_file: ./dms_ontoprot_wt_score.csv
+init_lr: 0.001
+
+model:
+  type: esm
+  # protein_lm_path: /local/storage/yl986/script_hub/KeAP/pretrained  # KeAP model
+  # protein_lm_path: zjunlp/OntoProtein
+  # protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
+  protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
+  # protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
+  # protein_lm_path: facebook/esm1v_t33_650M_UR90S_1  # ESM-1v
+  # protein_lm_path: facebook/esm1b_t33_650M_UR50S  # ESM-1b
+  # protein_lm_path: zjunlp/OntoProtein
+  text_lm_path: microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext  # PubMedBERT
+  # decoder_config_path: /local/storage/yl986/script_hub/KeAP/initial_decoder_config/config.json
+  frozen_bert: True
+  # prot_bert_unfreeze: ['esm.encoder.layer.32']  # for esm-2 1280
+  prot_bert_unfreeze: ['esm.encoder.layer.29']  # for esm-2 640
+  # prot_bert_unfreeze: ['bert.encoder.layer.29']  # for OntoProtein
+  text_bert_unfreeze: ['bert.encoder.layer.11']
+  # w_l: 0.001  # weight applied to pathogenicity loss
+  # margin: 0.25  # for cosine
+  dist_fn_name: cosine_sigmoid
+  margin: 0.25  # margin for contrast loss
+
+dataset:
+  task_name: var_pred
+  data_dir: /local/storage/yl986/data/variant_data/pred/
+  seq_fasta: ["/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot.fasta",
+              "/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot_varsplic.fasta"]
+  input_file:
+    train: train.csv
+    test: test.csv
+    val: val.csv
+  phenotype_vocab_file: /local/storage/yl986/data/variant_data/phenotype_all.txt
+  # pheno_emb_cache_file:
+  pid_col: UniProt
+  pos_col: Protein_position
+  label_col: label
+  pheno_col: phenotype
+  load_variant: True
+  use_protein_desc: True
+  max_protein_seq_length: 1024
+  # max_phenotype_length: null
+  use_protein_desc: True
+
