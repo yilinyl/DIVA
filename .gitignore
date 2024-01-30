@@ -14,5 +14,6 @@ test_data/
 pipeline_dx/
 logs/
 tools/
+scratch/
 
 dev/archive/

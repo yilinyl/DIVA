@@ -223,10 +223,10 @@ class ProteinVariantDatset(Dataset):
                 continue
             is_var = np.zeros(len(seq))
             pos_pheno_idx = np.full(len(seq), fill_value=self.text_tokenizer.pad_token_id)  # positive phenotypes
-            neg_pheno_idx = np.full(len(seq), fill_value=self.text_tokenizer.pad_token_id)  # negative phenotypes
+            # neg_pheno_idx = np.full(len(seq), fill_value=self.text_tokenizer.pad_token_id)  # negative phenotypes
             # pos_pheno_desc = np.full(len(seq), fill_value=self.text_tokenizer.pad_token)
             pos_pheno_desc = [self.text_tokenizer.pad_token] * len(seq)
-            neg_pheno_desc = [self.text_tokenizer.pad_token] * len(seq)
+            # neg_pheno_desc = [self.text_tokenizer.pad_token] * len(seq)
             # neg_pheno_desc = np.full(len(seq), fill_value=self.text_tokenizer.pad_token)
             prot_var_pos = []
             # prot_var_idx_target = []
@@ -260,10 +260,10 @@ class ProteinVariantDatset(Dataset):
 
                     # if self.split != 'test':
                     neg_sample_idx = np.random.choice(self.pheno_idx_all[~sample_mask], size=1, replace=False)[0]  # scalar
-                    neg_pheno_idx[var_idx] = neg_sample_idx
+                    # neg_pheno_idx[var_idx] = neg_sample_idx
                     neg_pheno_cur = self.pheno_descs[neg_sample_idx]
                     # neg_pheno_desc.append(neg_pheno_cur)
-                    neg_pheno_desc[var_idx] = neg_pheno_cur
+                    # neg_pheno_desc[var_idx] = neg_pheno_cur
                     
                     pos_pheno_idx[var_idx] = pheno_idx
                     pos_pheno_desc[var_idx] = pheno_cur
@@ -273,8 +273,8 @@ class ProteinVariantDatset(Dataset):
                 else:
                     pheno_idx = self.text_tokenizer.unk_token_id
                     pheno_cur = self.text_tokenizer.unk_token
-                    neg_sample_idx = self.text_tokenizer.unk_token_id
-                    neg_pheno_cur = self.text_tokenizer.unk_token
+                    # neg_sample_idx = self.text_tokenizer.unk_token_id
+                    # neg_pheno_cur = self.text_tokenizer.unk_token
                 
                 ref_aa.append(record['REF_AA'])
                 alt_aa.append(record['ALT_AA'])
@@ -293,8 +293,8 @@ class ProteinVariantDatset(Dataset):
                                'alt_aa': self.protein_tokenizer.convert_tokens_to_ids(record['ALT_AA']),
                                'pos_pheno_desc': pheno_cur,
                                'pos_pheno_idx': pheno_idx,
-                               'neg_pheno_desc': neg_pheno_cur,
-                               'neg_pheno_idx': neg_sample_idx,
+                            #    'neg_pheno_desc': neg_pheno_cur,
+                            #    'neg_pheno_idx': neg_sample_idx,
                                'infer_phenotype': infer_phenotype
                                }
                 self.variant_data.append(cur_variant)
@@ -368,7 +368,7 @@ class ProteinVariantDataCollator:
     same_length: bool = False
     use_desc: bool = False
     label_pad_idx: int = -100
-    # pheno_descs: List = None
+    phenotype_vocab: List = None
     window_size: int = 64
     max_protein_length: int = 1024
 
@@ -384,7 +384,7 @@ class ProteinVariantDataCollator:
         batch_data_raw: List[Dict],
     ) -> Dict[str, torch.Tensor]:
         batch = protein_variant_collate_fn(batch_data_raw, self.protein_tokenizer, self.text_tokenizer, self.protein_data,
-                                           self.same_length, self.use_desc, label_pad_idx=self.label_pad_idx,
+                                           pheno_vocab=self.phenotype_vocab, use_desc=self.use_desc, 
                                            window_size=self.window_size, max_protein_length=self.max_protein_length)
 
         return batch
@@ -534,9 +534,8 @@ def protein_variant_collate_fn(
     protein_tokenizer: PreTrainedTokenizerBase,
     text_tokenizer: PreTrainedTokenizerBase,
     protein_data: Dict,
-    same_length: bool = False,
+    pheno_vocab: List[str],
     use_desc: bool = True,
-    label_pad_idx: int = -100,
     window_size: int = 64,
     max_protein_length: int = None,
     max_context_phenos: int = None
@@ -586,7 +585,7 @@ def protein_variant_collate_fn(
         prot_context_var_idx = protein_info_cur['context_var_idx']
         prot_desc = protein_info_cur['prot_desc']
         pos_pheno_descs = elem['pos_pheno_desc']
-        neg_pheno_descs = elem['neg_pheno_desc']
+        # neg_pheno_descs = elem['neg_pheno_desc']
         ref_aa.append(elem['ref_aa'])
         alt_aa.append(elem['alt_aa'])
         var_names_all.append(elem['id'])
@@ -604,8 +603,10 @@ def protein_variant_collate_fn(
             patho_var_prot_idx.append(prot_idx_cur)
             pheno_var_names.append(elem['id'])
             pos_pheno_label_all.append(pos_pheno_descs)
-            neg_pheno_label_all.append(neg_pheno_descs)
+            # neg_pheno_label_all.append(neg_pheno_descs)
             phenos_in_frame_all.append([prot_desc] + phenos_in_frame_cur)
+            neg_pheno_idx, neg_pheno_desc = sample_negative(pheno_vocab, pos_pheno_descs)
+            neg_pheno_label_all.append(neg_pheno_desc)
         # phenos_all.extend([prot_desc] + phenos_in_frame_cur)
             # max_pheno_length = max(max_pheno_length, phenos_input_ids_cur.shape[-1])
             # phenos_in_frame_input_ids.append(phenos_input_ids_cur) 
@@ -684,7 +685,21 @@ def protein_variant_collate_fn(
         },
         'variant': variant_dict
     }
-    
+
+
+def sample_negative(pheno_vocab, pos_pheno_desc):
+    sample_mask = np.zeros(len(pheno_vocab), dtype=bool)
+    pheno_idx_all = np.arange(len(pheno_vocab))
+    try:
+        pos_idx = pheno_vocab.index(pos_pheno_desc)
+        sample_mask[pos_idx] = True
+    except ValueError:
+        pass
+    neg_sample_idx = np.random.choice(pheno_idx_all[~sample_mask], size=1, replace=False)[0]  # scalar
+    neg_pheno_desc = pheno_vocab[neg_sample_idx]
+
+    return neg_sample_idx, neg_pheno_desc
+
 
 def pad_phenotype_input(raw_input_ids: List[List[int]],  
                         # var_idx_list, 
