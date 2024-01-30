@@ -1,13 +1,12 @@
 exp_dir: ./scratch/
-experiment: dis_var_esm640_full_v1
-mode: train
-device: cuda:1
+experiment: dis_var_esm640_pred
+mode: inference
+device: cuda:0
 batch_size: 6
 pheno_batch_size: 32
-scoring: wt-marginals  # one of wt-marginals, masked-marginals
+model_path: ./scratch/dis_var_esm640_triloss/2024-01-24-12-09-56/checkpoints/bestmodel-ep10.pt
 # output_file: ./dms_ontoprot_wt_score.csv
 init_lr: 0.001
-epochs: 20
 
 model:
   type: esm
@@ -26,14 +25,14 @@ model:
   prot_bert_unfreeze: ['esm.encoder.layer.29']  # for esm-2 640
   # prot_bert_unfreeze: ['bert.encoder.layer.29']  # for OntoProtein
   text_bert_unfreeze: ['bert.encoder.layer.11']
-  w_l: 0.01  # weight applied to pathogenicity loss
+  # w_l: 0.001  # weight applied to pathogenicity loss
   # margin: 0.25  # for cosine
   dist_fn_name: cosine_sigmoid
   margin: 0.25  # margin for contrast loss
 
 dataset:
   task_name: var_pred
-  data_dir: /local/storage/yl986/data/variant_data/pred/full_db_v1
+  data_dir: /local/storage/yl986/data/variant_data/pred/
   seq_fasta: ["/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot.fasta",
               "/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot_varsplic.fasta"]
   input_file:
