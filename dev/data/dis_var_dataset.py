@@ -569,6 +569,7 @@ def protein_variant_collate_fn(
     ref_aa = []
     alt_aa = []
     pos_pheno_label_all = []
+    pos_pheno_idx_all = []
     neg_pheno_label_all = []
     phenos_in_frame_all = []
     var_names_all = []
@@ -603,6 +604,7 @@ def protein_variant_collate_fn(
             patho_var_prot_idx.append(prot_idx_cur)
             pheno_var_names.append(elem['id'])
             pos_pheno_label_all.append(pos_pheno_descs)
+            pos_pheno_idx_all.append(elem['pos_pheno_idx'])
             # neg_pheno_label_all.append(neg_pheno_descs)
             phenos_in_frame_all.append([prot_desc] + phenos_in_frame_cur)
             neg_pheno_idx, neg_pheno_desc = sample_negative(pheno_vocab, pos_pheno_descs)
@@ -651,6 +653,7 @@ def protein_variant_collate_fn(
             'alt_aa': torch.LongTensor(alt_aa),
             'infer_phenotype': True,
             'pos_pheno_desc': pos_pheno_label_all,
+            'pos_pheno_idx': pos_pheno_idx_all,
             'pos_pheno_input_ids': pos_pheno_tokenized['input_ids'],
             'pos_pheno_attention_mask': pos_pheno_tokenized['attention_mask'],
             'neg_pheno_desc': neg_pheno_label_all,
