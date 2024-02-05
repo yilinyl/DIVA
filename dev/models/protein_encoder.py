@@ -21,13 +21,14 @@ class ProteinEncoder(nn.Module):
     def __init__(self, 
                  seq_encoder: Union[nn.Module, PreTrainedModel], 
                  text_encoder: Union[nn.Module, PreTrainedModel],
-                 use_desc: bool = False):
+                 use_desc: bool = False,
+                 device: str = 'cpu'):
         super().__init__()
 
         self.seq_encoder = seq_encoder
         self.text_encoder = text_encoder
         self.use_desc = use_desc
-        self.device = self.seq_encoder.device
+        self.device = device
     
     def forward(self, seq_input_data, desc_input_data=None):
         seq_outputs = self.seq_encoder(
@@ -116,18 +117,20 @@ class DiseaseVariantEncoder(nn.Module):
                  max_vars_per_batch=32,
                  dist_fn_name='cosine_sigmoid',
                  init_margin=1,
+                 device='cpu',
                  **kwargs):
         super(DiseaseVariantEncoder, self).__init__()
 
         self.protein_encoder = ProteinEncoder(seq_encoder=seq_encoder,
                                               text_encoder=text_encoder,
-                                              use_desc=False)  # requires initialization
+                                              use_desc=False,
+                                              device=device)  # requires initialization
         self.seq_encoder = seq_encoder
         self.text_encoder = text_encoder
 
         self.n_residue_types = n_residue_types
         self.use_desc = use_desc
-        self.device = self.protein_encoder.device
+        self.device = device
 
         self.seq_emb_dim = self.seq_encoder.config.hidden_size
         self.text_emb_dim = self.text_encoder.config.hidden_size
@@ -192,14 +195,19 @@ class DiseaseVariantEncoder(nn.Module):
                 output_hidden_states=True,
                 return_dict=None
             ).hidden_states[-1]  # n_var, max_neg_pheno_length, pheno_emb_dim
-
-            seq_var_embs = seq_embs.mean(1)[variant_data['patho_var_prot_idx']]  # aggregate embedding for whole sequence
+            
+            seq_embs_agg = torch.stack([seq_embs[i, seq_input_feat['attention_mask'][i, :].bool(), :][1:-1].mean(dim=0) for i in range(seq_embs.size(0))], dim=0)
+            seq_var_embs = seq_embs_agg[variant_data['patho_var_prot_idx']]
+            # seq_var_embs = seq_embs.mean(1)[variant_data['patho_var_prot_idx']]  # aggregate embedding for whole sequence
+            variant_pheno_emb = torch.stack([variant_pheno_emb[i, pheno_attn_mask[i, :].bool(), :].mean(dim=0) for i in range(n_pheno_vars)], dim=0)
             # seq_var_embs = seq_embs[(variant_data['prot_idx'], variant_data['var_idx'])]  # extract embedding for target position
-            seq_pheno_emb_raw = torch.cat([seq_var_embs, variant_pheno_emb.mean(1)], dim=-1)  # n_var, (seq_emb_dim + pheno_emb_dim)
+            seq_pheno_emb_raw = torch.cat([seq_var_embs, variant_pheno_emb], dim=-1)  # n_var, (seq_emb_dim + pheno_emb_dim)
             seq_pheno_emb = self.seq_pheno_comb(seq_pheno_emb_raw)  # n_var, hidden_size
 
-            pos_emb_proj = self.proj_head(pos_pheno_embs).mean(1)
-            neg_emb_proj = self.proj_head(neg_pheno_embs).mean(1)
+            pos_pheno_embs = torch.stack([pos_pheno_embs[i, variant_data['pos_pheno_attention_mask'][i, :].bool()].mean(dim=0) for i in range(n_pheno_vars)], dim=0)
+            pos_emb_proj = self.proj_head(pos_pheno_embs)
+            neg_pheno_embs = torch.stack([neg_pheno_embs[i, variant_data['neg_pheno_attention_mask'][i, :].bool()].mean(dim=0) for i in range(n_pheno_vars)], dim=0)
+            neg_emb_proj = self.proj_head(neg_pheno_embs)
         
         else:  # no valid phenotype label in the batch, skip phenotype inference
             seq_pheno_emb = None
@@ -223,9 +231,12 @@ class DiseaseVariantEncoder(nn.Module):
                 output_hidden_states=True,
                 return_dict=None
             ).hidden_states[-1]  # n_var, max_pos_pheno_length, pheno_emb_dim
-        
+        batch_size = pheno_input_dict['input_ids'].shape[0]
         if proj:
-            pheno_embs = self.proj_head(pheno_embs).mean(1)
+            # pheno_embs = self.proj_head(pheno_embs)
+            pheno_embs = torch.stack([pheno_embs[i, pheno_input_dict['attention_mask'][i, :].bool()].mean(dim=0) for i in range(batch_size)], dim=0)
+            pheno_embs = self.proj_head(pheno_embs)
+                    
         return pheno_embs
 
     def contrast_loss(self, var_emb, pos_emb, neg_emb):
