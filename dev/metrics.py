@@ -1,5 +1,5 @@
 import numpy as np
-from sklearn.metrics import roc_curve, auc, matthews_corrcoef, precision_recall_curve, accuracy_score
+from sklearn.metrics import roc_curve, auc, matthews_corrcoef, precision_recall_curve, accuracy_score, top_k_accuracy_score
 
 
 def compute_roc(labels, preds):
@@ -7,6 +7,16 @@ def compute_roc(labels, preds):
     fpr, tpr, _ = roc_curve(labels.flatten(), preds.flatten())
     roc_auc = auc(fpr, tpr)
     return roc_auc
+
+
+def compute_topk_acc(labels, scores, topk_lst, label_lst=None):
+    topk_acc_scores = dict()
+    if not label_lst:
+        label_lst = list(range(np.max(labels)))
+    for k in topk_lst:
+        topk_acc_scores[k] = top_k_accuracy_score(labels, scores, k=k, labels=label_lst)
+    
+    return topk_acc_scores
 
 
 def compute_aupr(labels, preds):

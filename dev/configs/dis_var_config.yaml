@@ -1,9 +1,9 @@
-exp_dir: ./scratch/
-experiment: dis_var_esm640_flex_sample
+exp_dir: /fs/cbsuhyfs1/storage/yl986/data/dis_var_experiment/
+experiment: dis_var_esm640_revise
 mode: train
-device: cuda:0
-batch_size: 12
-pheno_batch_size: 32
+device: cuda:1
+batch_size: 16
+pheno_batch_size: 16
 scoring: wt-marginals  # one of wt-marginals, masked-marginals
 # output_file: ./dms_ontoprot_wt_score.csv
 init_lr: 0.001
@@ -30,6 +30,8 @@ model:
   # margin: 0.25  # for cosine
   dist_fn_name: cosine_sigmoid
   margin: 0.25  # margin for contrast loss
+  max_pathogenicity_epochs: 3  # number of epochs to train pathogencity objective
+  topk: [20, 50, 100]
 
 dataset:
   task_name: var_pred
