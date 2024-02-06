@@ -53,7 +53,7 @@ def parse_args():
     return args
 
 
-def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5):
+def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5, opt_patho=True):
     model.train()
     running_loss = 0
     running_patho_loss = 0
@@ -70,6 +70,8 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5)
         #                    'attention_mask': batch_data['desc_attention_mask'].to(device),
         #                    'token_type_ids': batch_data['desc_token_type_ids'].to(device)}
         # batch_var_idx = batch_data[3].to(device)
+        if not opt_patho and not batch_data['variant']['infer_phenotype']:
+            continue
         seq_feat_dict = load_input_to_device(batch_data['seq_input_feat'], device)
         # desc_feat_dict = load_input_to_device(batch_data['desc_input_feat'], device)
         batch_labels = batch_data['variant']['label'].unsqueeze(1).to(device)
@@ -82,11 +84,17 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5)
 
         # patho_loss = model.pathogenicity_loss(logit_diff, batch_labels)
         patho_loss = model.patho_loss_fn(logit_diff, batch_labels.float())
-        if batch_data['variant']['infer_phenotype']:
-            contrast_loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj)
-            loss = contrast_loss + patho_loss * w_l
+        if opt_patho:
+            if batch_data['variant']['infer_phenotype']:
+                contrast_loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj)
+                loss = contrast_loss + patho_loss * w_l
+            else:
+                loss = patho_loss
         else:
-            loss = patho_loss
+            # assert batch_data['variant']['infer_phenotype']
+            contrast_loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj)
+            loss = contrast_loss
+
         loss.backward()
         optimizer.step()
         
@@ -111,7 +119,7 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5)
     return epoch_patho_loss, epoch_pheno_loss, epoch_loss, optimizer
 
 
-def eval_epoch(model, device, data_loader, diagnostic=None, w_l=0.5):
+def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
     model.eval()
     running_loss = 0
     running_patho_loss = 0
@@ -119,8 +127,10 @@ def eval_epoch(model, device, data_loader, diagnostic=None, w_l=0.5):
     n_sample = 0
     n_pheno_sample = 0
     all_vars, all_scores, all_labels, all_pheno_scores = [], [], [], []
-    all_pheno_emb_pred, all_pheno_emb_label, all_pos_pheno_descs = [], [], []
+    all_pheno_emb_pred, all_pheno_emb_label, all_pos_pheno_descs, all_pos_pheno_idx = [], [], [], []
     all_patho_vars, all_pheno_emb_neg, all_neg_pheno_descs, all_pheno_neg_scores = [], [], [], []
+    all_similarities, all_topk_scores, all_topk_indices = [], [], []
+
     with torch.no_grad():
         for batch_idx, batch_data in enumerate(data_loader):
             seq_feat_dict = load_input_to_device(batch_data['seq_input_feat'], device)
@@ -164,7 +174,14 @@ def eval_epoch(model, device, data_loader, diagnostic=None, w_l=0.5):
 
                 all_patho_vars.extend(batch_data['variant']['pheno_var_names'])
                 all_pos_pheno_descs.extend(batch_data['variant']['pos_pheno_desc'])
+                all_pos_pheno_idx.extend(batch_data['variant']['pos_pheno_idx'])
                 all_neg_pheno_descs.extend(batch_data['variant']['neg_pheno_desc'])
+
+                cos_sim_all = torch.cosine_similarity(seq_pheno_emb.unsqueeze(1), pheno_vocab_emb.unsqueeze(0), dim=-1)
+                # topk_scores, topk_indices = torch.topk(cos_sim_all, k=topk, dim=1)
+                # all_topk_scores.append(topk_scores.detach().cpu().numpy())
+                # all_topk_indices.append(topk_indices.detach().cpu().numpy())
+                all_similarities.append(cos_sim_all.detach().cpu().numpy())
 
         epoch_patho_loss = running_patho_loss / n_sample
         epoch_pheno_loss = running_pheno_loss / n_pheno_sample
@@ -174,6 +191,7 @@ def eval_epoch(model, device, data_loader, diagnostic=None, w_l=0.5):
         all_scores = np.concatenate(all_scores, 0)
         all_pheno_scores = np.concatenate(all_pheno_scores, 0)
         all_pheno_neg_scores = np.concatenate(all_pheno_neg_scores, 0)
+        # all_pos_pheno_idx = np.concatenate(all_pos_pheno_idx, 0)
 
         all_pheno_emb_pred = np.concatenate(all_pheno_emb_pred, 0)
         all_pheno_emb_label = np.concatenate(all_pheno_emb_label, 0)
@@ -181,12 +199,19 @@ def eval_epoch(model, device, data_loader, diagnostic=None, w_l=0.5):
 
     all_pheno_results = {'var_names': all_patho_vars,
                          'pos_pheno_desc': all_pos_pheno_descs,
+                         'pos_pheno_idx': np.array(all_pos_pheno_idx),
                          'neg_pheno_desc': all_neg_pheno_descs,
                          'pred_emb': all_pheno_emb_pred,
                          'pos_emb': all_pheno_emb_label,
                          'neg_emb': all_pheno_emb_neg,
                          'pos_score': all_pheno_scores,
-                         'neg_score': all_pheno_neg_scores}
+                         'neg_score': all_pheno_neg_scores,
+                         'similarities': np.concatenate(all_similarities, 0)}
+
+    # if eval_topk:
+    #     topk_results = {'similarities': np.concatenate(all_similarities, 0),
+    #                     'topk_scores': np.concatenate(all_topk_scores, 0),
+    #                     'topk_indices': np.concatenate(all_topk_indices, 0)}
     
     return epoch_patho_loss, epoch_pheno_loss, epoch_loss, all_labels, all_scores, all_vars, all_pheno_results
 
@@ -252,8 +277,24 @@ def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=Fals
     if save_emb:
         pd.DataFrame(pheno_result_dict['pred_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_pred_emb.tsv', sep='\t', index=False, header=False)
         pd.DataFrame(pheno_result_dict['pos_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_true_emb.tsv', sep='\t', index=False, header=False)
-        pd.DataFrame(pheno_result_dict['neg_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_neg_emb.tsv', sep='\t', index=False, header=False)
+        # pd.DataFrame(pheno_result_dict['neg_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_neg_emb.tsv', sep='\t', index=False, header=False)
     
+
+def embed_phenotypes(model, device, pheno_loader):
+    model.eval()
+    all_pheno_embs = []
+
+    with torch.no_grad():
+        for idx, batch_pheno in enumerate(pheno_loader):
+            # pheno_input_dict = load_input_to_device(batch_pheno, device)
+            pheno_input_dict = batch_pheno.to(device)
+            pheno_embs = model.get_pheno_emb(pheno_input_dict, proj=True)
+            all_pheno_embs.append(pheno_embs.detach().cpu().numpy())
+    
+    all_pheno_embs = np.concatenate(all_pheno_embs, 0)
+    
+    return all_pheno_embs
+
 
 def main():
     args = parse_args()
@@ -382,7 +423,8 @@ def main():
                                   use_desc=True,
                                   pad_label_idx=-100,
                                   dist_fn_name=model_args['dist_fn_name'],
-                                  init_margin=model_args['margin'])
+                                  init_margin=model_args['margin'],
+                                  device=device)
     total_param = 0
     total_param_with_grad = 0
     for p in model.parameters():
@@ -404,31 +446,41 @@ def main():
     best_optim = None
     best_epoch = 0
     best_results = {'train': None, 'test': None, 'val': None}
+    
+    train_pathogenicity = True
+    topk_max = max(model_args['topk'])
 
     for epoch in range(config['epochs']):
         save_emb = False
         logging.info('Epoch %d' % epoch)
         # if tb_writer:
         #     tb_writer.add_scalar("train/epoch", epoch)
-
-        train_patho_loss, train_pheno_loss, train_loss, optimizer = train_epoch(model, optimizer, device, train_loader, w_l=model_args['w_l'])
-        train_patho_loss, train_pheno_loss, train_loss, train_labels, train_scores, train_vars, train_pheno_results = eval_epoch(model, device, train_loader, w_l=model_args['w_l'])
+        # if epoch > model_args['max_pathogenicity_epochs']:
+        #     train_pathogenicity = False
+        train_patho_loss, train_pheno_loss, train_loss, optimizer = train_epoch(model, optimizer, device, train_loader, w_l=model_args['w_l'], opt_patho=train_pathogenicity)
+        all_pheno_embs = embed_phenotypes(model, device, phenotype_loader)
+        all_pheno_embs = torch.tensor(all_pheno_embs, device=device)
+        train_patho_loss, train_pheno_loss, train_loss, train_labels, \
+            train_scores, train_vars, train_pheno_results = eval_epoch(model, device, train_loader, pheno_vocab_emb=all_pheno_embs, w_l=model_args['w_l'])
         train_aupr = compute_aupr(train_labels, train_scores)
         train_auc = compute_roc(train_labels, train_scores)
+        train_topk_acc = compute_topk_acc(train_pheno_results['pos_pheno_idx'], train_pheno_results['similarities'], topk_lst=model_args['topk'], label_lst=list(range(len(phenotype_vocab))))
 
         data_name = 'train'
-        logging.info(f'<{data_name}> loss={train_loss:.4f} patho-loss={train_patho_loss:.4f} pheno-loss={train_pheno_loss:.4f} auPR={train_aupr:.4f} auROC={train_auc:.4f}')
+        logging.info(f'<{data_name}> loss={train_loss:.4f} patho-loss={train_patho_loss:.4f} pheno-loss={train_pheno_loss:.4f} auPR={train_aupr:.4f} auROC={train_auc:.4f} top{topk_max}_acc={train_topk_acc[topk_max]:.4f}')
 
-        val_patho_loss, val_pheno_loss, val_loss, val_labels, val_scores, val_vars, val_pheno_results = eval_epoch(model, device, validation_loader, w_l=model_args['w_l'])
+        val_patho_loss, val_pheno_loss, val_loss, val_labels, \
+            val_scores, val_vars, val_pheno_results = eval_epoch(model, device, validation_loader, pheno_vocab_emb=all_pheno_embs, w_l=model_args['w_l'])
         # scheduler.step(val_loss)
-
         val_aupr = compute_aupr(val_labels, val_scores)
         val_auc = compute_roc(val_labels, val_scores)
+        val_topk_acc = compute_topk_acc(val_pheno_results['pos_pheno_idx'], val_pheno_results['similarities'], topk_lst=model_args['topk'], label_lst=list(range(len(phenotype_vocab))))
 
         data_name = 'validation'
-        logging.info(f'<{data_name}> loss={val_loss:.4f} patho-loss={val_patho_loss:.4f} pheno-loss={val_pheno_loss:.4f} auPR={val_aupr:.4f} auROC={val_auc:.4f}')
+        logging.info(f'<{data_name}> loss={val_loss:.4f} patho-loss={val_patho_loss:.4f} pheno-loss={val_pheno_loss:.4f} auPR={val_aupr:.4f} auROC={val_auc:.4f} top{topk_max}_acc={val_topk_acc[topk_max]:.4f}')
 
-        test_patho_loss, test_pheno_loss, test_loss, test_labels, test_scores, test_vars, test_pheno_results = eval_epoch(model, device, test_loader, w_l=model_args['w_l'])
+        test_patho_loss, test_pheno_loss, test_loss, test_labels, \
+            test_scores, test_vars, test_pheno_results = eval_epoch(model, device, test_loader, pheno_vocab_emb=all_pheno_embs, w_l=model_args['w_l'])
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch
@@ -441,12 +493,24 @@ def main():
         # print('# Loss: train= {0:.5f}; validation= {1:.5f}; test= {2:.5f};'.format(train_loss, val_loss, test_loss))
         test_aupr = compute_aupr(test_labels, test_scores)
         test_auc = compute_roc(test_labels, test_scores)
+        test_topk_acc = compute_topk_acc(test_pheno_results['pos_pheno_idx'], test_pheno_results['similarities'], topk_lst=model_args['topk'], label_lst=list(range(len(phenotype_vocab))))
+
         data_name = 'test'
-        logging.info(f'<{data_name}> loss={test_loss:.4f} patho-loss={test_patho_loss:.4f} pheno-loss={test_pheno_loss:.4f} auPR={test_aupr:.4f} auROC={test_auc:.4f}')
-        
+        logging.info(f'<{data_name}> loss={test_loss:.4f} patho-loss={test_patho_loss:.4f} pheno-loss={test_pheno_loss:.4f} auPR={test_aupr:.4f} auROC={test_auc:.4f} top{topk_max}_acc={test_topk_acc[topk_max]:.4f}')
+        if val_patho_loss < best_patho_loss:
+            best_patho_loss = val_patho_loss
+            torch.save({'args': config, 
+                        'state_dict': model.state_dict(), 
+                        'optimizer_state_dict': optimizer.state_dict()},
+                       model_save_path / 'best_patho_model.pt'.format(epoch))
+            
         if val_pheno_loss < best_pheno_loss:
             best_pheno_loss = val_pheno_loss
             save_emb = True
+            torch.save({'args': config, 
+                        'state_dict': model.state_dict(), 
+                        'optimizer_state_dict': optimizer.state_dict()},
+                       model_save_path / 'best_pheno_model.pt'.format(epoch))
 
         if epoch % args.save_freq == 0:
             _save_scores(train_vars, train_labels, train_scores, 'train', epoch, exp_dir)
@@ -470,6 +534,10 @@ def main():
             tb_writer.add_scalar('test/loss', test_loss, epoch)
             tb_writer.add_scalar('test/patho_loss', test_patho_loss, epoch)
             tb_writer.add_scalar('test/pheno_loss', test_pheno_loss, epoch)
+            for k in model_args['topk']:
+                tb_writer.add_scalar(f'train/top{k}_acc', train_topk_acc[k], epoch)
+                tb_writer.add_scalar(f'validation/top{k}_acc', val_topk_acc[k], epoch)
+                tb_writer.add_scalar(f'test/top{k}_acc', test_topk_acc[k], epoch)
             # tb_writer.add_embedding(best_results['train'][3]['pred_emb'], metadata=[best_results['train'][0]], 
             #                         metadata_header=['prot_var_id', 'phenotype'], tag='Train/Embedding')
 

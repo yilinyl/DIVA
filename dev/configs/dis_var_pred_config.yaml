@@ -1,10 +1,10 @@
-exp_dir: ./scratch/
-experiment: dis_var_esm640_pred
+exp_dir: /fs/cbsuhyfs1/storage/yl986/data/dis_var_experiment/
+experiment: dis_var_pred
 mode: inference
-device: cuda:0
-batch_size: 6
-pheno_batch_size: 32
-model_path: ./scratch/dis_var_esm640_triloss/2024-01-24-12-09-56/checkpoints/bestmodel-ep10.pt
+device: cuda:1
+batch_size: 16
+pheno_batch_size: 16
+model_path: ./scratch/dis_var_esm640_full_dyn/2024-01-31-16-50-01/checkpoints/best_pheno_model_ep3.pt
 # output_file: ./dms_ontoprot_wt_score.csv
 init_lr: 0.001
 
