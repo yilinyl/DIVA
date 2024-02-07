@@ -240,7 +240,7 @@ class ProteinVariantDatset(Dataset):
             
             for j, record in df_prot.iterrows():
                 pheno_cur = record[self.pheno_col]
-                if record[pos_col] > self.max_protein_seq_length:  # skip out-of-bound variants for now
+                if record[pos_col] >= self.max_protein_seq_length:  # skip out-of-bound variants for now
                     continue
                 sample_mask = np.zeros(len(self.pheno_descs), dtype=bool)
                 var_idx = record[pos_col] - self.pos_offset
@@ -576,6 +576,9 @@ def protein_variant_collate_fn(
     batch_label = []
     pheno_var_names = []
     infer_pheno_vec = []
+    var_seq_input_ids = []
+
+    batch_seq_input_lst = batch_seq_tokenized['input_ids'].tolist()
     # phenos_in_frame_input_ids = [] # List[torch.Tensor] --> length=n_variants
     for b, elem in enumerate(batch_data_raw):
         # var_idx_lst = elem['var_idx']
@@ -593,6 +596,10 @@ def protein_variant_collate_fn(
         var_idx = elem['var_idx']
         batch_label.append(elem['label'])
         infer_pheno_vec.append(int(elem['infer_phenotype']))
+
+        ref_seq_input_ids = batch_seq_input_lst[prot_idx_cur]
+        var_seq_input_cur = ref_seq_input_ids[:var_idx+1] + [elem['alt_aa']] + ref_seq_input_ids[var_idx+2:]
+        var_seq_input_ids.append(var_seq_input_cur)
         
         var_idx_all.append(var_idx)
         prot_idx_all.append(prot_idx_cur)
@@ -625,6 +632,7 @@ def protein_variant_collate_fn(
             'ref_aa': torch.LongTensor(ref_aa),
             'alt_aa': torch.LongTensor(alt_aa),
             'infer_phenotype': False,
+            'var_seq_input_ids': torch.tensor(var_seq_input_ids),
             # 'n_variants': [len(elem['alt_aa']) for elem in batch_data_raw],
             'prot_idx': prot_idx_all
         }
@@ -648,6 +656,7 @@ def protein_variant_collate_fn(
             'var_pos': [elem['var_pos'] for elem in batch_data_raw],
             'var_idx': var_idx_all,
             'var_names': var_names_all,
+            'var_seq_input_ids': torch.tensor(var_seq_input_ids),
             'pheno_var_names': pheno_var_names,
             'ref_aa': torch.LongTensor(ref_aa),
             'alt_aa': torch.LongTensor(alt_aa),

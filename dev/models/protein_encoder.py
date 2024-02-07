@@ -62,6 +62,17 @@ class ProteinEncoder(nn.Module):
             return seq_embs, mlm_logits, desc_embs
         
         return seq_embs, mlm_logits, None
+    
+    def embed_protein_seq(self, seq_input_feat):
+        seq_embs = self.seq_encoder(
+            seq_input_feat['input_ids'],
+            attention_mask=seq_input_feat['attention_mask'],
+            # token_type_ids=token_type_ids,
+            output_attentions=False,
+            output_hidden_states=True,
+        ).hidden_states[-1]
+
+        return seq_embs
 
 
 def clipped_sigmoid_cross_entropy(
@@ -196,8 +207,15 @@ class DiseaseVariantEncoder(nn.Module):
                 return_dict=None
             ).hidden_states[-1]  # n_var, max_neg_pheno_length, pheno_emb_dim
             
-            seq_embs_agg = torch.stack([seq_embs[i, seq_input_feat['attention_mask'][i, :].bool(), :][1:-1].mean(dim=0) for i in range(seq_embs.size(0))], dim=0)
-            seq_var_embs = seq_embs_agg[variant_data['patho_var_prot_idx']]
+            # use altnerated sequence for phenotype inference
+            alt_seq_input_feat = {
+                'input_ids': variant_data['var_seq_input_ids'][variant_data['infer_pheno_vec'].bool()],
+                'attention_mask': seq_input_feat['attention_mask'][variant_data['patho_var_prot_idx']]
+            }
+            alt_seq_embs = self.protein_encoder.embed_protein_seq(alt_seq_input_feat)
+            seq_var_embs = torch.stack([alt_seq_embs[i, alt_seq_input_feat['attention_mask'][i, :].bool(), :][1:-1].mean(dim=0) for i in range(n_pheno_vars)], dim=0)
+            # seq_embs_agg = torch.stack([seq_embs[i, seq_input_feat['attention_mask'][i, :].bool(), :][1:-1].mean(dim=0) for i in range(seq_embs.size(0))], dim=0)
+            # seq_var_embs = seq_embs_agg[variant_data['patho_var_prot_idx']]
             # seq_var_embs = seq_embs.mean(1)[variant_data['patho_var_prot_idx']]  # aggregate embedding for whole sequence
             variant_pheno_emb = torch.stack([variant_pheno_emb[i, pheno_attn_mask[i, :].bool(), :].mean(dim=0) for i in range(n_pheno_vars)], dim=0)
             # seq_var_embs = seq_embs[(variant_data['prot_idx'], variant_data['var_idx'])]  # extract embedding for target position
@@ -215,8 +233,6 @@ class DiseaseVariantEncoder(nn.Module):
             neg_emb_proj = None
 
         var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
-        # ref_aa = torch.tensor(variant_data['ref_aa'], device=self.device)
-        # alt_aa = torch.tensor(variant_data['alt_aa'], device=self.device)
         logit_diff = self.log_diff_patho_score(mlm_logits[var_indices], variant_data['ref_aa'], variant_data['alt_aa'])
 
         return seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff
