@@ -53,6 +53,58 @@ def parse_args():
     return args
 
 
+def train_epoch_sep(model, binary_opt, contrast_opt, device, data_loader, diagnostic=None, w_l=0.5):
+    """
+    Separate update for two objectives
+    """
+    model.train()
+    running_loss = 0
+    running_patho_loss = 0
+    running_pheno_loss = 0
+    n_sample = 0
+    n_pheno_sample = 0
+
+    for batch_idx, batch_data in enumerate(data_loader):
+        seq_feat_dict = load_input_to_device(batch_data['seq_input_feat'], device)
+        # desc_feat_dict = load_input_to_device(batch_data['desc_input_feat'], device)
+        variant_data = load_input_to_device(batch_data['variant'], device=device, exclude_keys=['var_names'])
+        batch_labels = batch_data['variant']['label'].unsqueeze(1).to(device)
+        binary_opt.zero_grad()
+        ref_seq_emb, mlm_logits, logit_diff = model.binary_step(seq_feat_dict, variant_data)
+        # seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data)
+        patho_loss = model.patho_loss_fn(logit_diff, batch_labels.float())
+        patho_loss.backward()
+        binary_opt.step()
+        # loss_ = patho_loss.detach().item()
+
+        if batch_data['variant']['infer_phenotype']:
+            contrast_opt.zero_grad()
+            seq_pheno_emb, pos_emb_proj, neg_emb_proj = model.contrastive_step(seq_feat_dict, variant_data)
+            contrast_loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj)
+            contrast_loss.backward()
+            contrast_opt.step()
+            # loss_ = loss_ * w_l + contrast_loss.detach().item()
+        
+        size = batch_labels.size()[0]
+        cur_pheno_size = batch_labels.sum().item()
+        running_patho_loss += patho_loss.detach().item() * size
+        if batch_data['variant']['infer_phenotype']:
+            running_pheno_loss += contrast_loss.detach().item() * cur_pheno_size
+        # running_loss += loss_* size
+        n_sample += size
+        n_pheno_sample += cur_pheno_size
+
+        if diagnostic and batch_idx == 5:
+            diagnostic.print_diagnostics()
+            break
+    epoch_patho_loss = running_patho_loss / n_sample
+    epoch_pheno_loss = running_pheno_loss / n_pheno_sample
+    epoch_loss = w_l * epoch_patho_loss + epoch_pheno_loss
+    # epoch_loss = running_loss / n_sample
+    
+    return epoch_patho_loss, epoch_pheno_loss, epoch_loss, binary_opt, contrast_opt
+
+
 def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5, opt_patho=True):
     model.train()
     running_loss = 0
@@ -62,23 +114,16 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5,
     n_pheno_sample = 0
     for batch_idx, batch_data in enumerate(data_loader):
         # TODO: check batch_data structure
-        # seq_input_data = {'input_ids': batch_data['seq_input_ids'].to(device),
-        #                   'attention_mask': batch_data['seq_attention_mask'].to(device),
-        #                   'token_type_ids': batch_data['seq_token_type_ids'].to(device)}
-        
-        # desc_input_data = {'input_ids': batch_data['desc_input_ids'].to(device),
-        #                    'attention_mask': batch_data['desc_attention_mask'].to(device),
-        #                    'token_type_ids': batch_data['desc_token_type_ids'].to(device)}
-        # batch_var_idx = batch_data[3].to(device)
         if not opt_patho and not batch_data['variant']['infer_phenotype']:
             continue
         seq_feat_dict = load_input_to_device(batch_data['seq_input_feat'], device)
         # desc_feat_dict = load_input_to_device(batch_data['desc_input_feat'], device)
+        variant_data = load_input_to_device(batch_data['variant'], device=device, exclude_keys=['var_names'])
         batch_labels = batch_data['variant']['label'].unsqueeze(1).to(device)
         optimizer.zero_grad()
         # batch_pheno_feat = batch_data['phenotype']
         # TODO: parse phenotype information
-        seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, batch_data)
+        seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data)
         # shapes = batch_logits.size()
         # batch_logits = batch_logits.view(shapes[0]*shapes[1])
 
@@ -135,9 +180,10 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
         for batch_idx, batch_data in enumerate(data_loader):
             seq_feat_dict = load_input_to_device(batch_data['seq_input_feat'], device)
             desc_feat_dict = load_input_to_device(batch_data['desc_input_feat'], device)
+            variant_data = load_input_to_device(batch_data['variant'], device=device, exclude_keys=['var_names'])
             batch_labels = batch_data['variant']['label'].unsqueeze(1).to(device)
 
-            seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, batch_data, desc_feat_dict)
+            seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data, desc_feat_dict)
             
             # patho_loss = model.pathogenicity_loss(logit_diff, batch_labels)
             patho_loss = model.patho_loss_fn(logit_diff, batch_labels.float())
@@ -435,7 +481,20 @@ def main():
 
     model = model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=config['init_lr'])
-
+    logging.info('Initializing optimizers...')
+    # optimizer = optim.AdamW(model.parameters(), lr=config['init_lr'])
+    # lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    #     optimizer, factor=config['lr_reduce_factor'], patience=config['lr_schedule_patience'],
+    # )
+    # contrast_optimizer = optim.Adam(model.parameters(), lr=config['init_clr'])
+    # clr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    #     optimizer, factor=config['clr_reduce_factor'], patience=config['clr_schedule_patience'],
+    # )
+    # lr_scheduler_contrastive = (
+    #         torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+    #             opt_contrastive, T_0=config['clr_t0']
+    #         )
+    #     )
     logging.info("Training starts...")
     # best_ep_scores_train = None
     # best_ep_labels_train = None
@@ -458,6 +517,7 @@ def main():
         # if epoch > model_args['max_pathogenicity_epochs']:
         #     train_pathogenicity = False
         train_patho_loss, train_pheno_loss, train_loss, optimizer = train_epoch(model, optimizer, device, train_loader, w_l=model_args['w_l'], opt_patho=train_pathogenicity)
+        # train_patho_loss, train_pheno_loss, train_loss, optimizer, contrast_optimizer = train_epoch_sep(model, optimizer, contrast_optimizer, device, train_loader, w_l=model_args['w_l'])
         all_pheno_embs = embed_phenotypes(model, device, phenotype_loader)
         all_pheno_embs = torch.tensor(all_pheno_embs, device=device)
         train_patho_loss, train_pheno_loss, train_loss, train_labels, \
@@ -471,7 +531,7 @@ def main():
 
         val_patho_loss, val_pheno_loss, val_loss, val_labels, \
             val_scores, val_vars, val_pheno_results = eval_epoch(model, device, validation_loader, pheno_vocab_emb=all_pheno_embs, w_l=model_args['w_l'])
-        # scheduler.step(val_loss)
+        # lr_scheduler.step(val_patho_loss)
         val_aupr = compute_aupr(val_labels, val_scores)
         val_auc = compute_roc(val_labels, val_scores)
         val_topk_acc = compute_topk_acc(val_pheno_results['pos_pheno_idx'], val_pheno_results['similarities'], topk_lst=model_args['topk'], label_lst=list(range(len(phenotype_vocab))))
