@@ -173,7 +173,7 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
     n_pheno_sample = 0
     all_vars, all_scores, all_labels, all_pheno_scores = [], [], [], []
     all_pheno_emb_pred, all_pheno_emb_label, all_pos_pheno_descs, all_pos_pheno_idx = [], [], [], []
-    all_patho_vars, all_pheno_emb_neg, all_neg_pheno_descs, all_pheno_neg_scores = [], [], [], []
+    all_patho_vars, all_pheno_emb_neg, all_pheno_neg_scores = [], [], []
     all_similarities, all_topk_scores, all_topk_indices = [], [], []
 
     with torch.no_grad():
@@ -219,9 +219,9 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
                 all_pheno_emb_neg.append(neg_emb_proj.detach().cpu().numpy())
 
                 all_patho_vars.extend(batch_data['variant']['pheno_var_names'])
-                all_pos_pheno_descs.extend(batch_data['variant']['pos_pheno_desc'])
+                all_pos_pheno_descs.extend(batch_data['variant']['pos_pheno_name'])
                 all_pos_pheno_idx.extend(batch_data['variant']['pos_pheno_idx'])
-                all_neg_pheno_descs.extend(batch_data['variant']['neg_pheno_desc'])
+                # all_neg_pheno_descs.extend(batch_data['variant']['neg_pheno_desc'])
 
                 cos_sim_all = torch.cosine_similarity(seq_pheno_emb.unsqueeze(1), pheno_vocab_emb.unsqueeze(0), dim=-1)
                 # topk_scores, topk_indices = torch.topk(cos_sim_all, k=topk, dim=1)
@@ -244,9 +244,10 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
         all_pheno_emb_neg = np.concatenate(all_pheno_emb_neg, 0)
 
     all_pheno_results = {'var_names': all_patho_vars,
+                         'label': all_labels,
                          'pos_pheno_desc': all_pos_pheno_descs,
                          'pos_pheno_idx': np.array(all_pos_pheno_idx),
-                         'neg_pheno_desc': all_neg_pheno_descs,
+                        #  'neg_pheno_desc': all_neg_pheno_descs,
                          'pred_emb': all_pheno_emb_pred,
                          'pos_emb': all_pheno_emb_label,
                          'neg_emb': all_pheno_emb_neg,
@@ -315,14 +316,15 @@ def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=Fals
         save_path = Path(save_path)
 
     df_pheno_results = pd.DataFrame({'prot_var_id': pheno_result_dict['var_names'], 
-                                        'phenotype': pheno_result_dict['pos_pheno_desc'], 
-                                        'neg_phenotype': pheno_result_dict['neg_pheno_desc'], 
-                                        'pos_score': pheno_result_dict['pos_score'],
-                                        'neg_score': pheno_result_dict['neg_score']})
+                                    #  'label': pheno_result_dict['label'],
+                                     'phenotype': pheno_result_dict['pos_pheno_desc'], 
+                                    #  'neg_phenotype': pheno_result_dict['neg_pheno_desc'], 
+                                     'pos_score': pheno_result_dict['pos_score'],
+                                     'neg_score': pheno_result_dict['neg_score']})
     df_pheno_results.to_csv(save_path / f'ep{epoch}_{split}_pheno_score.tsv', sep='\t', index=False)
     if save_emb:
-        pd.DataFrame(pheno_result_dict['pred_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_pred_emb.tsv', sep='\t', index=False, header=False)
-        pd.DataFrame(pheno_result_dict['pos_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_true_emb.tsv', sep='\t', index=False, header=False)
+        # pd.DataFrame(pheno_result_dict['pred_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_pred_emb.tsv', sep='\t', index=False, header=False)
+        np.save(save_path / f'ep{epoch}_{split}_pheno_pred_emb.npy', pheno_result_dict['pred_emb'])
         # pd.DataFrame(pheno_result_dict['neg_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_neg_emb.tsv', sep='\t', index=False, header=False)
     
 
@@ -334,7 +336,7 @@ def embed_phenotypes(model, device, pheno_loader):
         for idx, batch_pheno in enumerate(pheno_loader):
             # pheno_input_dict = load_input_to_device(batch_pheno, device)
             pheno_input_dict = batch_pheno.to(device)
-            pheno_embs = model.get_pheno_emb(pheno_input_dict, proj=True)
+            pheno_embs = model.get_pheno_emb(pheno_input_dict, proj=True, agg_opt='cls')
             all_pheno_embs.append(pheno_embs.detach().cpu().numpy())
     
     all_pheno_embs = np.concatenate(all_pheno_embs, 0)
@@ -393,8 +395,14 @@ def main():
     # Load data
     with open(data_configs['phenotype_vocab_file'], 'r') as f:
         phenotype_vocab = f.read().splitlines()
+    
+    if data_configs['use_pheno_desc']:
+        with open(data_configs['phenotype_desc_file']) as f:
+            pheno_desc_dict = json.load(f)
+    else:
+        pheno_desc_dict = None
 
-    pheno_dataset = PhenotypeDataset(phenotype_vocab)
+    pheno_dataset = PhenotypeDataset(phenotype_vocab, pheno_desc_dict, use_desc=data_configs['use_pheno_desc'])
     pheno_collator = TextDataCollator(text_tokenizer, padding=True)
     phenotype_loader = DataLoader(pheno_dataset, batch_size=config['pheno_batch_size'], collate_fn=pheno_collator, shuffle=False)
     train_dataset = ProteinVariantDatset(**data_configs, 
@@ -434,13 +442,16 @@ def main():
     text_encoder = BertForMaskedLM.from_pretrained(model_args['text_lm_path'])
 
     train_collator = ProteinVariantDataCollator(train_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
-                                                use_desc=True, max_protein_length=data_configs['max_protein_seq_length'])
+                                                use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'],
+                                                use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict)
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], collate_fn=train_collator, shuffle=True)
     val_collator = ProteinVariantDataCollator(val_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
-                                              use_desc=True, max_protein_length=data_configs['max_protein_seq_length'])
+                                              use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'],
+                                              use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict)
     validation_loader = DataLoader(val_dataset, batch_size=config['batch_size'], collate_fn=val_collator)
     test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
-                                               use_desc=True, max_protein_length=data_configs['max_protein_seq_length'])
+                                               use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'],
+                                               use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict)
     test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
 
     if model_args['frozen_bert']:

@@ -63,6 +63,18 @@ class ProteinEncoder(nn.Module):
         
         return seq_embs, mlm_logits, None
     
+    def get_mlm_logits(self, seq_input_data):
+        seq_outputs = self.seq_encoder(
+            seq_input_data['input_ids'],
+            attention_mask=seq_input_data['attention_mask'],
+            # token_type_ids=seq_input_data['token_type_ids'],
+            output_attentions=False,
+            output_hidden_states=False,
+        )
+
+        return seq_outputs.logits
+
+    
     def embed_protein_seq(self, seq_input_feat):
         seq_embs = self.seq_encoder(
             seq_input_feat['input_ids'],
@@ -164,7 +176,7 @@ class DiseaseVariantEncoder(nn.Module):
     def forward(self, seq_input_feat, variant_data, desc_input_feat=None):
         
         # seq_embs, mlm_logits, _ = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
-        seq_embs, mlm_logits, logit_diff = self.binary_step(seq_input_feat, variant_data, desc_input_feat)
+        mlm_logits, logit_diff = self.binary_step(seq_input_feat, variant_data, desc_input_feat)
         
         if variant_data['infer_phenotype']:
             # n_pheno_vars = len(variant_data['patho_var_prot_idx'])
@@ -182,18 +194,23 @@ class DiseaseVariantEncoder(nn.Module):
     
 
     def binary_step(self, seq_input_feat, variant_data, desc_input_feat=None):
-        seq_embs, mlm_logits, desc_embs = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
+        # seq_embs, mlm_logits, desc_embs = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
+        mlm_logits = self.protein_encoder.get_mlm_logits(seq_input_feat)
         var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
         logit_diff = self.log_diff_patho_score(mlm_logits[var_indices], variant_data['ref_aa'], variant_data['alt_aa'])
 
-        return seq_embs, mlm_logits, logit_diff
+        return mlm_logits, logit_diff
 
 
     def contrastive_step(self, seq_input_feat, variant_data):
         n_pheno_vars = variant_data['infer_pheno_vec'].sum().item()
         max_text_length = self.text_encoder.config.max_position_embeddings
-        pheno_input_ids = variant_data['context_pheno_input_ids'].view(n_pheno_vars, -1)
-        pheno_attn_mask = variant_data['context_pheno_attention_mask'].view(n_pheno_vars, -1)
+        # pheno_input_ids = variant_data['context_pheno_input_ids'].view(n_pheno_vars, -1)
+        # pheno_attn_mask = variant_data['context_pheno_attention_mask'].view(n_pheno_vars, -1)
+        pheno_input_ids = variant_data['context_pheno_input_ids']
+        pheno_attn_mask = variant_data['context_pheno_attention_mask']
+        assert pheno_input_ids.shape[0] == n_pheno_vars
+
         compute_neg = False
         if pheno_input_ids.shape[-1] > max_text_length:
             pheno_input_ids = pheno_input_ids[:, :max_text_length]
@@ -234,16 +251,17 @@ class DiseaseVariantEncoder(nn.Module):
             'attention_mask': seq_input_feat['attention_mask'][variant_data['patho_var_prot_idx']]
         }
         alt_seq_embs = self.protein_encoder.embed_protein_seq(alt_seq_input_feat)
-        seq_var_embs = torch.stack([alt_seq_embs[i, alt_seq_input_feat['attention_mask'][i, :].bool(), :][1:-1].mean(dim=0) for i in range(n_pheno_vars)], dim=0)
-        variant_pheno_emb = torch.stack([variant_pheno_emb[i, pheno_attn_mask[i, :].bool(), :].mean(dim=0) for i in range(n_pheno_vars)], dim=0)
+        # Update: use embedding corresponding to [CLS] token instead of average as sequence-level embedding 
+        seq_var_embs = torch.stack([alt_seq_embs[i, alt_seq_input_feat['attention_mask'][i, :].bool(), :][0] for i in range(n_pheno_vars)], dim=0)
+        variant_pheno_emb = torch.stack([variant_pheno_emb[i, pheno_attn_mask[i, :].bool(), :][0] for i in range(n_pheno_vars)], dim=0)
         # seq_var_embs = seq_embs[(variant_data['prot_idx'], variant_data['var_idx'])]  # extract embedding for target position
         seq_pheno_emb_raw = torch.cat([seq_var_embs, variant_pheno_emb], dim=-1)  # n_var, (seq_emb_dim + pheno_emb_dim)
         seq_pheno_emb = self.seq_pheno_comb(seq_pheno_emb_raw)  # n_var, hidden_size
 
-        pos_pheno_embs = torch.stack([pos_pheno_embs[i, variant_data['pos_pheno_attention_mask'][i, :].bool()].mean(dim=0) for i in range(n_pheno_vars)], dim=0)
+        pos_pheno_embs = torch.stack([pos_pheno_embs[i, variant_data['pos_pheno_attention_mask'][i, :].bool()][0] for i in range(n_pheno_vars)], dim=0)
         pos_emb_proj = self.proj_head(pos_pheno_embs)
         if compute_neg:
-            neg_pheno_embs = torch.stack([neg_pheno_embs[i, variant_data['neg_pheno_attention_mask'][i, :].bool()].mean(dim=0) for i in range(n_pheno_vars)], dim=0)
+            neg_pheno_embs = torch.stack([neg_pheno_embs[i, variant_data['neg_pheno_attention_mask'][i, :].bool()][0] for i in range(n_pheno_vars)], dim=0)
             neg_emb_proj = self.proj_head(neg_pheno_embs)
         else:
             neg_emb_proj = None
@@ -251,7 +269,7 @@ class DiseaseVariantEncoder(nn.Module):
         return seq_pheno_emb, pos_emb_proj, neg_emb_proj
 
     
-    def get_pheno_emb(self, pheno_input_dict, proj=True):
+    def get_pheno_emb(self, pheno_input_dict, proj=True, agg_opt='mean'):
         pheno_embs = self.text_encoder(
                 pheno_input_dict['input_ids'],
                 attention_mask=pheno_input_dict['attention_mask'],
@@ -264,7 +282,10 @@ class DiseaseVariantEncoder(nn.Module):
         batch_size = pheno_input_dict['input_ids'].shape[0]
         if proj:
             # pheno_embs = self.proj_head(pheno_embs)
-            pheno_embs = torch.stack([pheno_embs[i, pheno_input_dict['attention_mask'][i, :].bool()].mean(dim=0) for i in range(batch_size)], dim=0)
+            if agg_opt == 'mean':
+                pheno_embs = torch.stack([pheno_embs[i, pheno_input_dict['attention_mask'][i, :].bool()].mean(dim=0) for i in range(batch_size)], dim=0)
+            else:  # take the dimension corresponding to [CLS] token as seq-level embedding
+                pheno_embs = torch.stack([pheno_embs[i, pheno_input_dict['attention_mask'][i, :].bool()][0] for i in range(batch_size)], dim=0)
             pheno_embs = self.proj_head(pheno_embs)
                     
         return pheno_embs

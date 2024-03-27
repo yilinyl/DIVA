@@ -376,11 +376,14 @@ class ProteinVariantDataCollator:
     mlm: bool = False  # for masked language model (not implemented yet)
     mlm_probability: float = 0.15
     same_length: bool = False
-    use_desc: bool = False
+    use_prot_desc: bool = False
     label_pad_idx: int = -100
     phenotype_vocab: List = None
+    pheno_desc_dict: Dict[str, str] = None
+    use_pheno_desc: bool = False  # use phenotype description or not
     window_size: int = 64
     max_protein_length: int = 1024
+    max_pheno_desc_length: int = 512
     mode: str = 'train'
 
     def __post_init__(self):
@@ -395,8 +398,10 @@ class ProteinVariantDataCollator:
         batch_data_raw: List[Dict],
     ) -> Dict[str, torch.Tensor]:
         batch = protein_variant_collate_fn(batch_data_raw, self.protein_tokenizer, self.text_tokenizer, self.protein_data,
-                                           pheno_vocab=self.phenotype_vocab, use_desc=self.use_desc, 
-                                           window_size=self.window_size, max_protein_length=self.max_protein_length, mode=self.mode)
+                                           pheno_vocab=self.phenotype_vocab, use_prot_desc=self.use_prot_desc, 
+                                           use_pheno_desc=self.use_pheno_desc, pheno_desc_dict=self.pheno_desc_dict, 
+                                           max_protein_length=self.max_protein_length, max_pheno_desc_length=self.max_pheno_desc_length, 
+                                           window_size=self.window_size, mode=self.mode)
 
         return batch
     
@@ -511,7 +516,9 @@ def fetch_phenotypes_in_frame(
             pos_pheno_descs: List[str],
             window_size: int = 64,
             max_num: int = None,
-            mask_token: str = '[MASK]'
+            mask_token: str = '[MASK]',
+            pheno_desc_dict: Dict[str, str] = None,
+            use_pheno_desc: bool = False
     ):
         # assert len(pos_pheno_descs) == len(var_mask)
 
@@ -536,6 +543,13 @@ def fetch_phenotypes_in_frame(
                     pheno_in_frame = pheno_in_frame[-max_num:]
         
         # pheno_in_frame.pop(target_pheno_loc)
+        pheno_desc_in_frame = []
+        if use_pheno_desc and pheno_desc_dict:
+            for name in pheno_in_frame:
+                pheno_desc = '{name} {desc}'.format(name=name, desc=pheno_desc_dict.get(name, '')).strip()
+                pheno_desc_in_frame.append(pheno_desc)
+            
+            return pheno_desc_in_frame
 
         return pheno_in_frame
 
@@ -546,11 +560,14 @@ def protein_variant_collate_fn(
     text_tokenizer: PreTrainedTokenizerBase,
     protein_data: Dict,
     pheno_vocab: List[str],
-    use_desc: bool = True,
+    use_pheno_desc: bool = False,
+    use_prot_desc: bool = True,
     window_size: int = 64,
     max_protein_length: int = None,
     max_context_phenos: int = None,
-    mode: str = 'train'  # {'train', 'eval'}
+    max_pheno_desc_length: int = None,
+    mode: str = 'train',  # {'train', 'eval'}
+    pheno_desc_dict: Dict[str, str] = None
 ):   
     """
     Collate function for protein using both sequence and description text
@@ -580,9 +597,10 @@ def protein_variant_collate_fn(
     var_idx_all = []
     ref_aa = []
     alt_aa = []
-    pos_pheno_label_all = []
+    pos_pheno_desc_all = []
+    pos_pheno_name_all = []
     pos_pheno_idx_all = []
-    neg_pheno_label_all = []
+    neg_pheno_desc_all = []
     phenos_in_frame_all = []
     var_names_all = []
     batch_label = []
@@ -600,7 +618,11 @@ def protein_variant_collate_fn(
         protein_info_cur = protein_data[uprot]
         prot_context_var_idx = protein_info_cur['context_var_idx']
         prot_desc = protein_info_cur['prot_desc']
-        pos_pheno_descs = elem['pos_pheno_desc']
+        pos_pheno_name = elem['pos_pheno_desc']
+        if use_pheno_desc and pheno_desc_dict is not None:
+            pos_pheno_descs = '{name} {desc}'.format(name=pos_pheno_name, desc=pheno_desc_dict.get(pos_pheno_name, '')).strip()
+        else:
+            pos_pheno_descs = elem['pos_pheno_desc']
         # neg_pheno_descs = elem['neg_pheno_desc']
         ref_aa.append(elem['ref_aa'])
         alt_aa.append(elem['alt_aa'])
@@ -619,22 +641,33 @@ def protein_variant_collate_fn(
         if elem['infer_phenotype']:
             phenos_in_frame_cur = fetch_phenotypes_in_frame(var_idx, prot_lengths[prot_idx_cur], prot_context_var_idx, 
                                                             protein_info_cur['var_pheno_descs'], window_size, max_context_phenos, 
+                                                            use_pheno_desc=use_pheno_desc, pheno_desc_dict=pheno_desc_dict,
                                                             mask_token=text_tokenizer.mask_token)
             patho_var_prot_idx.append(prot_idx_cur)
             pheno_var_names.append(elem['id'])
-            pos_pheno_label_all.append(pos_pheno_descs)
+            pos_pheno_desc_all.append(pos_pheno_descs)
+            pos_pheno_name_all.append(pos_pheno_name)
             pos_pheno_idx_all.append(elem['pos_pheno_idx'])
             # neg_pheno_label_all.append(neg_pheno_descs)
-            phenos_in_frame_all.append([prot_desc] + phenos_in_frame_cur)
+            # phenos_in_frame_cur_full = [prot_desc] + phenos_in_frame_cur
+            context_info_joined = text_tokenizer.sep_token.join([prot_desc] + phenos_in_frame_cur)  # joined into single string
+            phenos_in_frame_all.append(context_info_joined)
+            # phenos_in_frame_all.append([prot_desc] + phenos_in_frame_cur)
+
             if mode == 'train':
-                neg_pheno_idx, neg_pheno_desc = sample_negative(pheno_vocab, pos_pheno_descs)
-                neg_pheno_label_all.append(neg_pheno_desc)
+                neg_pheno_idx, neg_pheno_name = sample_negative(pheno_vocab, pos_pheno_name)
+                if use_pheno_desc and pheno_desc_dict is not None:
+                    neg_pheno_desc = '{name} {desc}'.format(name=neg_pheno_name, desc=pheno_desc_dict.get(neg_pheno_name, '')).strip()
+                else:
+                    neg_pheno_desc = neg_pheno_name
+
+                neg_pheno_desc_all.append(neg_pheno_desc)
         # phenos_all.extend([prot_desc] + phenos_in_frame_cur)
             # max_pheno_length = max(max_pheno_length, phenos_input_ids_cur.shape[-1])
             # phenos_in_frame_input_ids.append(phenos_input_ids_cur) 
-    if use_desc:
+    if use_prot_desc:
             desc_lst = [protein_data[pid]['prot_desc'] for pid in prot_unique]
-            batch_desc_tokenized = text_tokenizer(desc_lst, padding=True, return_tensors='pt')   
+            batch_desc_tokenized = text_tokenizer(desc_lst, padding=True, return_tensors='pt')
             # max_desc_length = batch_desc_tokenized['input_ids'].shape[-1]
 
     if sum(infer_pheno_vec) == 0:
@@ -650,18 +683,20 @@ def protein_variant_collate_fn(
             'prot_idx': prot_idx_all
         }
     else:
-        pos_pheno_tokenized = text_tokenizer(pos_pheno_label_all, padding=True, return_tensors='pt')
+        pos_pheno_tokenized = text_tokenizer(pos_pheno_desc_all, padding=True, return_tensors='pt', truncation=True, max_length=max_pheno_desc_length)
         # max_pheno_length = max(max_desc_length, pos_pheno_tokenized['input_ids'].shape[-1])
         max_phenos_in_frame = max([len(ph) for ph in phenos_in_frame_all])
-        phenos_in_frame_padded = []
-        for i, phenos_in_frame_cur in enumerate(phenos_in_frame_all):
-            n_phenos = len(phenos_in_frame_cur)
-            if n_phenos < max_phenos_in_frame:
-                phenos_in_frame_cur = phenos_in_frame_cur + [text_tokenizer.pad_token] * (max_phenos_in_frame - n_phenos)
-            phenos_in_frame_padded.extend(phenos_in_frame_cur)
+        # phenos_in_frame_padded = []
+        # for i, phenos_in_frame_cur in enumerate(phenos_in_frame_all):
+        #     n_phenos = len(phenos_in_frame_cur)
+        #     if n_phenos < max_phenos_in_frame:
+        #         phenos_in_frame_cur = phenos_in_frame_cur + [text_tokenizer.pad_token] * (max_phenos_in_frame - n_phenos)
+        #     phenos_in_frame_padded.extend(phenos_in_frame_cur)
             
-        batch_pheno_tokenized = text_tokenizer(phenos_in_frame_padded, padding=True, return_tensors='pt')
-        batch_pheno_input_ids = batch_pheno_tokenized['input_ids'].view(sum(infer_pheno_vec), max_phenos_in_frame, -1)
+        # batch_pheno_tokenized = text_tokenizer(phenos_in_frame_padded, padding=True, return_tensors='pt', truncation=True, max_length=max_pheno_desc_length)
+        # batch_pheno_input_ids = batch_pheno_tokenized['input_ids'].view(sum(infer_pheno_vec), max_phenos_in_frame, -1)
+        batch_pheno_tokenized = text_tokenizer(phenos_in_frame_all, padding=True, return_tensors='pt', truncation=True, max_length=max_pheno_desc_length)
+        batch_pheno_input_ids = batch_pheno_tokenized['input_ids']
         # batch_pheno_input_ids = torch.stack(pheno_input_ids_padded)  # n_variants, max_phenos_in_frame + 1, max_pheno_length
         batch_pheno_attenton_mask = (batch_pheno_input_ids != text_tokenizer.pad_token_id).long()
         variant_dict = {
@@ -673,7 +708,8 @@ def protein_variant_collate_fn(
             'ref_aa': torch.LongTensor(ref_aa),
             'alt_aa': torch.LongTensor(alt_aa),
             'infer_phenotype': True,
-            'pos_pheno_desc': pos_pheno_label_all,
+            'pos_pheno_name': pos_pheno_name_all,
+            'pos_pheno_desc': pos_pheno_desc_all,
             'pos_pheno_idx': pos_pheno_idx_all,
             'pos_pheno_input_ids': pos_pheno_tokenized['input_ids'],
             'pos_pheno_attention_mask': pos_pheno_tokenized['attention_mask'],
@@ -684,9 +720,9 @@ def protein_variant_collate_fn(
             'prot_idx': prot_idx_all
         }
         if mode == 'train':
-            neg_pheno_tokenized = text_tokenizer(neg_pheno_label_all, padding=True, return_tensors='pt')
+            neg_pheno_tokenized = text_tokenizer(neg_pheno_desc_all, padding=True, return_tensors='pt', truncation=True, max_length=max_pheno_desc_length)
             variant_dict.update({
-                'neg_pheno_desc': neg_pheno_label_all,
+                'neg_pheno_desc': neg_pheno_desc_all,
                 'neg_pheno_input_ids': neg_pheno_tokenized['input_ids'],
                 'neg_pheno_attention_mask': neg_pheno_tokenized['attention_mask']})
     
@@ -776,16 +812,27 @@ class PhenotypeDataset(Dataset):
     def __init__(
         self,
         phenotypes: List[str],
+        pheno_desc_dict: Dict[str, str] = None,
+        use_desc: bool = False  # use phenotype description or not
         # tokenizer: PreTrainedTokenizerBase = None,
         # max_phenotype_length: int = None,
         # embed_all = True
     ):
         
         self.phenotypes = phenotypes
+        self.pheno_desc_dict = pheno_desc_dict
+        self.use_desc = use_desc and pheno_desc_dict is not None
         # self.tokenizer = tokenizer
         
     def __getitem__(self, index):
-        return self.phenotypes[index]
+        pheno_name = self.phenotypes[index]
+        if self.use_desc and self.pheno_desc_dict:
+            try:
+                desc = self.pheno_desc_dict[pheno_name]
+                return ' '.join([pheno_name, desc])
+            except KeyError:
+                pass
+        return pheno_name
 
     def __len__(self):
         return len(self.phenotypes)

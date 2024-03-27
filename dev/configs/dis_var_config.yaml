@@ -1,20 +1,26 @@
-exp_dir: /fs/cbsuhyfs1/storage/yl986/data/dis_var_experiment/
-experiment: dis_var_esm640_revise
+exp_dir: /local/storage/yl986/data/dis_var_experiment/
+experiment: dis_desc_debug
 mode: train
 device: cuda:1
-batch_size: 16
-pheno_batch_size: 16
+batch_size: 4
+pheno_batch_size: 8
 scoring: wt-marginals  # one of wt-marginals, masked-marginals
 # output_file: ./dms_ontoprot_wt_score.csv
 init_lr: 0.001
-epochs: 20
+init_clr: 0.002
+# clr_t0: 10
+lr_reduce_factor: 0.5
+lr_schedule_patience: 3
+# clr_reduce_factor: 0.5
+# clr_schedule_patience: 5
+epochs: 5
 
 model:
   type: esm
   # protein_lm_path: /local/storage/yl986/script_hub/KeAP/pretrained  # KeAP model
   # protein_lm_path: zjunlp/OntoProtein
-  # protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
-  protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
+  protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
+  # protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
   # protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
   # protein_lm_path: facebook/esm1v_t33_650M_UR90S_1  # ESM-1v
   # protein_lm_path: facebook/esm1b_t33_650M_UR50S  # ESM-1b
@@ -30,24 +36,26 @@ model:
   # margin: 0.25  # for cosine
   dist_fn_name: cosine_sigmoid
   margin: 0.25  # margin for contrast loss
-  max_pathogenicity_epochs: 3  # number of epochs to train pathogencity objective
+  # max_pathogenicity_epochs: 3  # number of epochs to train pathogencity objective
   topk: [20, 50, 100]
 
 dataset:
   task_name: var_pred
-  data_dir: /local/storage/yl986/data/variant_data/pred/
-  seq_fasta: ["/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot.fasta",
-              "/fs/cbsuhyfs1/storage/dx38/local_resource/uniprot_data_20220526/uniprot_sprot_varsplic.fasta"]
+  data_dir: /local/storage/yl986/data/variant_data/pred/pheno_select/sample
+  seq_fasta: ["/local/storage/yl986/data/UniProt/uniprot_sprot.fasta",
+              "/local/storage/yl986/data/UniProt/uniprot_sprot_varsplic.fasta"]
   input_file:
     train: train.csv
     test: test.csv
     val: val.csv
-  phenotype_vocab_file: /local/storage/yl986/data/variant_data/phenotype_all.txt
+  phenotype_vocab_file: /local/storage/yl986/data/variant_data/pred/pheno_select/phenotype_vocab.txt
+  phenotype_desc_file: /local/storage/yl986/data/variant_data/short_name2desc.json  # phenotype name-to-description
+  use_pheno_desc: True
   # pheno_emb_cache_file:
   pid_col: UniProt
   pos_col: Protein_position
   label_col: label
-  pheno_col: phenotype
+  pheno_col: pheno_clean
   load_variant: True
   use_protein_desc: True
   max_protein_seq_length: 1024
