@@ -297,13 +297,13 @@ if __name__ == '__main__':
                                          mode='eval')
     
     train_collator = ProteinVariantDataCollator(train_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
-                                                use_desc=True, max_protein_length=data_configs['max_protein_seq_length'], mode='eval')
+                                                use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'], mode='eval')
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], collate_fn=train_collator)
     val_collator = ProteinVariantDataCollator(val_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
-                                              use_desc=True, max_protein_length=data_configs['max_protein_seq_length'], mode='eval')
+                                              use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'], mode='eval')
     validation_loader = DataLoader(val_dataset, batch_size=config['batch_size'], collate_fn=val_collator)
     test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
-                                               use_desc=True, max_protein_length=data_configs['max_protein_seq_length'], mode='eval')
+                                               use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'], mode='eval')
     test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
 
     seq_config = BertConfig.from_pretrained(model_args['protein_lm_path'])

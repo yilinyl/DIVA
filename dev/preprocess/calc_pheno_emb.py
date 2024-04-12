@@ -46,7 +46,8 @@ def embed_phenotypes(text_encoder, device, pheno_loader):
                 output_hidden_states=True,
                 return_dict=None).hidden_states[-1]
             batch_size = pheno_input_dict['input_ids'].shape[0]
-            pheno_embs = torch.stack([pheno_embs[i, pheno_input_dict['attention_mask'][i, :].bool()].mean(dim=0) for i in range(batch_size)], dim=0)
+            # pheno_embs = torch.stack([pheno_embs[i, pheno_input_dict['attention_mask'][i, :].bool()].mean(dim=0) for i in range(batch_size)], dim=0)
+            pheno_embs = torch.stack([pheno_embs[i, pheno_input_dict['attention_mask'][i, :].bool()][0] for i in range(batch_size)], dim=0)  # use embedding corresponding to the [CLS] token
             # print(pheno_embs.shape)
             all_pheno_embs.append(pheno_embs.detach().cpu().numpy())
             
@@ -107,9 +108,11 @@ if __name__ == '__main__':
     phenotype_loader = DataLoader(pheno_dataset, batch_size=args.batch_size, collate_fn=pheno_collator, shuffle=False)
 
     text_encoder = BertForMaskedLM.from_pretrained(LM_PATH)
+    for name, parameters in text_encoder.named_parameters():
+        parameters.requires_grad = False
     text_encoder = text_encoder.to(device)
     all_pheno_embs, all_cos_sim = embed_phenotypes(text_encoder, device, phenotype_loader)
 
-    np.save(out_root / f'pheno_desc_emb.npy', all_pheno_embs)
-    np.save(out_root / f'pheno_desc_cos_sim.npy', all_cos_sim)
+    np.save(out_root / f'pheno_desc_rev1_emb.npy', all_pheno_embs)
+    np.save(out_root / f'pheno_desc_rev1_cos_sim.npy', all_cos_sim)
     print('Done!')
