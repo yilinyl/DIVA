@@ -9,6 +9,8 @@ __pycache__/
 *ipynb
 *sh
 
+*sub_script
+
 figures/
 test_data/
 pipeline_dx/
