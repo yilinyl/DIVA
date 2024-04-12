@@ -1,8 +1,8 @@
 # config on G2-server
-exp_dir: ./scratch/debug
-experiment: dis_desc_debug
+exp_dir: ./scratch/
+experiment: debug
 mode: train
-device: cuda:1
+device: cuda:0
 batch_size: 8
 pheno_batch_size: 16
 scoring: wt-marginals  # one of wt-marginals, masked-marginals
@@ -14,24 +14,24 @@ init_lr: 0.001
 # lr_schedule_patience: 3
 # clr_reduce_factor: 0.5
 # clr_schedule_patience: 5
-epochs: 40
+epochs: 5
 model:
   type: esm
   # protein_lm_path: /local/storage/yl986/script_hub/KeAP/pretrained  # KeAP model
   # protein_lm_path: zjunlp/OntoProtein
-  protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
+  # protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
   # protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
-  # protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
+  protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
   # protein_lm_path: facebook/esm1v_t33_650M_UR90S_1  # ESM-1v
   # protein_lm_path: facebook/esm1b_t33_650M_UR50S  # ESM-1b
   # protein_lm_path: zjunlp/OntoProtein
-  text_lm_path: microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext  # PubMedBERT
-  # text_lm_path: microsoft/BiomedNLP-KRISSBERT-PubMed-UMLS-EL,  # KrissBERT
+  # text_lm_path: microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext  # PubMedBERT
+  text_lm_path: microsoft/BiomedNLP-KRISSBERT-PubMed-UMLS-EL  # KrissBERT
   # text_lm_path: michiyasunaga/BioLinkBERT-base  # BioLinkBERT-base
   # decoder_config_path: /local/storage/yl986/script_hub/KeAP/initial_decoder_config/config.json
   frozen_bert: True
-  # prot_bert_unfreeze: ['esm.encoder.layer.32']  # for esm-2 1280
-  prot_bert_unfreeze: ['esm.encoder.layer.29']  # for esm-2 640
+  prot_bert_unfreeze: ['esm.encoder.layer.32']  # for esm-2 1280
+  # prot_bert_unfreeze: ['esm.encoder.layer.29']  # for esm-2 640
   # prot_bert_unfreeze: ['bert.encoder.layer.29']  # for OntoProtein
   text_bert_unfreeze: ['bert.encoder.layer.11']
   w_l: 0.2  # weight applied to pathogenicity loss
@@ -43,9 +43,9 @@ model:
 
 dataset:
   task_name: var_pred
-  data_dir: /home/yl986/data/variant_data/pred/pheno_select/
+  data_dir: /home/yl986/data/variant_data/pred/pheno_select/sample/
   seq_fasta: ["/home/yl986/data/UniProt/uniprot_sprot.fasta",
-              "/home/yl986/data/UniProt/uniprot_sprot_varsplic.fasta"],
+              "/home/yl986/data/UniProt/uniprot_sprot_varsplic.fasta"]
   input_file:
     train: train.csv
     test: test.csv
