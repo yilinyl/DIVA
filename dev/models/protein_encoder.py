@@ -211,6 +211,7 @@ class DiseaseVariantEncoder(nn.Module):
         pheno_attn_mask = variant_data['context_pheno_attention_mask']
         assert pheno_input_ids.shape[0] == n_pheno_vars
 
+        compute_pos = False
         compute_neg = False
         if pheno_input_ids.shape[-1] > max_text_length:
             pheno_input_ids = pheno_input_ids[:, :max_text_length]
@@ -224,15 +225,17 @@ class DiseaseVariantEncoder(nn.Module):
             output_hidden_states=True,
             return_dict=None
         ).hidden_states[-1]
-            
-        pos_pheno_embs = self.text_encoder(
-            variant_data['pos_pheno_input_ids'],
-            attention_mask=variant_data['pos_pheno_attention_mask'],
-            token_type_ids=torch.zeros(variant_data['pos_pheno_input_ids'].size(), dtype=torch.long, device=self.device),
-            output_attentions=False,
-            output_hidden_states=True,
-            return_dict=None
-        ).hidden_states[-1]  # n_var, max_pos_pheno_length, pheno_emb_dim
+        
+        if 'pos_pheno_input_ids' in variant_data:  # positive phenotype label available
+            compute_pos = True
+            pos_pheno_embs = self.text_encoder(
+                variant_data['pos_pheno_input_ids'],
+                attention_mask=variant_data['pos_pheno_attention_mask'],
+                token_type_ids=torch.zeros(variant_data['pos_pheno_input_ids'].size(), dtype=torch.long, device=self.device),
+                output_attentions=False,
+                output_hidden_states=True,
+                return_dict=None
+            ).hidden_states[-1]  # n_var, max_pos_pheno_length, pheno_emb_dim
 
         if 'neg_pheno_input_ids' in variant_data:  # train contrastive
             compute_neg = True
@@ -258,8 +261,12 @@ class DiseaseVariantEncoder(nn.Module):
         seq_pheno_emb_raw = torch.cat([seq_var_embs, variant_pheno_emb], dim=-1)  # n_var, (seq_emb_dim + pheno_emb_dim)
         seq_pheno_emb = self.seq_pheno_comb(seq_pheno_emb_raw)  # n_var, hidden_size
 
-        pos_pheno_embs = torch.stack([pos_pheno_embs[i, variant_data['pos_pheno_attention_mask'][i, :].bool()][0] for i in range(n_pheno_vars)], dim=0)
-        pos_emb_proj = self.proj_head(pos_pheno_embs)
+        if compute_pos:
+            pos_pheno_embs = torch.stack([pos_pheno_embs[i, variant_data['pos_pheno_attention_mask'][i, :].bool()][0] for i in range(n_pheno_vars)], dim=0)
+            pos_emb_proj = self.proj_head(pos_pheno_embs)
+        else:
+            pos_emb_proj = None
+            
         if compute_neg:
             neg_pheno_embs = torch.stack([neg_pheno_embs[i, variant_data['neg_pheno_attention_mask'][i, :].bool()][0] for i in range(n_pheno_vars)], dim=0)
             neg_emb_proj = self.proj_head(neg_pheno_embs)

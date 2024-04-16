@@ -1,6 +1,6 @@
 # config on G2-server
 exp_dir: ./scratch/
-experiment: debug
+experiment: krissbert_desc_1280_w005
 mode: train
 device: cuda:0
 batch_size: 8
@@ -14,7 +14,7 @@ init_lr: 0.001
 # lr_schedule_patience: 3
 # clr_reduce_factor: 0.5
 # clr_schedule_patience: 5
-epochs: 5
+epochs: 40
 model:
   type: esm
   # protein_lm_path: /local/storage/yl986/script_hub/KeAP/pretrained  # KeAP model
@@ -34,7 +34,7 @@ model:
   # prot_bert_unfreeze: ['esm.encoder.layer.29']  # for esm-2 640
   # prot_bert_unfreeze: ['bert.encoder.layer.29']  # for OntoProtein
   text_bert_unfreeze: ['bert.encoder.layer.11']
-  w_l: 0.2  # weight applied to pathogenicity loss
+  w_l: 0.05  # weight applied to pathogenicity loss
   # margin: 0.25  # for cosine
   dist_fn_name: cosine_sigmoid
   margin: 0.25  # margin for contrast loss
@@ -43,7 +43,7 @@ model:
 
 dataset:
   task_name: var_pred
-  data_dir: /home/yl986/data/variant_data/pred/pheno_select/sample/
+  data_dir: /home/yl986/data/variant_data/pred/pheno_select/
   seq_fasta: ["/home/yl986/data/UniProt/uniprot_sprot.fasta",
               "/home/yl986/data/UniProt/uniprot_sprot_varsplic.fasta"]
   input_file:

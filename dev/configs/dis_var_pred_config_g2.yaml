@@ -1,11 +1,11 @@
 # config on G2-server
 exp_dir: ./scratch/
-experiment: dis_var_pred
+experiment: dis_desc_w005_pred
 mode: inference
 device: cuda:0
-batch_size: 16
+batch_size: 8
 pheno_batch_size: 16
-model_path: ./scratch/dis_var_esm640_revise/2024-02-06-11-15-05/checkpoints/best_pheno_model.pt
+model_path: ./scratch/dis_desc_w005/2024-04-01-10-24-47/checkpoints/bestmodel-ep38.pt
 # output_file: ./dms_ontoprot_wt_score.csv
 init_lr: 0.001
 
@@ -20,6 +20,8 @@ model:
   # protein_lm_path: facebook/esm1b_t33_650M_UR50S  # ESM-1b
   # protein_lm_path: zjunlp/OntoProtein
   text_lm_path: microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext  # PubMedBERT
+  # text_lm_path: microsoft/BiomedNLP-KRISSBERT-PubMed-UMLS-EL  # KrissBERT
+  # text_lm_path: michiyasunaga/BioLinkBERT-base  # BioLinkBERT-base
   # decoder_config_path: /local/storage/yl986/script_hub/KeAP/initial_decoder_config/config.json
   frozen_bert: True
   # prot_bert_unfreeze: ['esm.encoder.layer.32']  # for esm-2 1280
@@ -33,22 +35,24 @@ model:
 
 dataset:
   task_name: var_pred
-  data_dir: /home/yl986/data/variant_data/pred/full_db_v1
-  "seq_fasta": ["/home/yl986/data/UniProt/uniprot_sprot.fasta",
+  data_dir: /home/yl986/data/variant_data/pred/inference/
+  seq_fasta: ["/home/yl986/data/UniProt/uniprot_sprot.fasta",
                 "/home/yl986/data/UniProt/uniprot_sprot_varsplic.fasta"]
   input_file:
-    train: train.csv
-    test: test.csv
-    val: val.csv
-  phenotype_vocab_file: /home/yl986/data/variant_data/phenotype_all.txt
-  # pheno_emb_cache_file:
+    train: vars_in_training.csv  # include all variants seen in training --- to generate load variant cache only
+    test: dms_human_snp_select.csv   # variants for inference
+  phenotype_vocab_file: /home/yl986/data/variant_data/pred/pheno_select/phenotype_vocab.txt
+  phenotype_desc_file: /home/yl986/data/variant_data/short_name2desc.json  # phenotype name-to-description
+  use_pheno_desc: True
+  variant_cache_file: /home/yl986/data/variant_data/prot_var_cache.json
   pid_col: UniProt
   pos_col: Protein_position
   label_col: label
-  pheno_col: phenotype
+  pheno_col: pheno_clean
   load_variant: True
   use_protein_desc: True
   max_protein_seq_length: 1024
   # max_phenotype_length: null
   use_protein_desc: True
+  binary_inference_only: False
 

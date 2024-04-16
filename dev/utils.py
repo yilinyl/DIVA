@@ -169,7 +169,7 @@ def view_model_param(model):
     return total_param
 
 
-def _save_scores(var_ids, target, pred, name, epoch=None, exp_dir='./output', mode='train'):
+def _save_scores(var_ids, target, pred, name, epoch='', exp_dir='./output', mode='train'):
     if mode == 'train':
         fname = f'{exp_dir}/result/epoch_{epoch}_{name}_score.txt'
     else:
