@@ -383,6 +383,14 @@ def main():
         except FileNotFoundError:
             pass
     
+    prot2comb_seq = None
+    if data_configs['use_structure']:
+        if os.path.exists(data_configs['struct_seq_file']):
+            with open(data_configs['struct_seq_file']) as f_js:
+                prot2comb_seq = json.load(f_js)
+        else:
+            data_configs['use_structure'] = False
+
     data_configs['seq_dict'] = prot2seq
     data_configs['protein_info_dict'] = prot2desc
 
@@ -410,7 +418,9 @@ def main():
                                          split='train', 
                                          phenotype_vocab=phenotype_vocab, 
                                          protein_tokenizer=protein_tokenizer, 
-                                         text_tokenizer=text_tokenizer)
+                                         text_tokenizer=text_tokenizer,
+                                        #  use_structure=data_configs['use_structure'],
+                                         comb_seq_dict=prot2comb_seq)
     # var_db = pd.read_csv(data_root / data_configs['input_file']['train']).query('label == 1').\
     #     drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
     prot_var_cache = train_dataset.get_protein_cache()
@@ -421,7 +431,9 @@ def main():
                                          protein_tokenizer=protein_tokenizer, 
                                          text_tokenizer=text_tokenizer,
                                         #  var_db=var_db,
-                                         prot_var_cache=prot_var_cache)
+                                         prot_var_cache=prot_var_cache,
+                                        #  use_structure=data_configs['use_structure'],
+                                         comb_seq_dict=prot2comb_seq)
     # val_variants = pd.read_csv(data_root / data_configs['input_file']['val']).query('label == 1').\
     #     drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
     # var_db = pd.concat([var_db, val_variants])
@@ -434,7 +446,9 @@ def main():
                                          protein_tokenizer=protein_tokenizer, 
                                          text_tokenizer=text_tokenizer,
                                         #  var_db=var_db,
-                                         prot_var_cache=prot_var_cache)
+                                         prot_var_cache=prot_var_cache,
+                                        #  use_structure=data_configs['use_structure'],
+                                         comb_seq_dict=prot2comb_seq)
     
     # Initilize pretrained encoders:
     # seq_encoder = EsmForMaskedLM.from_pretrained(model_args['protein_lm_path'])
@@ -443,15 +457,15 @@ def main():
 
     train_collator = ProteinVariantDataCollator(train_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
                                                 use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'],
-                                                use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict)
+                                                use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict, use_structure=data_configs['use_structure'])
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], collate_fn=train_collator, shuffle=True)
     val_collator = ProteinVariantDataCollator(val_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
                                               use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'],
-                                              use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict)
+                                              use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict, use_structure=data_configs['use_structure'])
     validation_loader = DataLoader(val_dataset, batch_size=config['batch_size'], collate_fn=val_collator)
     test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
                                                use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'],
-                                               use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict)
+                                               use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict, use_structure=data_configs['use_structure'])
     test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
 
     if model_args['frozen_bert']:
@@ -516,6 +530,7 @@ def main():
     best_optim = None
     best_epoch = 0
     best_results = {'train': None, 'test': None, 'val': None}
+    best_topk_results = dict()
     
     train_pathogenicity = True
     topk_max = max(model_args['topk'])
@@ -525,8 +540,9 @@ def main():
         logging.info('Epoch %d' % epoch)
         # if tb_writer:
         #     tb_writer.add_scalar("train/epoch", epoch)
-        # if epoch > model_args['max_pathogenicity_epochs']:
-        #     train_pathogenicity = False
+        if epoch > model_args['max_pathogenicity_epochs']:
+            train_pathogenicity = False
+            logging.info(f'Disable pathogenicity optimization after {epoch} epochs')
         train_patho_loss, train_pheno_loss, train_loss, optimizer = train_epoch(model, optimizer, device, train_loader, w_l=model_args['w_l'], opt_patho=train_pathogenicity)
         # train_patho_loss, train_pheno_loss, train_loss, optimizer, contrast_optimizer = train_epoch_sep(model, optimizer, contrast_optimizer, device, train_loader, w_l=model_args['w_l'])
         all_pheno_embs = embed_phenotypes(model, device, phenotype_loader)
@@ -582,6 +598,14 @@ def main():
                         'state_dict': model.state_dict(), 
                         'optimizer_state_dict': optimizer.state_dict()},
                        model_save_path / 'best_pheno_model.pt'.format(epoch))
+            
+            best_topk_results['epoch'] = epoch
+            best_topk_results['train'] = train_topk_acc
+            best_topk_results['test'] = test_topk_acc
+            best_topk_results['val'] = val_topk_acc
+
+            with open(result_path / 'best_topk_result.json', 'w') as f_js:
+                json.dump(best_topk_results, f_js, indent=2)
 
         if epoch % args.save_freq == 0:
             _save_scores(train_vars, train_labels, train_scores, 'train', epoch, exp_dir)

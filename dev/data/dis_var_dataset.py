@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 import tqdm
 import random
+import logging
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
@@ -128,6 +129,8 @@ class ProteinVariantDatset(Dataset):
         mode='train',  # choose from {'train', 'eval'}
         binary_inference_only=False,  # infer pathogenic vs benign only
         update_var_cache=True,  # if True, current variant (disease) will be visible to other variants (set to False at inference)
+        use_structure=False,
+        comb_seq_dict=None,  # combined sequence (residue+struct from foldseek)
         **kwargs
     ):
         super(ProteinVariantDatset, self).__init__()
@@ -167,6 +170,8 @@ class ProteinVariantDatset(Dataset):
         self.binary_inference_only = binary_inference_only
         self.update_var_cache = update_var_cache
         self.has_phenotype_label = False
+        self.use_structure = use_structure
+        self.comb_seq_dict = comb_seq_dict
 
         if not variant_file:
             variant_file = split + '.csv'
@@ -204,16 +209,20 @@ class ProteinVariantDatset(Dataset):
                     if seq_only:
                         seq = prot_info
                     else:
-                        seq = prot_info['sequence']['value']
-                        prot_desc_dict = prot_info['proteinDescription']
-                        if 'recommendedName' in prot_desc_dict:
-                            prot_desc = prot_desc_dict['recommendedName']['fullName']['value']
-                        elif 'submissionNames' in prot_desc_dict:
-                            prot_desc = prot_desc_dict['submissionNames'][0]['fullName']['value']
-                        else:
-                            prot_desc = self.text_tokenizer.unk_token
+                        try:
+                            seq = prot_info['sequence']['value']
+                            prot_desc_dict = prot_info['proteinDescription']
+                            if 'recommendedName' in prot_desc_dict:
+                                prot_desc = prot_desc_dict['recommendedName']['fullName']['value']
+                            elif 'submissionNames' in prot_desc_dict:
+                                prot_desc = prot_desc_dict['submissionNames'][0]['fullName']['value']
+                            else:
+                                prot_desc = self.text_tokenizer.unk_token
 
-                        self.protein_info_dict[uprot] = prot_desc
+                            self.protein_info_dict[uprot] = prot_desc
+                        except KeyError:
+                            logging.warning(f'{uprot} not found')
+                            continue
                         
                         # cur_protein['desc'] = prot_desc
                     
@@ -224,6 +233,20 @@ class ProteinVariantDatset(Dataset):
                     seq = self.seq_dict[uprot]
                     if self.use_protein_desc:
                         prot_desc = self.protein_info_dict[uprot]
+            
+            if self.use_structure and self.comb_seq_dict:
+                try:
+                    comb_seq = self.comb_seq_dict[uprot]
+                except KeyError:
+                    # logging.warning(f'No structure-aware sequence for {uprot}')
+                    comb_seq = ''.join([f'{s}#' for s in seq])  # unknown structure
+                    self.comb_seq_dict[uprot] = comb_seq
+                struct_seq = comb_seq[1::2]
+                try:
+                    assert len(seq) == len(struct_seq)
+                except AssertionError:
+                    logging.warning(f'Inconsistent sequence lengths for structure & primary sequence ({uprot})')
+                    continue
             
             df_prot = df_var[df_var[pid_col] == uprot]
             if self.patho_only:
@@ -250,6 +273,9 @@ class ProteinVariantDatset(Dataset):
             for j, record in df_prot.iterrows():
                 # pheno_cur = record[self.pheno_col]
                 if record[pos_col] >= self.max_protein_seq_length:  # skip out-of-bound variants for now
+                    continue
+                if record[pos_col] > len(seq):
+                    logging.warning('Invalid variant position {} for protein {} with length {}'.format(record[pos_col], uprot, len(seq)))
                     continue
                 sample_mask = np.zeros(len(self.pheno_descs), dtype=bool)
                 var_idx = record[pos_col] - self.pos_offset
@@ -309,9 +335,14 @@ class ProteinVariantDatset(Dataset):
                     #     pos_pheno_available = False
                         # neg_sample_idx = self.text_tokenizer.unk_token_id
                         # neg_pheno_cur = self.text_tokenizer.unk_token
-                
-                ref_aa.append(record['REF_AA'])
-                alt_aa.append(record['ALT_AA'])
+                ref_aa_cur = record['REF_AA']
+                alt_aa_cur = record['ALT_AA']
+
+                if self.use_structure:
+                    ref_aa_cur = record['REF_AA'] + struct_seq[var_idx]
+                    alt_aa_cur = record['ALT_AA'] + '#'  # mask structure for variant
+                ref_aa.append(ref_aa_cur)
+                alt_aa.append(alt_aa_cur)
                 cur_var_name = '{}_{}_{}/{}'.format(uprot, record[pos_col], record['REF_AA'], record['ALT_AA'])
                 var_names.append(cur_var_name)
                 # var_names.append(''.join([record['REF_AA'], str(record[pos_col]), record['ALT_AA']]))
@@ -323,8 +354,8 @@ class ProteinVariantDatset(Dataset):
                                'var_idx': var_idx,
                                'var_pos': record[pos_col],
                                'label': record[self.label_col],
-                               'ref_aa': self.protein_tokenizer.convert_tokens_to_ids(record['REF_AA']),
-                               'alt_aa': self.protein_tokenizer.convert_tokens_to_ids(record['ALT_AA']),
+                               'ref_aa': self.protein_tokenizer.convert_tokens_to_ids(ref_aa_cur),
+                               'alt_aa': self.protein_tokenizer.convert_tokens_to_ids(alt_aa_cur),
                                'pos_pheno_desc': pheno_cur,
                                'pos_pheno_idx': pheno_idx,
                             #    'neg_pheno_desc': neg_pheno_cur,
@@ -332,6 +363,7 @@ class ProteinVariantDatset(Dataset):
                                'infer_phenotype': infer_phenotype,
                                'pos_pheno_is_known': pos_pheno_is_known
                                }
+                
                 self.variant_data.append(cur_variant)
             # seq_input_ids = self.encode_protein_seq(seq)
             cur_protein = {'seq': seq,
@@ -340,7 +372,9 @@ class ProteinVariantDatset(Dataset):
                            'context_var_idx': context_var_idx,  
                            'var_pheno_descs': pos_pheno_desc,
                            }
-            
+            if self.use_structure:
+                cur_protein['comb_seq'] = comb_seq
+
             self.protein_variants[uprot] = cur_protein
             if self.update_var_cache:
                 self.prot_var_cache.update(self.protein_variants)
@@ -412,6 +446,7 @@ class ProteinVariantDataCollator:
     max_pheno_desc_length: int = 512
     mode: str = 'train'
     has_phenotype_label: bool = True
+    use_structure: bool = False
 
     def __post_init__(self):
         if self.mlm and self.protein_tokenizer.mask_token is None:
@@ -428,7 +463,8 @@ class ProteinVariantDataCollator:
                                            pheno_vocab=self.phenotype_vocab, use_prot_desc=self.use_prot_desc, 
                                            use_pheno_desc=self.use_pheno_desc, pheno_desc_dict=self.pheno_desc_dict, 
                                            max_protein_length=self.max_protein_length, max_pheno_desc_length=self.max_pheno_desc_length, 
-                                           window_size=self.window_size, mode=self.mode, has_phenotype_label=self.has_phenotype_label)
+                                           window_size=self.window_size, mode=self.mode, has_phenotype_label=self.has_phenotype_label,
+                                           use_structure=self.use_structure)
 
         return batch
     
@@ -595,7 +631,8 @@ def protein_variant_collate_fn(
     max_pheno_desc_length: int = None,
     mode: str = 'train',  # {'train', 'eval'}
     pheno_desc_dict: Dict[str, str] = None,
-    has_phenotype_label: bool = True
+    has_phenotype_label: bool = True,
+    use_structure: bool = False
 ):   
     """
     Collate function for protein using both sequence and description text
@@ -606,6 +643,8 @@ def protein_variant_collate_fn(
     # protein sequence
     seq_lst = [protein_data[pid]['seq'] for pid in prot_unique]
     prot_lengths = [len(seq) for seq in seq_lst]
+    if use_structure:
+        seq_lst = [protein_data[pid]['comb_seq'] for pid in prot_unique]
     # max_seq_length = max(prot_lengths)
     if not max_protein_length:
         max_protein_length = protein_tokenizer.model_max_length

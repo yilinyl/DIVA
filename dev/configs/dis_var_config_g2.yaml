@@ -1,6 +1,6 @@
 # config on G2-server
 exp_dir: ./scratch/
-experiment: krissbert_desc_1280_w005
+experiment: saprot_w005
 mode: train
 device: cuda:0
 batch_size: 8
@@ -14,14 +14,15 @@ init_lr: 0.001
 # lr_schedule_patience: 3
 # clr_reduce_factor: 0.5
 # clr_schedule_patience: 5
-epochs: 40
+epochs: 30
 model:
   type: esm
   # protein_lm_path: /local/storage/yl986/script_hub/KeAP/pretrained  # KeAP model
   # protein_lm_path: zjunlp/OntoProtein
   # protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
   # protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
-  protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
+  # protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
+  protein_lm_path: westlake-repl/SaProt_650M_AF2  # ESM2 1280 with structure vocab
   # protein_lm_path: facebook/esm1v_t33_650M_UR90S_1  # ESM-1v
   # protein_lm_path: facebook/esm1b_t33_650M_UR50S  # ESM-1b
   # protein_lm_path: zjunlp/OntoProtein
@@ -38,7 +39,7 @@ model:
   # margin: 0.25  # for cosine
   dist_fn_name: cosine_sigmoid
   margin: 0.25  # margin for contrast loss
-  # max_pathogenicity_epochs: 3  # number of epochs to train pathogencity objective
+  max_pathogenicity_epochs: 5  # number of epochs to train pathogencity objective
   topk: [20, 50, 100]
 
 dataset:
@@ -63,3 +64,5 @@ dataset:
   max_protein_seq_length: 1024
   # max_phenotype_length: null
   use_protein_desc: True
+  use_structure: True
+  struct_seq_file: '/home/yl986/data/variant_data/pred/prot_combine_seq.json'  # pre-processed structure-aware sequence (SaProt)
