@@ -1,11 +1,12 @@
 # config on G2-server
 exp_dir: ./scratch/
-experiment: dis_desc_w005_pred
+experiment: dis_desc_w005_bestpheno_pred
 mode: inference
 device: cuda:0
 batch_size: 8
 pheno_batch_size: 16
-model_path: ./scratch/dis_desc_w005/2024-04-01-10-24-47/checkpoints/bestmodel-ep38.pt
+# model_path: ./scratch/dis_desc_w005/2024-04-01-10-24-47/checkpoints/bestmodel-ep38.pt
+model_path: ./scratch/dis_desc_w005/2024-04-01-10-24-47/checkpoints/best_pheno_model.pt
 # output_file: ./dms_ontoprot_wt_score.csv
 init_lr: 0.001
 
@@ -35,12 +36,25 @@ model:
 
 dataset:
   task_name: var_pred
-  data_dir: /home/yl986/data/variant_data/pred/inference/
+  data_dir: /home/yl986/data/variant_data/pred/
   seq_fasta: ["/home/yl986/data/UniProt/uniprot_sprot.fasta",
                 "/home/yl986/data/UniProt/uniprot_sprot_varsplic.fasta"]
   input_file:
-    train: vars_in_training.csv  # include all variants seen in training --- to generate load variant cache only
-    test: dms_human_snp_select.csv   # variants for inference
+    train: inference/vars_in_training.csv  # include all variants seen in training --- to generate load variant cache only
+    test: 
+        - pheno_select/train.csv
+        - pheno_select/test.csv
+        - pheno_select/val.csv
+        # - cancer_hotspot_select.csv
+        # - dms_PTEN_processed.csv
+        # - dms_BRCA1_processed.csv
+        # - dms_MSH2_processed.csv
+        # - dms_TP53_processed.csv
+        # - gof_lof_ion_channel.csv
+        # - patho_neutral_ion_channel.csv
+        # - AlphaMissense/af_cancer_hotspot.csv
+        # - AlphaMissense/af_clinvar_pred.csv
+        # - AlphaMissense/af_dev_disorder.csv
   phenotype_vocab_file: /home/yl986/data/variant_data/pred/pheno_select/phenotype_vocab.txt
   phenotype_desc_file: /home/yl986/data/variant_data/short_name2desc.json  # phenotype name-to-description
   use_pheno_desc: True

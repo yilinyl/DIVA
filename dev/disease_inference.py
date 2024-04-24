@@ -191,7 +191,7 @@ def gpu_setup(device='cpu'):
 
     return device
 
-def save_pheno_results(pheno_result_dict, save_path, split, save_emb=False):
+def save_pheno_results(pheno_result_dict, save_path, name, save_emb=False):
     if isinstance(save_path, str):
         save_path = Path(save_path)
 
@@ -201,10 +201,10 @@ def save_pheno_results(pheno_result_dict, save_path, split, save_emb=False):
                                         'pos_phenotype': pheno_result_dict['pos_pheno_desc'], 
                                         #  'neg_phenotype': pheno_result_dict['neg_pheno_desc'], 
                                         'pos_score': pheno_result_dict['pos_score']})
-        df_pheno_results.to_csv(save_path / f'{split}_pheno_score.tsv', sep='\t', index=False)
-    np.save(save_path / f'{split}_sim.npy', pheno_result_dict['similarities'])
+        df_pheno_results.to_csv(save_path / f'{name}_pheno_score.tsv', sep='\t', index=False)
+    np.save(save_path / f'{name}_sim.npy', pheno_result_dict['similarities'])
     if save_emb:
-        np.save(save_path / f'{split}_pheno_pred_emb.npy', pheno_result_dict['pred_emb'])
+        np.save(save_path / f'{name}_pheno_pred_emb.npy', pheno_result_dict['pred_emb'])
         # pd.DataFrame(pheno_result_dict['pos_emb']).to_csv(save_path / f'{split}_pheno_true_emb.tsv', sep='\t', index=False, header=False)
         # pd.DataFrame(pheno_result_dict['neg_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_neg_emb.tsv', sep='\t', index=False, header=False)
     
@@ -295,22 +295,6 @@ if __name__ == '__main__':
         with open(data_configs['variant_cache_file'], 'w') as f:
             json.dump(prot_var_cache, f, indent=2)
     
-    test_dataset = ProteinVariantDatset(**data_configs, 
-                                         variant_file=data_configs['input_file']['test'], 
-                                         split='test', 
-                                         phenotype_vocab=phenotype_vocab, 
-                                         protein_tokenizer=protein_tokenizer, 
-                                         text_tokenizer=text_tokenizer,
-                                        #  var_db=var_db,
-                                         prot_var_cache=prot_var_cache,
-                                         mode='eval',
-                                         update_var_cache=False)
-    
-    test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
-                                               use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'], mode='eval', 
-                                               has_phenotype_label=test_dataset.has_phenotype_label)
-    test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
-
     seq_config = BertConfig.from_pretrained(model_args['protein_lm_path'])
     text_config = BertConfig.from_pretrained(model_args['text_lm_path'])
 
@@ -336,22 +320,47 @@ if __name__ == '__main__':
     model = model.to(device)
     all_pheno_embs = embed_phenotypes(model, device, phenotype_loader)
     all_pheno_embs = torch.tensor(all_pheno_embs, device=device)
-    # train_labels, train_scores, train_vars, train_pheno_results = inference(model, device, train_loader, pheno_vocab_emb=all_pheno_embs, topk=100)
-    # val_labels, val_scores, val_vars, val_pheno_results = inference(model, device, validation_loader, pheno_vocab_emb=all_pheno_embs, topk=100)
-    test_labels, test_scores, test_vars, test_pheno_results = inference(model, device, test_loader, pheno_vocab_emb=all_pheno_embs, topk=100)
+    if isinstance(data_configs['input_file']['test'], str):
+        test_flist = [data_configs['input_file']['test']]
+    else:
+        test_flist = data_configs['input_file']['test']
 
-    _save_scores(test_vars, test_labels, test_scores, 'test', epoch='', exp_dir=str(exp_path), mode='eval')
+    for test_file in test_flist:
+        logging.info(f'Inference on {test_file}...')
+        fname = os.path.basename(test_file).split('.')[0]
+        test_dataset = ProteinVariantDatset(**data_configs, 
+                                            variant_file=test_file, 
+                                            split='test', 
+                                            phenotype_vocab=phenotype_vocab, 
+                                            protein_tokenizer=protein_tokenizer, 
+                                            text_tokenizer=text_tokenizer,
+                                            #  var_db=var_db,
+                                            prot_var_cache=prot_var_cache,
+                                            mode='eval',
+                                            update_var_cache=False)
+        logging.info('{} variants loaded'.format(len(test_dataset)))
+        test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
+                                                use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'], mode='eval', 
+                                                has_phenotype_label=test_dataset.has_phenotype_label)
+        test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
+        # train_labels, train_scores, train_vars, train_pheno_results = inference(model, device, train_loader, pheno_vocab_emb=all_pheno_embs, topk=100)
+        # val_labels, val_scores, val_vars, val_pheno_results = inference(model, device, validation_loader, pheno_vocab_emb=all_pheno_embs, topk=100)
+        test_labels, test_scores, test_vars, test_pheno_results = inference(model, device, test_loader, pheno_vocab_emb=all_pheno_embs, topk=100)
+
+        _save_scores(test_vars, test_labels, test_scores, fname, epoch='', exp_dir=str(exp_path), mode='eval')
+        # np.save(pheno_result_path / 'train_pheno_similarity.npy', train_topk_results['similarities'])
+        # np.save(pheno_result_path / 'test_pheno_similarity.npy', test_topk_results['similarities'])
+        # np.save(pheno_result_path / 'val_pheno_similarity.npy', val_topk_results['similarities'])
+
+        result_dict = {'topk_scores': test_pheno_results['topk_scores'],
+                    'topk_indices': test_pheno_results['topk_indices']}
+        if 'pos_pheno_idx' in test_pheno_results:
+            result_dict.update({'label': test_pheno_results['pos_pheno_idx']})
+
+        with open(exp_path / f'{fname}_topk.pkl', 'wb') as f_pkl:
+            pickle.dump(result_dict, f_pkl)
+
+        save_pheno_results(test_pheno_results, exp_path, name=fname, save_emb=True)
+        logging.info('Done!')
+
     np.save(exp_path / 'phenotype_emb.npy', all_pheno_embs.detach().cpu().numpy())
-    # np.save(pheno_result_path / 'train_pheno_similarity.npy', train_topk_results['similarities'])
-    # np.save(pheno_result_path / 'test_pheno_similarity.npy', test_topk_results['similarities'])
-    # np.save(pheno_result_path / 'val_pheno_similarity.npy', val_topk_results['similarities'])
-
-    result_dict = {'topk_scores': test_pheno_results['topk_scores'],
-                   'topk_indices': test_pheno_results['topk_indices']}
-    if 'pos_pheno_idx' in test_pheno_results:
-        result_dict.update({'label': test_pheno_results['pos_pheno_idx']})
-
-    with open(exp_path / f'test_topk.pkl', 'wb') as f_pkl:
-        pickle.dump(result_dict, f_pkl)
-
-    save_pheno_results(test_pheno_results, exp_path, split='test', save_emb=True)
