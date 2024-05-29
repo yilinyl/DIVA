@@ -403,6 +403,7 @@ def main():
     # Load data
     with open(data_configs['phenotype_vocab_file'], 'r') as f:
         phenotype_vocab = f.read().splitlines()
+    phenotype_vocab.insert(0, text_tokenizer.unk_token)  # add unknown token
     
     if data_configs['use_pheno_desc']:
         with open(data_configs['phenotype_desc_file']) as f:
@@ -420,7 +421,8 @@ def main():
                                          protein_tokenizer=protein_tokenizer, 
                                          text_tokenizer=text_tokenizer,
                                         #  use_structure=data_configs['use_structure'],
-                                         comb_seq_dict=prot2comb_seq)
+                                         comb_seq_dict=prot2comb_seq,
+                                         access_to_context=True)
     # var_db = pd.read_csv(data_root / data_configs['input_file']['train']).query('label == 1').\
     #     drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
     prot_var_cache = train_dataset.get_protein_cache()
@@ -433,7 +435,8 @@ def main():
                                         #  var_db=var_db,
                                          prot_var_cache=prot_var_cache,
                                         #  use_structure=data_configs['use_structure'],
-                                         comb_seq_dict=prot2comb_seq)
+                                         comb_seq_dict=prot2comb_seq,
+                                         access_to_context=False)  # context variants in validation set not visible to each other
     # val_variants = pd.read_csv(data_root / data_configs['input_file']['val']).query('label == 1').\
     #     drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
     # var_db = pd.concat([var_db, val_variants])
@@ -448,7 +451,8 @@ def main():
                                         #  var_db=var_db,
                                          prot_var_cache=prot_var_cache,
                                         #  use_structure=data_configs['use_structure'],
-                                         comb_seq_dict=prot2comb_seq)
+                                         comb_seq_dict=prot2comb_seq,
+                                         access_to_context=False)
     
     # Initilize pretrained encoders:
     # seq_encoder = EsmForMaskedLM.from_pretrained(model_args['protein_lm_path'])
@@ -468,6 +472,8 @@ def main():
                                                use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict, use_structure=data_configs['use_structure'])
     test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
 
+    unfreeze_params = []
+
     if model_args['frozen_bert']:
         # prot_unfreeze_layers = ['esm.encoder.layer.11']
         for name, parameters in seq_encoder.named_parameters():
@@ -475,6 +481,7 @@ def main():
             for tags in model_args['prot_bert_unfreeze']:
                 if tags in name:
                     parameters.requires_grad = True
+                    unfreeze_params.append(name)
                     break
 
         # text_unfreeze_layers = ['bert.encoder.layer.11']
@@ -483,8 +490,9 @@ def main():
             for tags in model_args['text_bert_unfreeze']:
                 if tags in name:
                     parameters.requires_grad = True
+                    unfreeze_params.append(name)
                     break
-
+    print(unfreeze_params)
     seq_encoder = seq_encoder.to(device)
     text_encoder = text_encoder.to(device)
     model = DiseaseVariantEncoder(seq_encoder=seq_encoder,
@@ -537,12 +545,25 @@ def main():
 
     for epoch in range(config['epochs']):
         save_emb = False
-        logging.info('Epoch %d' % epoch)
+        # logging.info('Epoch %d' % epoch)
         # if tb_writer:
         #     tb_writer.add_scalar("train/epoch", epoch)
-        if epoch > model_args['max_pathogenicity_epochs']:
+        if (epoch > model_args['max_pathogenicity_epochs']) & train_pathogenicity:
             train_pathogenicity = False
-            logging.info(f'Disable pathogenicity optimization after {epoch} epochs')
+            logging.info(f'Disable pathogenicity optimization after epoch {epoch}')
+            for name, parameters in model.named_parameters():
+                # protein_encoder.seq_encoder.esm.encoder.layer.32
+                if name.startswith('protein_encoder.seq_encoder') and parameters.requires_grad:
+                    parameters.requires_grad = False
+                    logging.info(f'Freeze {name}')
+            
+            total_param_with_grad = 0
+            for p in model.parameters():
+                if p.requires_grad:
+                    total_param_with_grad += p.numel()
+                total_param += p.numel()
+            logging.info(f'Updated model parameters (trainable/all): {total_param_with_grad} / {total_param}')
+        logging.info('Epoch %d' % epoch)
         train_patho_loss, train_pheno_loss, train_loss, optimizer = train_epoch(model, optimizer, device, train_loader, w_l=model_args['w_l'], opt_patho=train_pathogenicity)
         # train_patho_loss, train_pheno_loss, train_loss, optimizer, contrast_optimizer = train_epoch_sep(model, optimizer, contrast_optimizer, device, train_loader, w_l=model_args['w_l'])
         all_pheno_embs = embed_phenotypes(model, device, phenotype_loader)
@@ -577,6 +598,8 @@ def main():
             best_results['train'] = (train_vars, train_labels, train_scores, train_pheno_results)
             best_results['test'] = (test_vars, test_labels, test_scores, test_pheno_results)
             best_results['val'] = (val_vars, val_labels, val_scores, val_pheno_results)
+            np.save(pheno_result_path / f'ep{epoch}_phenotype_emb.npy', all_pheno_embs.detach().cpu().numpy())
+
         # print('# Loss: train= {0:.5f}; validation= {1:.5f}; test= {2:.5f};'.format(train_loss, val_loss, test_loss))
         test_aupr = compute_aupr(test_labels, test_scores)
         test_auc = compute_roc(test_labels, test_scores)

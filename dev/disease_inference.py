@@ -128,7 +128,7 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
                     pheno_score_pos = torch.cosine_similarity(seq_pheno_emb, pos_emb_proj)
                     all_pheno_scores.append(pheno_score_pos.detach().cpu().numpy())
                     all_pheno_emb_label.append(pos_emb_proj.detach().cpu().numpy())
-                    all_pos_pheno_descs.extend(batch_data['variant']['pos_pheno_desc'])
+                    all_pos_pheno_descs.extend(batch_data['variant']['pos_pheno_name'])
                     all_pos_pheno_idx.extend(batch_data['variant']['pos_pheno_idx'])
                 # all_neg_pheno_descs.extend(batch_data['variant']['neg_pheno_desc'])
 
@@ -272,7 +272,14 @@ if __name__ == '__main__':
     # Load data
     with open(data_configs['phenotype_vocab_file'], 'r') as f:
         phenotype_vocab = f.read().splitlines()
-    pheno_dataset = PhenotypeDataset(phenotype_vocab)
+    phenotype_vocab.insert(0, text_tokenizer.unk_token)  # add unknown token
+    if data_configs['use_pheno_desc']:
+        with open(data_configs['phenotype_desc_file']) as f:
+            pheno_desc_dict = json.load(f)
+    else:
+        pheno_desc_dict = None
+
+    pheno_dataset = PhenotypeDataset(phenotype_vocab, pheno_desc_dict, use_desc=data_configs['use_pheno_desc'])
     pheno_collator = TextDataCollator(text_tokenizer, padding=True)
     phenotype_loader = DataLoader(pheno_dataset, batch_size=config['pheno_batch_size'], collate_fn=pheno_collator, shuffle=False)
     # TODO: load variant cache
@@ -287,7 +294,8 @@ if __name__ == '__main__':
                                             protein_tokenizer=protein_tokenizer, 
                                             text_tokenizer=text_tokenizer,
                                             mode='train',
-                                            update_var_cache=True)
+                                            update_var_cache=True,
+                                            access_to_context=True)
         # var_db = pd.read_csv(data_root / data_configs['input_file']['train']).query('label == 1').\
         #     drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
         prot_var_cache = ref_dataset.get_protein_cache()
@@ -337,11 +345,12 @@ if __name__ == '__main__':
                                             #  var_db=var_db,
                                             prot_var_cache=prot_var_cache,
                                             mode='eval',
-                                            update_var_cache=False)
+                                            update_var_cache=False,
+                                            access_to_context=False)
         logging.info('{} variants loaded'.format(len(test_dataset)))
         test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
-                                                use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'], mode='eval', 
-                                                has_phenotype_label=test_dataset.has_phenotype_label)
+                                               use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'],
+                                               use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict)
         test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
         # train_labels, train_scores, train_vars, train_pheno_results = inference(model, device, train_loader, pheno_vocab_emb=all_pheno_embs, topk=100)
         # val_labels, val_scores, val_vars, val_pheno_results = inference(model, device, validation_loader, pheno_vocab_emb=all_pheno_embs, topk=100)

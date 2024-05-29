@@ -131,6 +131,7 @@ class ProteinVariantDatset(Dataset):
         update_var_cache=True,  # if True, current variant (disease) will be visible to other variants (set to False at inference)
         use_structure=False,
         comb_seq_dict=None,  # combined sequence (residue+struct from foldseek)
+        access_to_context=False,
         **kwargs
     ):
         super(ProteinVariantDatset, self).__init__()
@@ -172,6 +173,7 @@ class ProteinVariantDatset(Dataset):
         self.has_phenotype_label = False
         self.use_structure = use_structure
         self.comb_seq_dict = comb_seq_dict
+        self.access_to_context = access_to_context
 
         if not variant_file:
             variant_file = split + '.csv'
@@ -194,13 +196,14 @@ class ProteinVariantDatset(Dataset):
         for i, uprot in enumerate(prots_all):
             cur_protein = dict()
             # cur_protein['id'] = uprot
-            context_var_idx = []
+            cache_context_var_idx = []
+            new_context_var_idx = []
             if self.prot_var_cache:
                 cur_protein = self.prot_var_cache.get(uprot, None)
             if cur_protein:  # protein found in cache
                 seq = cur_protein['seq']
                 prot_desc = cur_protein['prot_desc']
-                context_var_idx = cur_protein['context_var_idx']
+                cache_context_var_idx = cur_protein['context_var_idx']
                 pos_pheno_desc = cur_protein['var_pheno_descs']
             else:
                 # Load sequence (and functional description)
@@ -261,10 +264,7 @@ class ProteinVariantDatset(Dataset):
             # neg_pheno_desc = [self.text_tokenizer.pad_token] * len(seq)
             # neg_pheno_desc = np.full(len(seq), fill_value=self.text_tokenizer.pad_token)
             prot_var_pos = []
-            # prot_var_idx_target = []
-            # is_pathogenic = np.zeros(len(seq))
-            # pos_phenotypes = []
-            # neg_phenotypes = []
+            
             ref_aa = []
             alt_aa = []
             var_names = []
@@ -286,8 +286,9 @@ class ProteinVariantDatset(Dataset):
                 pos_pheno_is_known = False
                 infer_phenotype = False
                 if self.binary_inference_only:
-                    pheno_idx = self.text_tokenizer.unk_token_id
+                    # pheno_idx = self.text_tokenizer.unk_token_id
                     pheno_cur = self.text_tokenizer.unk_token
+                    pheno_idx = self.pheno_descs.index(pheno_cur)
 
                 else:
                     if self.has_phenotype_label:
@@ -296,23 +297,30 @@ class ProteinVariantDatset(Dataset):
                         pheno_cur = np.nan
                     
                     if self.mode == 'train':
-                        if pheno_cur != np.nan and record[self.label_col] == 1:  # pathogenic AND phenotype information available (in train & eval)
+                        if isinstance(pheno_cur, str) and record[self.label_col] == 1:  # pathogenic AND phenotype information available (in train & eval)
                             try:
                                 pheno_idx = self.pheno_descs.index(pheno_cur)
                                 sample_mask[pheno_idx] = True
                                 infer_phenotype = True
                                 pos_pheno_is_known = True
                             except ValueError:
-                                pheno_idx = self.text_tokenizer.unk_token_id
-                                pheno_cur = self.text_tokenizer.unk_token
+                                # pheno_idx = self.text_tokenizer.unk_token_id
+                                # pheno_cur = self.text_tokenizer.unk_token
+                                pheno_idx = self.pheno_descs.index(self.text_tokenizer.unk_token)
                             
                             pos_pheno_idx[var_idx] = pheno_idx
                             pos_pheno_desc[var_idx] = pheno_cur
-                            if self.split in ['train', 'val']:  # modified: now variants in testing set is not visible to each other
-                                context_var_idx.append(var_idx)  # context information for phenotype inference
+                            # if pos_pheno_desc[var_idx] != self.text_tokenizer.pad_token:
+                            #     pos_pheno_update = set(pos_pheno_desc[var_idx].split(';')) - {self.text_tokenizer.pad_token, self.text_tokenizer.unk_token}
+                            #     pos_pheno_desc[var_idx] = self.text_tokenizer.sep_token.join([pos_pheno_desc[var_idx]] + pheno_cur) 
+
+                            # if self.split in ['train', 'val']:  # modified: now variants in testing set is not visible to each other
+                            #     cache_context_var_idx.append(var_idx)  # context information for phenotype inference
+                            new_context_var_idx.append(var_idx)
                         else:
-                            pheno_idx = self.text_tokenizer.unk_token_id
-                            pheno_cur = self.text_tokenizer.unk_token
+                            # pheno_idx = self.text_tokenizer.unk_token_id
+                            # pheno_cur = self.text_tokenizer.unk_token
+                            pheno_idx = self.pheno_descs.index(self.text_tokenizer.unk_token)
                     # elif record[self.label_col] == 0 and self.mode == 'eval':
                     else:  # in inference, always infer phenotype but positive label not always available
                         infer_phenotype = True
@@ -321,13 +329,19 @@ class ProteinVariantDatset(Dataset):
                             sample_mask[pheno_idx] = True
                             pos_pheno_is_known = True
                         except ValueError:
-                            pheno_idx = self.text_tokenizer.unk_token_id
-                            pheno_cur = self.text_tokenizer.unk_token
+                            # pheno_idx = self.text_tokenizer.unk_token_id
+                            # pheno_cur = self.text_tokenizer.unk_token
+                            if not isinstance(pheno_cur, str):  # NA
+                                # infer_phenotype = False
+                                pheno_cur = self.text_tokenizer.unk_token
+                            pheno_idx = self.pheno_descs.index(self.text_tokenizer.unk_token)
                         
                         pos_pheno_idx[var_idx] = pheno_idx
                         pos_pheno_desc[var_idx] = pheno_cur
-                        if self.split in ['train', 'val'] and record[self.label_col] == 1:  # modified: now variants in testing set is not visible to each other
-                            context_var_idx.append(var_idx)  # context information for phenotype inference
+                        if record[self.label_col] == 1:
+                            new_context_var_idx.append(var_idx)
+                        # if self.split in ['train', 'val'] and record[self.label_col] == 1:  # modified: now variants in testing set is not visible to each other
+                        #     cache_context_var_idx.append(var_idx)  # context information for phenotype inference
                         
                     # else:
                     #     pheno_idx = self.text_tokenizer.unk_token_id
@@ -369,15 +383,27 @@ class ProteinVariantDatset(Dataset):
             cur_protein = {'seq': seq,
                            'seq_length': len(seq),
                            'prot_desc': prot_desc,
-                           'context_var_idx': context_var_idx,  
+                        #    'context_var_idx': cache_context_var_idx,  
                            'var_pheno_descs': pos_pheno_desc,
                            }
+            # if self.split == 'train':  # modified: variants in val and test not visible to each other for phenotype inference
+            if self.access_to_context:
+                cur_protein['context_var_idx'] = cache_context_var_idx + new_context_var_idx
+            else:
+                cur_protein['context_var_idx'] = cache_context_var_idx
+
             if self.use_structure:
                 cur_protein['comb_seq'] = comb_seq
 
             self.protein_variants[uprot] = cur_protein
             if self.update_var_cache:
-                self.prot_var_cache.update(self.protein_variants)
+                self.prot_var_cache[uprot] = {'seq': seq,
+                                              'seq_length': len(seq),
+                                              'prot_desc': prot_desc,
+                                              'context_var_idx': cache_context_var_idx + new_context_var_idx,  
+                                              'var_pheno_descs': pos_pheno_desc
+                                              }
+                # self.prot_var_cache.update(self.protein_variants)
 
     def encode_protein_seq(self, seq):
         aa_list = list(seq)
