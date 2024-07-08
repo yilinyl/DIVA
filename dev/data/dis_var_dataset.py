@@ -193,6 +193,7 @@ class ProteinVariantDatset(Dataset):
 
         self.has_phenotype_label = self.pheno_col in df_var.columns
 
+        cur_indice = 0
         for i, uprot in enumerate(prots_all):
             cur_protein = dict()
             # cur_protein['id'] = uprot
@@ -216,13 +217,14 @@ class ProteinVariantDatset(Dataset):
                             seq = prot_info['sequence']['value']
                             prot_desc_dict = prot_info['proteinDescription']
                             if 'recommendedName' in prot_desc_dict:
-                                prot_desc = prot_desc_dict['recommendedName']['fullName']['value']
+                                prot_name = prot_desc_dict['recommendedName']['fullName']['value']
                             elif 'submissionNames' in prot_desc_dict:
-                                prot_desc = prot_desc_dict['submissionNames'][0]['fullName']['value']
+                                prot_name = prot_desc_dict['submissionNames'][0]['fullName']['value']
                             else:
-                                prot_desc = self.text_tokenizer.unk_token
+                                prot_name = self.text_tokenizer.unk_token
 
-                            self.protein_info_dict[uprot] = prot_desc
+                            if uprot not in self.protein_info_dict:
+                                self.protein_info_dict[uprot] = prot_name
                         except KeyError:
                             logging.warning(f'{uprot} not found')
                             continue
@@ -235,7 +237,7 @@ class ProteinVariantDatset(Dataset):
                 else:
                     seq = self.seq_dict[uprot]
                     if self.use_protein_desc:
-                        prot_desc = self.protein_info_dict[uprot]
+                        prot_desc = self.protein_info_dict.get(uprot, self.text_tokenizer.unk_token)
             
             if self.use_structure and self.comb_seq_dict:
                 try:
@@ -278,8 +280,8 @@ class ProteinVariantDatset(Dataset):
                     logging.warning('Invalid variant position {} for protein {} with length {}'.format(record[pos_col], uprot, len(seq)))
                     continue
                 sample_mask = np.zeros(len(self.pheno_descs), dtype=bool)
-                var_idx = record[pos_col] - self.pos_offset
-                is_var[var_idx] = 1
+                var_pos_idx = record[pos_col] - self.pos_offset
+                is_var[var_pos_idx] = 1
                 if self.label_col in record:
                     labels.append(record[self.label_col])
                 
@@ -308,15 +310,15 @@ class ProteinVariantDatset(Dataset):
                                 # pheno_cur = self.text_tokenizer.unk_token
                                 pheno_idx = self.pheno_descs.index(self.text_tokenizer.unk_token)
                             
-                            pos_pheno_idx[var_idx] = pheno_idx
-                            pos_pheno_desc[var_idx] = pheno_cur
+                            pos_pheno_idx[var_pos_idx] = pheno_idx
+                            pos_pheno_desc[var_pos_idx] = pheno_cur
                             # if pos_pheno_desc[var_idx] != self.text_tokenizer.pad_token:
                             #     pos_pheno_update = set(pos_pheno_desc[var_idx].split(';')) - {self.text_tokenizer.pad_token, self.text_tokenizer.unk_token}
                             #     pos_pheno_desc[var_idx] = self.text_tokenizer.sep_token.join([pos_pheno_desc[var_idx]] + pheno_cur) 
 
                             # if self.split in ['train', 'val']:  # modified: now variants in testing set is not visible to each other
                             #     cache_context_var_idx.append(var_idx)  # context information for phenotype inference
-                            new_context_var_idx.append(var_idx)
+                            new_context_var_idx.append(var_pos_idx)
                         else:
                             # pheno_idx = self.text_tokenizer.unk_token_id
                             # pheno_cur = self.text_tokenizer.unk_token
@@ -336,10 +338,10 @@ class ProteinVariantDatset(Dataset):
                                 pheno_cur = self.text_tokenizer.unk_token
                             pheno_idx = self.pheno_descs.index(self.text_tokenizer.unk_token)
                         
-                        pos_pheno_idx[var_idx] = pheno_idx
-                        pos_pheno_desc[var_idx] = pheno_cur
+                        pos_pheno_idx[var_pos_idx] = pheno_idx
+                        pos_pheno_desc[var_pos_idx] = pheno_cur
                         if record[self.label_col] == 1:
-                            new_context_var_idx.append(var_idx)
+                            new_context_var_idx.append(var_pos_idx)
                         # if self.split in ['train', 'val'] and record[self.label_col] == 1:  # modified: now variants in testing set is not visible to each other
                         #     cache_context_var_idx.append(var_idx)  # context information for phenotype inference
                         
@@ -353,7 +355,7 @@ class ProteinVariantDatset(Dataset):
                 alt_aa_cur = record['ALT_AA']
 
                 if self.use_structure:
-                    ref_aa_cur = record['REF_AA'] + struct_seq[var_idx]
+                    ref_aa_cur = record['REF_AA'] + struct_seq[var_pos_idx]
                     alt_aa_cur = record['ALT_AA'] + '#'  # mask structure for variant
                 ref_aa.append(ref_aa_cur)
                 alt_aa.append(alt_aa_cur)
@@ -365,7 +367,8 @@ class ProteinVariantDatset(Dataset):
 
                 cur_variant = {'id': cur_var_name,
                                'uprot': uprot,
-                               'var_idx': var_idx,
+                               'indice': cur_indice,
+                               'var_idx': var_pos_idx,
                                'var_pos': record[pos_col],
                                'label': record[self.label_col],
                                'ref_aa': self.protein_tokenizer.convert_tokens_to_ids(ref_aa_cur),
@@ -379,6 +382,7 @@ class ProteinVariantDatset(Dataset):
                                }
                 
                 self.variant_data.append(cur_variant)
+                cur_indice += 1
             # seq_input_ids = self.encode_protein_seq(seq)
             cur_protein = {'seq': seq,
                            'seq_length': len(seq),
@@ -746,7 +750,8 @@ def protein_variant_collate_fn(
                 pos_pheno_idx_all.append(elem['pos_pheno_idx'])
             # neg_pheno_label_all.append(neg_pheno_descs)
             # phenos_in_frame_cur_full = [prot_desc] + phenos_in_frame_cur
-            context_info_joined = text_tokenizer.sep_token.join([prot_desc] + phenos_in_frame_cur)  # joined into single string
+            # context_info_joined = text_tokenizer.sep_token.join([prot_desc] + phenos_in_frame_cur)  # joined into single string
+            context_info_joined = text_tokenizer.sep_token.join(phenos_in_frame_cur)  # remove protein desc from context (treat separately)
             phenos_in_frame_all.append(context_info_joined)
             # phenos_in_frame_all.append([prot_desc] + phenos_in_frame_cur)
 
@@ -762,12 +767,13 @@ def protein_variant_collate_fn(
             # max_pheno_length = max(max_pheno_length, phenos_input_ids_cur.shape[-1])
             # phenos_in_frame_input_ids.append(phenos_input_ids_cur) 
     if use_prot_desc:
-            desc_lst = [protein_data[pid]['prot_desc'] for pid in prot_unique]
-            batch_desc_tokenized = text_tokenizer(desc_lst, padding=True, return_tensors='pt')
-            # max_desc_length = batch_desc_tokenized['input_ids'].shape[-1]
+        desc_lst = [protein_data[pid]['prot_desc'] for pid in prot_unique]
+        batch_desc_tokenized = text_tokenizer(desc_lst, padding=True, return_tensors='pt', truncation=True, max_length=max_pheno_desc_length)
+        # max_desc_length = batch_desc_tokenized['input_ids'].shape[-1]
 
     if sum(infer_pheno_vec) == 0:
         variant_dict = {
+            'indices': [elem['indice'] for elem in batch_data_raw],  # indice in dataset (in original order without shuffling)
             'var_pos': [elem['var_pos'] for elem in batch_data_raw],
             'var_idx': var_idx_all,
             'var_names': var_names_all,
@@ -797,6 +803,7 @@ def protein_variant_collate_fn(
         # batch_pheno_input_ids = torch.stack(pheno_input_ids_padded)  # n_variants, max_phenos_in_frame + 1, max_pheno_length
         batch_pheno_attenton_mask = (batch_pheno_input_ids != text_tokenizer.pad_token_id).long()
         variant_dict = {
+            'indices': [elem['indice'] for elem in batch_data_raw], 
             'var_pos': [elem['var_pos'] for elem in batch_data_raw],
             'var_idx': var_idx_all,
             'var_names': var_names_all,

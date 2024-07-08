@@ -161,36 +161,38 @@ class DiseaseVariantEncoder(nn.Module):
 
         self.max_vars_per_batch = max_vars_per_batch
 
-        self.seq_pheno_comb = nn.Linear(self.seq_emb_dim + self.text_emb_dim, self.hidden_size)
+        self.seq_pheno_comb = nn.Linear(self.seq_emb_dim + self.text_emb_dim * 2, self.hidden_size) # concatenated embedding of alt_seq, prot_desc, context_pheno
 
         self.proj_head = nn.Linear(self.text_emb_dim, self.hidden_size)
 
+        self.patho_output_layer = nn.Linear(self.seq_emb_dim + self.text_emb_dim, 2)  # use concatenated embedding of alt_seq and prot_desc
         self.dist_fn = _dist_fn_map[dist_fn_name]
         # self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)
-        self.patho_loss_fn = nn.BCEWithLogitsLoss()
+        # self.patho_loss_fn = nn.BCEWithLogitsLoss()
+        self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)  # for softmax
         # self.desc_loss_fn = nn.CosineEmbeddingLoss()
         # self.cos_sim_loss_fn = nn.CosineEmbeddingLoss()
         self.contrast_loss_fn = nn.TripletMarginWithDistanceLoss(distance_function=self.dist_fn, margin=init_margin)
     
 
-    def forward(self, seq_input_feat, variant_data, desc_input_feat=None):
+    # def forward(self, seq_input_feat, variant_data, desc_input_feat=None):
         
-        # seq_embs, mlm_logits, _ = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
-        mlm_logits, logit_diff = self.binary_step(seq_input_feat, variant_data, desc_input_feat)
+    #     # seq_embs, mlm_logits, _ = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
+    #     # mlm_logits, logit_diff = self.binary_step(seq_input_feat, variant_data, desc_input_feat)
         
-        if variant_data['infer_phenotype']:
-            # n_pheno_vars = len(variant_data['patho_var_prot_idx'])
-            seq_pheno_emb, pos_emb_proj, neg_emb_proj = self.contrastive_step(seq_input_feat, variant_data)
+    #     if variant_data['infer_phenotype']:
+    #         # n_pheno_vars = len(variant_data['patho_var_prot_idx'])
+    #         seq_pheno_emb, pos_emb_proj, neg_emb_proj = self.contrastive_step(seq_input_feat, variant_data, desc_input_feat)
         
-        else:  # no valid phenotype label in the batch, skip phenotype inference
-            seq_pheno_emb = None
-            pos_emb_proj = None
-            neg_emb_proj = None
+    #     else:  # no valid phenotype label in the batch, skip phenotype inference
+    #         seq_pheno_emb = None
+    #         pos_emb_proj = None
+    #         neg_emb_proj = None
 
-        # var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
-        # logit_diff = self.log_diff_patho_score(mlm_logits[var_indices], variant_data['ref_aa'], variant_data['alt_aa'])
-
-        return seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff
+    #     # var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
+    #     # logit_diff = self.log_diff_patho_score(mlm_logits[var_indices], variant_data['ref_aa'], variant_data['alt_aa'])
+    #     return seq_pheno_emb, pos_emb_proj, neg_emb_proj
+        # return seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff
     
 
     def binary_step(self, seq_input_feat, variant_data, desc_input_feat=None):
@@ -202,8 +204,39 @@ class DiseaseVariantEncoder(nn.Module):
         return mlm_logits, logit_diff
 
 
-    def contrastive_step(self, seq_input_feat, variant_data):
+    # def contrastive_step(self, seq_input_feat, variant_data, desc_input_feat):
+    def forward(self, seq_input_feat, variant_data, desc_input_feat):
+        # protein desc embedding for all variants in batch
+        # var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
+        prot_desc_emb = self.text_encoder(
+            desc_input_feat['input_ids'],
+            attention_mask=desc_input_feat['attention_mask'],
+            token_type_ids=torch.zeros(desc_input_feat['input_ids'].size(), dtype=torch.long, device=self.device),
+            output_attentions=False,
+            output_hidden_states=True,
+            return_dict=None
+        ).hidden_states[-1]
+
+        # Pathogenicity prediction
+        desc_emb_agg = torch.stack([prot_desc_emb[i, desc_input_feat['attention_mask'][i, :].bool(), :][0] for i in range(prot_desc_emb.size(0))], dim=0)
+        # use altnerated sequence for phenotype inference
+        # alt_seq_input_feat = {
+        #     'input_ids': variant_data['var_seq_input_ids'][variant_data['infer_pheno_vec'].bool()],
+        #     'attention_mask': seq_input_feat['attention_mask'][variant_data['patho_var_prot_idx']]
+        # }
+        alt_seq_input_feat = {  # All ALT seq
+            'input_ids': variant_data['var_seq_input_ids'],
+            'attention_mask': seq_input_feat['attention_mask'][variant_data['prot_idx']]
+        }
+        alt_seq_embs = self.protein_encoder.embed_protein_seq(alt_seq_input_feat)
+        seq_var_embs = torch.stack([alt_seq_embs[i, alt_seq_input_feat['attention_mask'][i, :].bool(), :][0] for i in range(alt_seq_embs.size(0))], dim=0)
+        var_func_embs = torch.cat([seq_var_embs, desc_emb_agg[variant_data['prot_idx']]], dim=-1)  # concatenate alt-seq embedding & prot-desc embedding
+        var_patho_logits = self.patho_output_layer(var_func_embs)
+
         n_pheno_vars = variant_data['infer_pheno_vec'].sum().item()
+        if n_pheno_vars == 0:  # Pathogenicity 
+            return var_patho_logits, None, None, None
+    
         max_text_length = self.text_encoder.config.max_position_embeddings
         # pheno_input_ids = variant_data['context_pheno_input_ids'].view(n_pheno_vars, -1)
         # pheno_attn_mask = variant_data['context_pheno_attention_mask'].view(n_pheno_vars, -1)
@@ -226,6 +259,7 @@ class DiseaseVariantEncoder(nn.Module):
             return_dict=None
         ).hidden_states[-1]
         
+
         if 'pos_pheno_input_ids' in variant_data:  # positive phenotype label available
             compute_pos = True
             pos_pheno_embs = self.text_encoder(
@@ -248,17 +282,12 @@ class DiseaseVariantEncoder(nn.Module):
                 return_dict=None
             ).hidden_states[-1]  # n_var, max_neg_pheno_length, pheno_emb_dim
         
-        # use altnerated sequence for phenotype inference
-        alt_seq_input_feat = {
-            'input_ids': variant_data['var_seq_input_ids'][variant_data['infer_pheno_vec'].bool()],
-            'attention_mask': seq_input_feat['attention_mask'][variant_data['patho_var_prot_idx']]
-        }
-        alt_seq_embs = self.protein_encoder.embed_protein_seq(alt_seq_input_feat)
         # Update: use embedding corresponding to [CLS] token instead of average as sequence-level embedding 
-        seq_var_embs = torch.stack([alt_seq_embs[i, alt_seq_input_feat['attention_mask'][i, :].bool(), :][0] for i in range(n_pheno_vars)], dim=0)
+        
         variant_pheno_emb = torch.stack([variant_pheno_emb[i, pheno_attn_mask[i, :].bool(), :][0] for i in range(n_pheno_vars)], dim=0)
         # seq_var_embs = seq_embs[(variant_data['prot_idx'], variant_data['var_idx'])]  # extract embedding for target position
-        seq_pheno_emb_raw = torch.cat([seq_var_embs, variant_pheno_emb], dim=-1)  # n_var, (seq_emb_dim + pheno_emb_dim)
+        # seq_pheno_emb_raw = torch.cat([seq_var_embs, variant_pheno_emb], dim=-1)  # n_var, (seq_emb_dim + pheno_emb_dim)
+        seq_pheno_emb_raw = torch.cat([var_func_embs[variant_data['infer_pheno_vec'].bool()], variant_pheno_emb], dim=-1)   # n_var, (seq_emb_dim + desc_emb_dim + pheno_emb_dim)
         seq_pheno_emb = self.seq_pheno_comb(seq_pheno_emb_raw)  # n_var, hidden_size
 
         if compute_pos:
@@ -273,7 +302,7 @@ class DiseaseVariantEncoder(nn.Module):
         else:
             neg_emb_proj = None
 
-        return seq_pheno_emb, pos_emb_proj, neg_emb_proj
+        return var_patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj
 
     
     def get_pheno_emb(self, pheno_input_dict, proj=True, agg_opt='mean'):

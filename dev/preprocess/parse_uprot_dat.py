@@ -15,7 +15,7 @@ def parse_uniprot_dat(file_path):
         current_entry = {}
         function_lines = []
         inside_function = False
-
+        current_entry['AC'] = []
         for line in f:
             line = line.rstrip()
 
@@ -31,6 +31,7 @@ def parse_uniprot_dat(file_path):
                 yield current_entry
 
                 current_entry = {}
+                current_entry['AC'] = []
                 function_lines = []
                 inside_function = False
 
@@ -42,7 +43,7 @@ def parse_uniprot_dat(file_path):
                 current_entry['length'] = info[3]
 
             elif line.startswith('AC'):
-                current_entry['AC'] = [pid.strip(';') for pid in line.split()[1:]]
+                current_entry['AC'].extend([pid.strip(';') for pid in line.split()[1:]])
 
             elif line.startswith('DE'):
                 # if 'Name' not in current_entry:
