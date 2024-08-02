@@ -140,6 +140,7 @@ class DiseaseVariantEncoder(nn.Module):
                  max_vars_per_batch=32,
                  dist_fn_name='cosine_sigmoid',
                  init_margin=1,
+                 freq_norm_factor=None,
                  device='cpu',
                  **kwargs):
         super(DiseaseVariantEncoder, self).__init__()
@@ -158,6 +159,7 @@ class DiseaseVariantEncoder(nn.Module):
         self.seq_emb_dim = self.seq_encoder.config.hidden_size
         self.text_emb_dim = self.text_encoder.config.hidden_size
         self.hidden_size = hidden_size
+        self.freq_norm_factor = freq_norm_factor
 
         self.max_vars_per_batch = max_vars_per_batch
 
@@ -242,7 +244,9 @@ class DiseaseVariantEncoder(nn.Module):
         # pheno_attn_mask = variant_data['context_pheno_attention_mask'].view(n_pheno_vars, -1)
         pheno_input_ids = variant_data['context_pheno_input_ids']
         pheno_attn_mask = variant_data['context_pheno_attention_mask']
-        assert pheno_input_ids.shape[0] == n_pheno_vars
+        pheno_indices = variant_data['context_pheno_indices']
+        n_uniq_phenos = pheno_input_ids.shape[0]
+        # assert pheno_input_ids.shape[0] == n_pheno_vars
 
         compute_pos = False
         compute_neg = False
@@ -282,9 +286,23 @@ class DiseaseVariantEncoder(nn.Module):
                 return_dict=None
             ).hidden_states[-1]  # n_var, max_neg_pheno_length, pheno_emb_dim
         
+        variant_pheno_emb = torch.stack([variant_pheno_emb[i, pheno_attn_mask[i, :].bool(), :][0] for i in range(n_uniq_phenos)], dim=0)
+        pheno_var_indices = torch.unique(pheno_indices)
+        emb_agg_lst = []
+        for var_idx in pheno_var_indices:
+            cur_var_indices = pheno_indices == var_idx
+            if cur_var_indices.sum() == 1:
+                emb_agg_lst.append(variant_pheno_emb[cur_var_indices])
+            else:
+                cur_counts = variant_data['context_pheno_counts'][cur_var_indices]
+                if not self.freq_norm_factor:  # relative frequency
+                    emb_agg_lst.append((variant_pheno_emb[cur_var_indices] * cur_counts.unsqueeze(1) / cur_counts.sum()).sum(0).unsqueeze(0))
+                else:  # absolute frequency (with normalization factor)
+                    emb_agg_lst.append((variant_pheno_emb[cur_var_indices] * cur_counts.unsqueeze(1) / self.freq_norm_factor).sum(0).unsqueeze(0))
+        variant_pheno_emb = torch.concat(emb_agg_lst, dim=0)
         # Update: use embedding corresponding to [CLS] token instead of average as sequence-level embedding 
         
-        variant_pheno_emb = torch.stack([variant_pheno_emb[i, pheno_attn_mask[i, :].bool(), :][0] for i in range(n_pheno_vars)], dim=0)
+        # variant_pheno_emb = torch.stack([variant_pheno_emb[i, pheno_attn_mask[i, :].bool(), :][0] for i in range(n_pheno_vars)], dim=0)
         # seq_var_embs = seq_embs[(variant_data['prot_idx'], variant_data['var_idx'])]  # extract embedding for target position
         # seq_pheno_emb_raw = torch.cat([seq_var_embs, variant_pheno_emb], dim=-1)  # n_var, (seq_emb_dim + pheno_emb_dim)
         seq_pheno_emb_raw = torch.cat([var_func_embs[variant_data['infer_pheno_vec'].bool()], variant_pheno_emb], dim=-1)   # n_var, (seq_emb_dim + desc_emb_dim + pheno_emb_dim)
