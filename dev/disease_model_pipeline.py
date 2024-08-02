@@ -23,6 +23,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from transformers import AutoModel, AutoTokenizer, BertTokenizer, BertModel, BertForMaskedLM, EsmForMaskedLM, AutoModelForMaskedLM
 from transformers.models.bert.modeling_bert import BertOnlyMLMHead
+from peft import LoraModel, LoraConfig
 
 from data.dis_var_dataset import ProteinVariantDatset, ProteinVariantDataCollator, PhenotypeDataset, TextDataCollator
 import logging
@@ -125,7 +126,7 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5,
         # TODO: parse phenotype information
         # seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data)  # seq_pheno_emb: (batch_size, hidden_size)
         patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj = model(seq_feat_dict, variant_data, desc_feat_dict)  # seq_pheno_emb: (batch_size, hidden_size)
-        patho_loss = model.patho_loss_fn(patho_logits, batch_labels.squeeze())
+        patho_loss = model.patho_loss_fn(patho_logits, batch_labels.squeeze(-1))
         # shapes = batch_logits.size()
         # batch_logits = batch_logits.view(shapes[0]*shapes[1])
 
@@ -187,7 +188,7 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
 
             # seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data, desc_feat_dict)
             patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj = model(seq_feat_dict, variant_data, desc_feat_dict)  # seq_pheno_emb: (batch_size, hidden_size)
-            patho_loss = model.patho_loss_fn(patho_logits, batch_labels.squeeze())
+            patho_loss = model.patho_loss_fn(patho_logits, batch_labels.squeeze(-1))
             
             # patho_loss = model.pathogenicity_loss(logit_diff, batch_labels)
             # patho_loss = model.patho_loss_fn(logit_diff, batch_labels.float())
@@ -208,8 +209,10 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
             n_pheno_sample += cur_pheno_size
             # batch_patho_scores = torch.sigmoid(logit_diff)
             batch_patho_scores = torch.softmax(patho_logits, 1)[:, 1]
+            if batch_patho_scores.ndim > 1:
+                batch_patho_scores = batch_patho_scores.squeeze(-1)
 
-            all_scores.append(batch_patho_scores.squeeze(-1).detach().cpu().numpy())
+            all_scores.append(batch_patho_scores.detach().cpu().numpy())
             all_vars.extend(batch_data['variant']['var_names'])
             all_labels.append(batch_labels.squeeze(1).detach().cpu().numpy())
 
@@ -349,11 +352,11 @@ def embed_phenotypes(model, device, pheno_loader):
             all_pheno_embs.append(pheno_embs.detach().cpu().numpy())
     
         all_pheno_embs = np.concatenate(all_pheno_embs, 0)
-        all_pheno_embs = torch.tensor(all_pheno_embs, device='cpu')
+        # all_pheno_embs = torch.tensor(all_pheno_embs, device='cpu')
         # pheno_sims = torch.cosine_similarity(all_pheno_embs, all_pheno_embs)
-        pheno_sims = torch.cosine_similarity(all_pheno_embs.unsqueeze(1), all_pheno_embs.unsqueeze(0), dim=-1)
+        # pheno_sims = torch.cosine_similarity(all_pheno_embs.unsqueeze(1), all_pheno_embs.unsqueeze(0), dim=-1)
     
-    return all_pheno_embs, pheno_sims
+    return all_pheno_embs
 
 
 def main():
@@ -487,20 +490,31 @@ def main():
     text_encoder = BertForMaskedLM.from_pretrained(model_args['text_lm_path'])
 
     train_collator = ProteinVariantDataCollator(train_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
-                                                use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'],
-                                                use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict, use_structure=data_configs['use_structure'])
+                                                use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'], half_window_size=data_configs['half_window_size'],
+                                                context_agg_opt=data_configs['context_agg_option'], use_pheno_desc=data_configs['use_pheno_desc'], 
+                                                pheno_desc_dict=pheno_desc_dict, use_structure=data_configs['use_structure'])
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], collate_fn=train_collator, shuffle=True)
     val_collator = ProteinVariantDataCollator(val_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
-                                              use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'],
-                                              use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict, use_structure=data_configs['use_structure'])
+                                              use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'], half_window_size=data_configs['half_window_size'],
+                                              context_agg_opt=data_configs['context_agg_option'], use_pheno_desc=data_configs['use_pheno_desc'], 
+                                              pheno_desc_dict=pheno_desc_dict, use_structure=data_configs['use_structure'])
     validation_loader = DataLoader(val_dataset, batch_size=config['batch_size'], collate_fn=val_collator)
     test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
-                                               use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'],
-                                               use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict, use_structure=data_configs['use_structure'])
+                                               use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'], half_window_size=data_configs['half_window_size'],
+                                               context_agg_opt=data_configs['context_agg_option'], use_pheno_desc=data_configs['use_pheno_desc'], 
+                                               pheno_desc_dict=pheno_desc_dict, use_structure=data_configs['use_structure'])
     test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
 
-    unfreeze_params = []
+    if config['use_adapter']:
+        model_args['frozen_bert'] = False
+        lora_config = LoraConfig(r=4, 
+                                 lora_alpha=16, 
+                                 target_modules=config['adapter_targets'], 
+                                 lora_dropout=0.1)
+        seq_encoder = LoraModel(seq_encoder, lora_config, 'default')
+        text_encoder = LoraModel(text_encoder, lora_config, 'default')
 
+    unfreeze_params = []
     if model_args['frozen_bert']:
         # prot_unfreeze_layers = ['esm.encoder.layer.11']
         for name, parameters in seq_encoder.named_parameters():
@@ -530,6 +544,7 @@ def main():
                                   pad_label_idx=-100,
                                   dist_fn_name=model_args['dist_fn_name'],
                                   init_margin=model_args['margin'],
+                                  freq_norm_factor=model_args['freq_norm_factor'],
                                   device=device)
     total_param = 0
     total_param_with_grad = 0
@@ -595,8 +610,9 @@ def main():
         logging.info('Epoch %d' % epoch)
         train_patho_loss, train_pheno_loss, train_loss, optimizer = train_epoch(model, optimizer, device, train_loader, w_l=model_args['w_l'], opt_patho=train_pathogenicity)
         # train_patho_loss, train_pheno_loss, train_loss, optimizer, contrast_optimizer = train_epoch_sep(model, optimizer, contrast_optimizer, device, train_loader, w_l=model_args['w_l'])
-        all_pheno_embs, pheno_sims = embed_phenotypes(model, device, phenotype_loader)
-        all_pheno_embs = all_pheno_embs.to(device)
+        all_pheno_embs = embed_phenotypes(model, device, phenotype_loader)
+        # all_pheno_embs = all_pheno_embs.to(device)
+        all_pheno_embs = torch.tensor(all_pheno_embs).to(device)
         train_patho_loss, train_pheno_loss, train_loss, train_labels, \
             train_scores, train_vars, train_pheno_results = eval_epoch(model, device, train_loader, pheno_vocab_emb=all_pheno_embs, w_l=model_args['w_l'])
         train_aupr = compute_aupr(train_labels, train_scores)
