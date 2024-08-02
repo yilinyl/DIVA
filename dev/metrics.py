@@ -1,5 +1,6 @@
 import numpy as np
 from sklearn.metrics import roc_curve, auc, matthews_corrcoef, precision_recall_curve, accuracy_score, top_k_accuracy_score
+from sklearn.manifold import TSNE
 
 
 def compute_roc(labels, preds):
@@ -106,3 +107,12 @@ def micro_score(labels, preds):
     else:
         MiF = 2 * MiP * MiR / (MiP + MiR)
     return MiF, MiP, MiR, total_P / N, total_R / N
+
+
+def compute_tsne(embs, pos_idx=None, n_comp=2, rand_state=2024):
+    if pos_idx == None:
+        emb_tsne = TSNE(n_components=n_comp, random_state=rand_state).fit_transform(embs)
+    else:
+        emb_tsne = TSNE(n_components=n_comp, random_state=rand_state).fit_transform(embs[pos_idx, :])
+    
+    return emb_tsne
