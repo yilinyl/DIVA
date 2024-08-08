@@ -4,6 +4,7 @@ import json
 import torch
 import random
 import numpy as np
+import dgl
 from datetime import datetime
 from pathlib import Path
 import logging
@@ -96,7 +97,7 @@ def load_input_to_device(input_data, device, exclude_keys=None):
         exclude_keys = []
     if isinstance(input_data, dict):
         for k, v in input_data.items():
-            if k not in exclude_keys and isinstance(v, torch.Tensor):
+            if k not in exclude_keys and isinstance(v, (torch.Tensor, dgl.DGLGraph)):
                 input_data[k] = v.to(device)
     
     return input_data

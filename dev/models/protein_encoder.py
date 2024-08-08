@@ -9,13 +9,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import MultiheadAttention
-from torch.utils.data import DataLoader, Dataset
 from transformers import BertModel, BertTokenizer
 from transformers import PreTrainedTokenizerBase, PreTrainedModel
 import pandas as pd
-
-from dev.utils import load_input_to_device
-
+import dgl
+from dgl.nn.pytorch import GATConv
 
 class ProteinEncoder(nn.Module):
     def __init__(self, 
@@ -137,6 +135,7 @@ class DiseaseVariantEncoder(nn.Module):
                  use_desc=True,
                  pad_label_idx=-100,
                  num_heads=4,
+                 n_gnn_layers=2,
                  max_vars_per_batch=32,
                  dist_fn_name='cosine_sigmoid',
                  init_margin=1,
@@ -168,13 +167,32 @@ class DiseaseVariantEncoder(nn.Module):
         self.proj_head = nn.Linear(self.text_emb_dim, self.hidden_size)
 
         self.patho_output_layer = nn.Linear(self.seq_emb_dim + self.text_emb_dim, 2)  # use concatenated embedding of alt_seq and prot_desc
+        self.n_gnn_layers = n_gnn_layers
+        self.gnn_layers = nn.ModuleList()
+        if isinstance(num_heads, int):
+            num_heads = [num_heads] * n_gnn_layers
+        # num_heads[-1] = 1
+        gnn_in_dim = self.text_emb_dim
+        gnn_out_dim = self.hidden_size
+        for l in range(n_gnn_layers):
+            if l < n_gnn_layers - 1:
+                act_fn = F.elu
+            else:
+                act_fn = None
+            self.gnn_layers.append(GATConv(gnn_in_dim, 
+                                           gnn_out_dim, 
+                                           num_heads[l],
+                                           activation=act_fn))
+            gnn_in_dim = gnn_out_dim * num_heads[l]
+        
+        self.alpha = nn.Parameter(torch.tensor(0.5))
         self.dist_fn = _dist_fn_map[dist_fn_name]
         # self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)
         # self.patho_loss_fn = nn.BCEWithLogitsLoss()
         self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)  # for softmax
         # self.desc_loss_fn = nn.CosineEmbeddingLoss()
         # self.cos_sim_loss_fn = nn.CosineEmbeddingLoss()
-        self.contrast_loss_fn = nn.TripletMarginWithDistanceLoss(distance_function=self.dist_fn, margin=init_margin)
+        self.contrast_loss_fn = nn.TripletMarginWithDistanceLoss(distance_function=self.dist_fn, margin=init_margin, reduction='none')
     
 
     # def forward(self, seq_input_feat, variant_data, desc_input_feat=None):
@@ -205,6 +223,16 @@ class DiseaseVariantEncoder(nn.Module):
 
         return mlm_logits, logit_diff
 
+    def gnn_message_passing(self, graph, nfeats, efeats):
+        h = nfeats
+        for i, gnn_conv in enumerate(self.gnn_layers):
+            h = gnn_conv(graph, h, efeats)  # n_nodes, num_heads, hidden_size
+            if i < self.n_gnn_layers - 1:
+                h = h.flatten(1)
+            else:
+                h = h.mean(1)
+
+        return h      
 
     # def contrastive_step(self, seq_input_feat, variant_data, desc_input_feat):
     def forward(self, seq_input_feat, variant_data, desc_input_feat):
@@ -231,13 +259,13 @@ class DiseaseVariantEncoder(nn.Module):
             'attention_mask': seq_input_feat['attention_mask'][variant_data['prot_idx']]
         }
         alt_seq_embs = self.protein_encoder.embed_protein_seq(alt_seq_input_feat)
-        seq_var_embs = torch.stack([alt_seq_embs[i, alt_seq_input_feat['attention_mask'][i, :].bool(), :][0] for i in range(alt_seq_embs.size(0))], dim=0)
-        var_func_embs = torch.cat([seq_var_embs, desc_emb_agg[variant_data['prot_idx']]], dim=-1)  # concatenate alt-seq embedding & prot-desc embedding
-        var_patho_logits = self.patho_output_layer(var_func_embs)
+        alt_seq_embs = torch.stack([alt_seq_embs[i, alt_seq_input_feat['attention_mask'][i, :].bool(), :][0] for i in range(alt_seq_embs.size(0))], dim=0)
+        alt_seq_func_embs = torch.cat([alt_seq_embs, desc_emb_agg[variant_data['prot_idx']]], dim=-1)  # concatenate alt-seq embedding & prot-desc embedding
+        var_patho_logits = self.patho_output_layer(alt_seq_func_embs)
 
         n_pheno_vars = variant_data['infer_pheno_vec'].sum().item()
         if n_pheno_vars == 0:  # Pathogenicity 
-            return var_patho_logits, None, None, None
+            return var_patho_logits, None, None, None, None
     
         max_text_length = self.text_encoder.config.max_position_embeddings
         # pheno_input_ids = variant_data['context_pheno_input_ids'].view(n_pheno_vars, -1)
@@ -254,7 +282,7 @@ class DiseaseVariantEncoder(nn.Module):
             pheno_input_ids = pheno_input_ids[:, :max_text_length]
             pheno_attn_mask = pheno_attn_mask[:, :max_text_length]
         
-        variant_pheno_emb = self.text_encoder(
+        seq_context_pheno_emb_raw = self.text_encoder(
             pheno_input_ids,
             attention_mask=pheno_attn_mask,
             token_type_ids=torch.zeros(pheno_input_ids.size(), dtype=torch.long, device=self.device),
@@ -286,27 +314,50 @@ class DiseaseVariantEncoder(nn.Module):
                 return_dict=None
             ).hidden_states[-1]  # n_var, max_neg_pheno_length, pheno_emb_dim
         
-        variant_pheno_emb = torch.stack([variant_pheno_emb[i, pheno_attn_mask[i, :].bool(), :][0] for i in range(n_uniq_phenos)], dim=0)
+        seq_context_pheno_emb_raw = torch.stack([seq_context_pheno_emb_raw[i, pheno_attn_mask[i, :].bool(), :][0] for i in range(n_uniq_phenos)], dim=0)
         pheno_var_indices = torch.unique(pheno_indices)
         emb_agg_lst = []
         for var_idx in pheno_var_indices:
             cur_var_indices = pheno_indices == var_idx
             if cur_var_indices.sum() == 1:
-                emb_agg_lst.append(variant_pheno_emb[cur_var_indices])
+                emb_agg_lst.append(seq_context_pheno_emb_raw[cur_var_indices])
             else:
                 cur_counts = variant_data['context_pheno_counts'][cur_var_indices]
                 if not self.freq_norm_factor:  # relative frequency
-                    emb_agg_lst.append((variant_pheno_emb[cur_var_indices] * cur_counts.unsqueeze(1) / cur_counts.sum()).sum(0).unsqueeze(0))
+                    emb_agg_lst.append((seq_context_pheno_emb_raw[cur_var_indices] * cur_counts.unsqueeze(1) / cur_counts.sum()).sum(0).unsqueeze(0))
                 else:  # absolute frequency (with normalization factor)
-                    emb_agg_lst.append((variant_pheno_emb[cur_var_indices] * cur_counts.unsqueeze(1) / self.freq_norm_factor).sum(0).unsqueeze(0))
-        variant_pheno_emb = torch.concat(emb_agg_lst, dim=0)
+                    emb_agg_lst.append((seq_context_pheno_emb_raw[cur_var_indices] * cur_counts.unsqueeze(1) / self.freq_norm_factor).sum(0).unsqueeze(0))
+        seq_context_pheno_emb_raw = torch.concat(emb_agg_lst, dim=0)
         # Update: use embedding corresponding to [CLS] token instead of average as sequence-level embedding 
         
         # variant_pheno_emb = torch.stack([variant_pheno_emb[i, pheno_attn_mask[i, :].bool(), :][0] for i in range(n_pheno_vars)], dim=0)
         # seq_var_embs = seq_embs[(variant_data['prot_idx'], variant_data['var_idx'])]  # extract embedding for target position
         # seq_pheno_emb_raw = torch.cat([seq_var_embs, variant_pheno_emb], dim=-1)  # n_var, (seq_emb_dim + pheno_emb_dim)
-        seq_pheno_emb_raw = torch.cat([var_func_embs[variant_data['infer_pheno_vec'].bool()], variant_pheno_emb], dim=-1)   # n_var, (seq_emb_dim + desc_emb_dim + pheno_emb_dim)
+        seq_pheno_emb_raw = torch.cat([alt_seq_func_embs[variant_data['infer_pheno_vec'].bool()], seq_context_pheno_emb_raw], dim=-1)   # n_var, (seq_emb_dim + desc_emb_dim + pheno_emb_dim)
         seq_pheno_emb = self.seq_pheno_comb(seq_pheno_emb_raw)  # n_var, hidden_size
+
+        # structural context
+        struct_pheno_emb = None
+        # combined_pheno_emb = seq_pheno_emb
+        if variant_data['use_struct']:
+            struct_pheno_input_ids = variant_data['struct_pheno_input_ids']
+            struct_pheno_attention_mask = variant_data['struct_pheno_attention_mask']
+            struct_context_pheno_emb_raw = self.text_encoder(
+                struct_pheno_input_ids,
+                attention_mask=struct_pheno_attention_mask,
+                token_type_ids=torch.zeros(struct_pheno_input_ids.size(), dtype=torch.long, device=self.device),
+                output_attentions=False,
+                output_hidden_states=True,
+                return_dict=None
+            ).hidden_states[-1]
+            struct_context_pheno_emb = torch.stack([struct_context_pheno_emb_raw[i, struct_pheno_attention_mask[i, :].bool(), :][0] for i in range(struct_context_pheno_emb_raw.size(0))], dim=0)
+
+            g_struct = variant_data['var_struct_graph']
+            g_struct.ndata['pheno_emb'] = struct_context_pheno_emb[g_struct.ndata['indice']]
+            g_struct.ndata['pheno_emb'] = self.gnn_message_passing(g_struct, g_struct.ndata['pheno_emb'], g_struct.edata['distance'])
+            struct_pheno_emb = g_struct.ndata['pheno_emb'][g_struct.ndata['mask'].bool()]
+            # struct_mask = variant_data['has_struct_context']
+            # combined_pheno_emb[struct_mask] = self.alpha * combined_pheno_emb[struct_mask] + (1 - self.alpha) * struct_pheno_emb
 
         if compute_pos:
             pos_pheno_embs = torch.stack([pos_pheno_embs[i, variant_data['pos_pheno_attention_mask'][i, :].bool()][0] for i in range(n_pheno_vars)], dim=0)
@@ -320,7 +371,7 @@ class DiseaseVariantEncoder(nn.Module):
         else:
             neg_emb_proj = None
 
-        return var_patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj
+        return var_patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb
 
     
     def get_pheno_emb(self, pheno_input_dict, proj=True, agg_opt='mean'):
@@ -344,13 +395,16 @@ class DiseaseVariantEncoder(nn.Module):
                     
         return pheno_embs
 
-    def contrast_loss(self, var_emb, pos_emb, neg_emb):
-        # pos_emb_dist = (var_emb - pos_emb).norm(p, dim=-1)
-        # neg_emb_dist = (var_emb - neg_emb).norm(p, dim=-1)
-        return self.contrast_loss_fn(var_emb, pos_emb, neg_emb)
-        # targets = [torch.tensor([1], device=self.device, dtype=torch.long), 
-        #           torch.tensor([-1], device=self.device, dtype=torch.long)]
+    def contrast_loss(self, seq_var_emb, pos_emb, neg_emb, struct_var_emb=None, struct_mask=None):
+        seq_contrast_loss = self.contrast_loss_fn(seq_var_emb, pos_emb, neg_emb)
+        if isinstance(struct_var_emb, type(None)):
+            return seq_contrast_loss.mean(), None, seq_contrast_loss.mean()
+        struct_contrast_loss = self.contrast_loss_fn(struct_var_emb, pos_emb[struct_mask], neg_emb[struct_mask])
+        combine_contrast_loss = seq_contrast_loss.clone()
+        combine_contrast_loss[struct_mask] = self.alpha * combine_contrast_loss[struct_mask] + (1 - self.alpha) * struct_contrast_loss
         
+        return seq_contrast_loss.mean(), struct_contrast_loss.mean(), combine_contrast_loss.mean()
+
         # return self.cos_sim_loss_fn(var_emb, pos_emb, targets[0]) + \
         #     self.cos_sim_loss_fn(var_emb, neg_emb, targets[1])
 
