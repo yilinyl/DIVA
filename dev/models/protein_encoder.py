@@ -186,6 +186,8 @@ class DiseaseVariantEncoder(nn.Module):
             gnn_in_dim = gnn_out_dim * num_heads[l]
         
         self.alpha = nn.Parameter(torch.tensor(-1e-3))
+        self.struct_pheno_comb = nn.Linear(self.seq_emb_dim + gnn_out_dim + self.text_emb_dim, self.hidden_size) # concatenated embedding of alt_seq, prot_desc, struct_context_pheno
+
         self.dist_fn = _dist_fn_map[dist_fn_name]
         # self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)
         # self.patho_loss_fn = nn.BCEWithLogitsLoss()
@@ -350,12 +352,15 @@ class DiseaseVariantEncoder(nn.Module):
                 output_hidden_states=True,
                 return_dict=None
             ).hidden_states[-1]
-            struct_context_pheno_emb = torch.stack([struct_context_pheno_emb_raw[i, struct_pheno_attention_mask[i, :].bool(), :][0] for i in range(struct_context_pheno_emb_raw.size(0))], dim=0)
+            struct_context_pheno_emb_agg = torch.stack([struct_context_pheno_emb_raw[i, struct_pheno_attention_mask[i, :].bool(), :][0] for i in range(struct_context_pheno_emb_raw.size(0))], dim=0)
 
             g_struct = variant_data['var_struct_graph']
-            g_struct.ndata['pheno_emb'] = struct_context_pheno_emb[g_struct.ndata['indice']]
+            g_struct.ndata['pheno_emb'] = struct_context_pheno_emb_agg[g_struct.ndata['indice']]
             g_struct.ndata['pheno_emb'] = self.gnn_message_passing(g_struct, g_struct.ndata['pheno_emb'], g_struct.edata['distance'])
-            struct_pheno_emb = g_struct.ndata['pheno_emb'][g_struct.ndata['mask'].bool()]
+            # combein with protein sequence embedding & functional embedding
+            struct_context_pheno_emb = g_struct.ndata['pheno_emb'][g_struct.ndata['mask'].bool()]
+            struct_pheno_emb = torch.cat([alt_seq_func_embs[variant_data['infer_pheno_vec'].bool()][variant_data['has_struct_context']], struct_context_pheno_emb], dim=-1)
+            struct_pheno_emb = self.struct_pheno_comb(struct_pheno_emb)
             # struct_mask = variant_data['has_struct_context']
             # combined_pheno_emb[struct_mask] = self.alpha * combined_pheno_emb[struct_mask] + (1 - self.alpha) * struct_pheno_emb
 

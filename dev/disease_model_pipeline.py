@@ -54,58 +54,6 @@ def parse_args():
     return args
 
 
-def train_epoch_sep(model, binary_opt, contrast_opt, device, data_loader, diagnostic=None, w_l=0.5):
-    """
-    Separate update for two objectives
-    """
-    model.train()
-    running_loss = 0
-    running_patho_loss = 0
-    running_pheno_loss = 0
-    n_sample = 0
-    n_pheno_sample = 0
-
-    for batch_idx, batch_data in enumerate(data_loader):
-        seq_feat_dict = load_input_to_device(batch_data['seq_input_feat'], device)
-        # desc_feat_dict = load_input_to_device(batch_data['desc_input_feat'], device)
-        variant_data = load_input_to_device(batch_data['variant'], device=device, exclude_keys=['var_names'])
-        batch_labels = batch_data['variant']['label'].unsqueeze(1).to(device)
-        binary_opt.zero_grad()
-        ref_seq_emb, mlm_logits, logit_diff = model.binary_step(seq_feat_dict, variant_data)
-        # seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data)
-        patho_loss = model.patho_loss_fn(logit_diff, batch_labels.float())
-        patho_loss.backward()
-        binary_opt.step()
-        # loss_ = patho_loss.detach().item()
-
-        if batch_data['variant']['infer_phenotype']:
-            contrast_opt.zero_grad()
-            seq_pheno_emb, pos_emb_proj, neg_emb_proj = model.contrastive_step(seq_feat_dict, variant_data)
-            contrast_loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj)
-            contrast_loss.backward()
-            contrast_opt.step()
-            # loss_ = loss_ * w_l + contrast_loss.detach().item()
-        
-        size = batch_labels.size()[0]
-        cur_pheno_size = batch_labels.sum().item()
-        running_patho_loss += patho_loss.detach().item() * size
-        if batch_data['variant']['infer_phenotype']:
-            running_pheno_loss += contrast_loss.detach().item() * cur_pheno_size
-        # running_loss += loss_* size
-        n_sample += size
-        n_pheno_sample += cur_pheno_size
-
-        if diagnostic and batch_idx == 5:
-            diagnostic.print_diagnostics()
-            break
-    epoch_patho_loss = running_patho_loss / n_sample
-    epoch_pheno_loss = running_pheno_loss / n_pheno_sample
-    epoch_loss = w_l * epoch_patho_loss + epoch_pheno_loss
-    # epoch_loss = running_loss / n_sample
-    
-    return epoch_patho_loss, epoch_pheno_loss, epoch_loss, binary_opt, contrast_opt
-
-
 def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5, opt_patho=True, pheno_sims=None):
     model.train()
     running_loss = 0
@@ -178,9 +126,12 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
     n_sample = 0
     n_pheno_sample = 0
     all_vars, all_scores, all_labels, all_pheno_scores = [], [], [], []
-    all_pheno_emb_pred, all_pheno_emb_label, all_pos_pheno_descs, all_pos_pheno_idx = [], [], [], []
+    all_pheno_pos_scores_seq, all_pheno_neg_scores_seq = [], []
+    all_pheno_pos_scores_str, all_pheno_neg_scores_str = [], []
+    all_seq_pheno_emb_pred, all_str_pheno_emb_pred, all_struct_mask = [], [], []
+    all_pheno_emb_label, all_pos_pheno_descs, all_pos_pheno_idx = [], [], []
     all_patho_vars, all_pheno_emb_neg, all_pheno_neg_scores = [], [], []
-    all_similarities, all_topk_scores, all_topk_indices = [], [], []
+    all_similarities, seq_similarities, str_similarities = [], [], []
 
     with torch.no_grad():
         for batch_idx, batch_data in enumerate(data_loader):
@@ -196,7 +147,8 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
             # patho_loss = model.pathogenicity_loss(logit_diff, batch_labels)
             # patho_loss = model.patho_loss_fn(logit_diff, batch_labels.float())
             if batch_data['variant']['infer_phenotype']:
-                seq_contrast_loss, struct_contrast_loss, contrast_loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb, struct_mask=variant_data['has_struct_context'])
+                var_struct_mask = variant_data['has_struct_context']
+                seq_contrast_loss, struct_contrast_loss, contrast_loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb, struct_mask=var_struct_mask)
                 loss = contrast_loss + patho_loss * w_l
                 
             else:
@@ -224,12 +176,32 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
             all_labels.append(batch_labels.squeeze(1).detach().cpu().numpy())
 
             if batch_data['variant']['infer_phenotype']:
-                pheno_score_pos = torch.cosine_similarity(seq_pheno_emb, pos_emb_proj)
-                pheno_score_neg = torch.cosine_similarity(seq_pheno_emb, neg_emb_proj)
+                pheno_score_pos_seq = torch.cosine_similarity(seq_pheno_emb, pos_emb_proj)
+                pheno_score_neg_seq = torch.cosine_similarity(seq_pheno_emb, neg_emb_proj)
+                pheno_score_pos = pheno_score_pos_seq.clone()
+                pheno_score_neg = pheno_score_neg_seq.clone()
+                if variant_data['use_struct']:
+                    seq_weight = torch.sigmoid(model.alpha.detach()).item()
+                    pheno_score_pos_str = torch.zeros_like(pheno_score_pos_seq, device=pheno_score_pos_seq.device)
+                    pheno_score_pos_str[var_struct_mask] = torch.cosine_similarity(struct_pheno_emb, pos_emb_proj[var_struct_mask])
+                    pheno_score_pos[var_struct_mask] = seq_weight * pheno_score_pos_seq[var_struct_mask] + (1 - seq_weight) * pheno_score_pos_str[var_struct_mask]
+
+                    pheno_score_neg_str = torch.zeros_like(pheno_score_neg_seq, device=pheno_score_neg_seq.device)
+                    pheno_score_neg_str[var_struct_mask] = torch.cosine_similarity(struct_pheno_emb, neg_emb_proj[var_struct_mask])
+                    pheno_score_neg[var_struct_mask] = seq_weight * pheno_score_neg_seq[var_struct_mask] + (1 - seq_weight) * pheno_score_neg_str[var_struct_mask]
+
+                    all_pheno_pos_scores_seq.append(pheno_score_pos_seq.detach().cpu().numpy())
+                    all_pheno_neg_scores_seq.append(pheno_score_neg_seq.detach().cpu().numpy())
+                    all_pheno_pos_scores_str.append(pheno_score_pos_str.detach().cpu().numpy())
+                    all_pheno_neg_scores_str.append(pheno_score_neg_str.detach().cpu().numpy())
+
+                    all_str_pheno_emb_pred.append(struct_pheno_emb.detach().cpu().numpy())
+                    all_struct_mask.extend(var_struct_mask)
+
                 all_pheno_scores.append(pheno_score_pos.detach().cpu().numpy())
                 all_pheno_neg_scores.append(pheno_score_neg.detach().cpu().numpy())
 
-                all_pheno_emb_pred.append(seq_pheno_emb.detach().cpu().numpy())
+                all_seq_pheno_emb_pred.append(seq_pheno_emb.detach().cpu().numpy())
                 all_pheno_emb_label.append(pos_emb_proj.detach().cpu().numpy())
                 all_pheno_emb_neg.append(neg_emb_proj.detach().cpu().numpy())
 
@@ -237,8 +209,17 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
                 all_pos_pheno_descs.extend(batch_data['variant']['pos_pheno_name'])
                 all_pos_pheno_idx.extend(batch_data['variant']['pos_pheno_idx'])
                 # all_neg_pheno_descs.extend(batch_data['variant']['neg_pheno_desc'])
-
-                cos_sim_all = torch.cosine_similarity(seq_pheno_emb.unsqueeze(1), pheno_vocab_emb.unsqueeze(0), dim=-1)
+                
+                cos_sim_seq = torch.cosine_similarity(seq_pheno_emb.unsqueeze(1), pheno_vocab_emb.unsqueeze(0), dim=-1)
+                cos_sim_all = cos_sim_seq.clone()
+                if variant_data['use_struct']:
+                    cos_sim_str = torch.zeros_like(cos_sim_seq, device=cos_sim_seq.device)
+                    cos_sim_str[var_struct_mask] = torch.cosine_similarity(struct_pheno_emb.unsqueeze(1), pheno_vocab_emb.unsqueeze(0), dim=-1)
+                    cos_sim_all[var_struct_mask] = seq_weight * cos_sim_seq[var_struct_mask] + (1 - seq_weight) * cos_sim_str[var_struct_mask]
+                    
+                    seq_similarities.append(cos_sim_seq.detach().cpu().numpy())
+                    str_similarities.append(cos_sim_str.detach().cpu().numpy())
+                
                 # topk_scores, topk_indices = torch.topk(cos_sim_all, k=topk, dim=1)
                 # all_topk_scores.append(topk_scores.detach().cpu().numpy())
                 # all_topk_indices.append(topk_indices.detach().cpu().numpy())
@@ -256,7 +237,7 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
         all_pheno_neg_scores = np.concatenate(all_pheno_neg_scores, 0)
         # all_pos_pheno_idx = np.concatenate(all_pos_pheno_idx, 0)
 
-        all_pheno_emb_pred = np.concatenate(all_pheno_emb_pred, 0)
+        all_seq_pheno_emb_pred = np.concatenate(all_seq_pheno_emb_pred, 0)
         all_pheno_emb_label = np.concatenate(all_pheno_emb_label, 0)
         all_pheno_emb_neg = np.concatenate(all_pheno_emb_neg, 0)
     
@@ -271,12 +252,25 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
                          'pos_pheno_desc': all_pos_pheno_descs,
                          'pos_pheno_idx': np.array(all_pos_pheno_idx),
                         #  'neg_pheno_desc': all_neg_pheno_descs,
-                         'pred_emb': all_pheno_emb_pred,
+                         'seq_pred_emb': all_seq_pheno_emb_pred,
                          'pos_emb': all_pheno_emb_label,
                          'neg_emb': all_pheno_emb_neg,
                          'pos_score': all_pheno_scores,
                          'neg_score': all_pheno_neg_scores,
                          'similarities': np.concatenate(all_similarities, 0)}
+    
+    if variant_data['use_struct']:
+        all_pheno_results.update({
+            'seq_weight': seq_weight,
+            'str_pred_emb': np.concatenate(all_str_pheno_emb_pred, 0),
+            'pos_score_seq': np.concatenate(all_pheno_pos_scores_seq, 0),
+            'neg_score_seq': np.concatenate(all_pheno_neg_scores_seq, 0),
+            'pos_score_str': np.concatenate(all_pheno_pos_scores_str, 0),
+            'neg_score_str': np.concatenate(all_pheno_neg_scores_str, 0),
+            'seq_similarities': np.concatenate(seq_similarities, 0),
+            'str_similarities': np.concatenate(str_similarities, 0),
+            'use_struct_neighbor': np.array(all_struct_mask)
+        })
 
     # if eval_topk:
     #     topk_results = {'similarities': np.concatenate(all_similarities, 0),
@@ -334,7 +328,7 @@ def env_setup(args, config):
     return config, device
 
 
-def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=False, compute_tsne=False):
+def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=False, compute_tsne=False, use_struct=False):
     if isinstance(save_path, str):
         save_path = Path(save_path)
 
@@ -344,14 +338,20 @@ def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=Fals
                                     #  'neg_phenotype': pheno_result_dict['neg_pheno_desc'], 
                                      'pos_score': pheno_result_dict['pos_score'],
                                      'neg_score': pheno_result_dict['neg_score']})
+    if use_struct:
+        for key in ['pos_score_seq', 'neg_score_seq', 'pos_score_str', 'neg_score_str', 'use_struct_neighbor']:
+            df_pheno_results[key] = pheno_result_dict[key]
+
     if compute_tsne:
-        pred_emb_tsne = compute_tsne(pheno_result_dict['pred_emb'])
+        pred_emb_tsne = compute_tsne(pheno_result_dict['seq_pred_emb'])
         df_pheno_results = pd.concat([df_pheno_results, pd.DataFrame(pred_emb_tsne)], axis=1).rename(columns={0: 'tsne1', 1: 'tsne2'})
 
     df_pheno_results.to_csv(save_path / f'ep{epoch}_{split}_pheno_score.tsv', sep='\t', index=False)
     if save_emb:
         # pd.DataFrame(pheno_result_dict['pred_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_pred_emb.tsv', sep='\t', index=False, header=False)
-        np.save(save_path / f'ep{epoch}_{split}_pheno_pred_emb.npy', pheno_result_dict['pred_emb'])
+        np.save(save_path / f'ep{epoch}_{split}_pheno_seq_pred_emb.npy', pheno_result_dict['seq_pred_emb'])
+        if use_struct:
+            np.save(save_path / f'ep{epoch}_{split}_pheno_str_pred_emb.npy', pheno_result_dict['str_pred_emb'])
         # pd.DataFrame(pheno_result_dict['neg_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_neg_emb.tsv', sep='\t', index=False, header=False)
     
 
@@ -649,10 +649,7 @@ def main():
         train_aupr = compute_aupr(train_labels, train_scores)
         train_auc = compute_roc(train_labels, train_scores)
         train_topk_acc = compute_topk_acc(train_pheno_results['pos_pheno_idx'], train_pheno_results['similarities'], topk_lst=model_args['topk'], label_lst=list(range(len(phenotype_vocab))))
-        if data_configs['use_struct_neighbor']:
-            seq_weight = torch.sigmoid(model.alpha.detach().cpu()).item()
-        else:
-            seq_weight = 1
+        seq_weight = train_pheno_results.get('seq_weight', 1)
         data_name = 'train'
         logging.info(f'<{data_name}> loss={train_loss_dict["epoch_loss"]:.4f} patho-loss={train_loss_dict["epoch_patho_loss"]:.4f} pheno-loss={train_loss_dict["epoch_pheno_loss"]:.4f} '
                      f'(seq: {train_loss_dict["epoch_seq_pheno_loss"]:.4f} struct: {train_loss_dict["epoch_struct_pheno_loss"]:.4f} seq_weight: {seq_weight:.4f}) '
@@ -723,9 +720,9 @@ def main():
             _save_scores(train_vars, train_labels, train_scores, 'train', epoch, exp_dir)
             _save_scores(val_vars, val_labels, val_scores, 'val', epoch, exp_dir)
             _save_scores(test_vars, test_labels, test_scores, 'test', epoch, exp_dir)
-            save_pheno_results(train_pheno_results, pheno_result_path, epoch, split='train', save_emb=save_emb)
-            save_pheno_results(val_pheno_results, pheno_result_path, epoch, split='val', save_emb=save_emb)
-            save_pheno_results(test_pheno_results, pheno_result_path, epoch, split='test', save_emb=save_emb)
+            save_pheno_results(train_pheno_results, pheno_result_path, epoch, split='train', save_emb=save_emb, use_struct=data_configs['use_struct_neighbor'])
+            save_pheno_results(val_pheno_results, pheno_result_path, epoch, split='val', save_emb=save_emb, use_struct=data_configs['use_struct_neighbor'])
+            save_pheno_results(test_pheno_results, pheno_result_path, epoch, split='test', save_emb=save_emb, use_struct=data_configs['use_struct_neighbor'])
 
         if tb_writer:
             tb_writer.add_pr_curve('Train/PR-curve', train_labels, train_scores, epoch)
@@ -737,23 +734,7 @@ def main():
                 tb_writer.add_scalar('train/{}'.format(loss_key.split('_', 1)[-1]), train_loss_dict[loss_key], epoch)
                 tb_writer.add_scalar('validation/{}'.format(loss_key.split('_', 1)[-1]), val_loss_dict[loss_key], epoch)
                 tb_writer.add_scalar('test/{}'.format(loss_key.split('_', 1)[-1]), test_loss_dict[loss_key], epoch)
-            # tb_writer.add_scalar('train/loss', train_loss, epoch)
-            # tb_writer.add_scalar('train/patho_loss', train_loss_dict['epoch_patho_loss'], epoch)
-            # tb_writer.add_scalar('train/pheno_loss', train_loss_dict['epoch_pheno_loss'], epoch)
-            # tb_writer.add_scalar('train/pheno_loss_seq', train_loss_dict['epoch_seq_pheno_loss'], epoch)
-            # tb_writer.add_scalar('train/pheno_loss_struct', train_loss_dict['epoch_struct_pheno_loss'], epoch)
 
-            # tb_writer.add_scalar('validation/loss', val_loss, epoch)
-            # tb_writer.add_scalar('validation/patho_loss', val_patho_loss, epoch)
-            # tb_writer.add_scalar('validation/pheno_loss', val_pheno_loss, epoch)
-            # tb_writer.add_scalar('validation/pheno_loss_seq', val_seq_pheno_loss, epoch)
-            # tb_writer.add_scalar('validation/pheno_loss_struct', val_struct_pheno_loss, epoch)
-
-            # tb_writer.add_scalar('test/loss', test_loss, epoch)
-            # tb_writer.add_scalar('test/patho_loss', test_patho_loss, epoch)
-            # tb_writer.add_scalar('test/pheno_loss', test_pheno_loss, epoch)
-            # tb_writer.add_scalar('test/pheno_loss_seq', test_seq_pheno_loss, epoch)
-            # tb_writer.add_scalar('test/pheno_loss_struct', test_struct_pheno_loss, epoch)
             for k in model_args['topk']:
                 tb_writer.add_scalar(f'train/top{k}_acc', train_topk_acc[k], epoch)
                 tb_writer.add_scalar(f'validation/top{k}_acc', val_topk_acc[k], epoch)
@@ -767,7 +748,7 @@ def main():
                model_save_path / 'bestmodel-ep{}.pt'.format(best_epoch))
     for key in best_results:
         _save_scores(best_results[key][0], best_results[key][1], best_results[key][2], key, best_epoch, exp_dir)
-        save_pheno_results(best_results[key][3], pheno_result_path, epoch=best_epoch, split=f'best_{key}', save_emb=True)
+        save_pheno_results(best_results[key][3], pheno_result_path, epoch=best_epoch, split=f'best_{key}', save_emb=True, use_struct=data_configs['use_struct_neighbor'])
 
     
 if __name__ == '__main__':
