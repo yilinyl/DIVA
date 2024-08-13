@@ -185,7 +185,7 @@ class DiseaseVariantEncoder(nn.Module):
                                            activation=act_fn))
             gnn_in_dim = gnn_out_dim * num_heads[l]
         
-        self.alpha = nn.Parameter(torch.tensor(0.5))
+        self.alpha = nn.Parameter(torch.tensor(-1e-3))
         self.dist_fn = _dist_fn_map[dist_fn_name]
         # self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)
         # self.patho_loss_fn = nn.BCEWithLogitsLoss()
@@ -401,7 +401,7 @@ class DiseaseVariantEncoder(nn.Module):
             return seq_contrast_loss.mean(), None, seq_contrast_loss.mean()
         struct_contrast_loss = self.contrast_loss_fn(struct_var_emb, pos_emb[struct_mask], neg_emb[struct_mask])
         combine_contrast_loss = seq_contrast_loss.clone()
-        combine_contrast_loss[struct_mask] = self.alpha * combine_contrast_loss[struct_mask] + (1 - self.alpha) * struct_contrast_loss
+        combine_contrast_loss[struct_mask] = torch.sigmoid(self.alpha) * combine_contrast_loss[struct_mask] + (1 - torch.sigmoid(self.alpha)) * struct_contrast_loss
         
         return seq_contrast_loss.mean(), struct_contrast_loss.mean(), combine_contrast_loss.mean()
 

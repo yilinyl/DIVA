@@ -116,7 +116,7 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5,
     for batch_idx, batch_data in enumerate(data_loader):
         # TODO: check batch_data structure
         if not opt_patho and not batch_data['variant']['infer_phenotype']:
-            continue
+            continue        
         seq_feat_dict = load_input_to_device(batch_data['seq_input_feat'], device)
         desc_feat_dict = load_input_to_device(batch_data['desc_input_feat'], device)
         variant_data = load_input_to_device(batch_data['variant'], device=device, exclude_keys=['var_names'])
@@ -246,9 +246,9 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
 
         epoch_patho_loss = running_patho_loss / n_sample
         epoch_pheno_loss = running_pheno_loss / n_pheno_sample
-        epoch_loss = w_l * epoch_patho_loss + epoch_pheno_loss
-        epoch_seq_pheno_loss = running_seq_pheno_loss / n_pheno_sample
-        epoch_struct_pheno_loss = running_struct_pheno_loss / n_pheno_sample
+        # epoch_loss = w_l * epoch_patho_loss + epoch_pheno_loss
+        # epoch_seq_pheno_loss = running_seq_pheno_loss / n_pheno_sample
+        # epoch_struct_pheno_loss = running_struct_pheno_loss / n_pheno_sample
         # epoch_loss = running_loss / n_sample
         all_labels = np.concatenate(all_labels, 0)
         all_scores = np.concatenate(all_scores, 0)
@@ -259,6 +259,12 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
         all_pheno_emb_pred = np.concatenate(all_pheno_emb_pred, 0)
         all_pheno_emb_label = np.concatenate(all_pheno_emb_label, 0)
         all_pheno_emb_neg = np.concatenate(all_pheno_emb_neg, 0)
+    
+    loss_dict = {'epoch_patho_loss': epoch_patho_loss,
+                 'epoch_pheno_loss': epoch_pheno_loss,
+                 'epoch_loss': w_l * epoch_patho_loss + epoch_pheno_loss,
+                 'epoch_seq_pheno_loss': running_seq_pheno_loss / n_pheno_sample,
+                 'epoch_struct_pheno_loss': running_struct_pheno_loss / n_pheno_sample}
 
     all_pheno_results = {'var_names': all_patho_vars,
                          'label': all_labels,
@@ -277,8 +283,7 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
     #                     'topk_scores': np.concatenate(all_topk_scores, 0),
     #                     'topk_indices': np.concatenate(all_topk_indices, 0)}
     
-    return epoch_patho_loss, epoch_pheno_loss, epoch_loss, epoch_seq_pheno_loss, epoch_struct_pheno_loss, \
-            all_labels, all_scores, all_vars, all_pheno_results
+    return loss_dict, all_labels, all_scores, all_vars, all_pheno_results
 
 
 def load_config(cfg_file, format='yaml'):
@@ -464,9 +469,11 @@ def main():
                                          phenotype_vocab=phenotype_vocab, 
                                          protein_tokenizer=protein_tokenizer, 
                                          text_tokenizer=text_tokenizer,
+                                         pheno_desc_dict=pheno_desc_dict,
                                         #  use_struct_neighbor=data_configs['use_struct_neighbor'],
                                          comb_seq_dict=prot2comb_seq,
                                          access_to_context=True)
+    logging.info('Average structural neighbors per variant in training: {:.2f}'.format(train_dataset.average_struct_neighbors()))
     # var_db = pd.read_csv(data_root / data_configs['input_file']['train']).query('label == 1').\
     #     drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
     prot_var_cache = train_dataset.get_protein_cache()
@@ -476,6 +483,7 @@ def main():
                                          phenotype_vocab=phenotype_vocab, 
                                          protein_tokenizer=protein_tokenizer, 
                                          text_tokenizer=text_tokenizer,
+                                         pheno_desc_dict=pheno_desc_dict,
                                         #  var_db=var_db,
                                          prot_var_cache=prot_var_cache,
                                         #  use_struct_neighbor=data_configs['use_struct_neighbor'],
@@ -484,6 +492,8 @@ def main():
     # val_variants = pd.read_csv(data_root / data_configs['input_file']['val']).query('label == 1').\
     #     drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
     # var_db = pd.concat([var_db, val_variants])
+    logging.info('Average structural neighbors per variant in validation: {:.2f}'.format(val_dataset.average_struct_neighbors()))
+
     prot_var_cache = val_dataset.get_protein_cache()
     
     test_dataset = ProteinVariantDatset(**data_configs, 
@@ -492,12 +502,14 @@ def main():
                                          phenotype_vocab=phenotype_vocab, 
                                          protein_tokenizer=protein_tokenizer, 
                                          text_tokenizer=text_tokenizer,
+                                         pheno_desc_dict=pheno_desc_dict,
                                         #  var_db=var_db,
                                          prot_var_cache=prot_var_cache,
                                         #  use_struct_neighbor=data_configs['use_struct_neighbor'],
                                          comb_seq_dict=prot2comb_seq,
                                          access_to_context=False)
-    
+    logging.info('Average structural neighbors per variant in test set: {:.2f}'.format(test_dataset.average_struct_neighbors()))
+
     # Initilize pretrained encoders:
     # seq_encoder = EsmForMaskedLM.from_pretrained(model_args['protein_lm_path'])
     seq_encoder = AutoModelForMaskedLM.from_pretrained(model_args['protein_lm_path'])
@@ -506,17 +518,20 @@ def main():
     train_collator = ProteinVariantDataCollator(train_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
                                                 use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'], half_window_size=data_configs['half_window_size'],
                                                 context_agg_opt=data_configs['context_agg_option'], use_pheno_desc=data_configs['use_pheno_desc'], 
-                                                pheno_desc_dict=pheno_desc_dict, use_struct_vocab=data_configs['use_struct_vocab'], use_struct_neighbor=data_configs['use_struct_neighbor'])
+                                                pheno_desc_dict=pheno_desc_dict, use_struct_vocab=data_configs['use_struct_vocab'], 
+                                                use_struct_neighbor=data_configs['use_struct_neighbor'], struct_radius_cutoff=data_configs['struct_radius_cutoff'])
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], collate_fn=train_collator, shuffle=True)
     val_collator = ProteinVariantDataCollator(val_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
                                               use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'], half_window_size=data_configs['half_window_size'],
                                               context_agg_opt=data_configs['context_agg_option'], use_pheno_desc=data_configs['use_pheno_desc'], 
-                                              pheno_desc_dict=pheno_desc_dict, use_struct_vocab=data_configs['use_struct_vocab'], use_struct_neighbor=data_configs['use_struct_neighbor'])
+                                              pheno_desc_dict=pheno_desc_dict, use_struct_vocab=data_configs['use_struct_vocab'], 
+                                              use_struct_neighbor=data_configs['use_struct_neighbor'], struct_radius_cutoff=data_configs['struct_radius_cutoff'])
     validation_loader = DataLoader(val_dataset, batch_size=config['batch_size'], collate_fn=val_collator)
     test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
                                                use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'], half_window_size=data_configs['half_window_size'],
                                                context_agg_opt=data_configs['context_agg_option'], use_pheno_desc=data_configs['use_pheno_desc'], 
-                                               pheno_desc_dict=pheno_desc_dict, use_struct_vocab=data_configs['use_struct_vocab'], use_struct_neighbor=data_configs['use_struct_neighbor'])
+                                               pheno_desc_dict=pheno_desc_dict, use_struct_vocab=data_configs['use_struct_vocab'], 
+                                               use_struct_neighbor=data_configs['use_struct_neighbor'], struct_radius_cutoff=data_configs['struct_radius_cutoff'])
     test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
 
     if config['use_adapter']:
@@ -627,31 +642,33 @@ def main():
         all_pheno_embs = embed_phenotypes(model, device, phenotype_loader)
         # all_pheno_embs = all_pheno_embs.to(device)
         all_pheno_embs = torch.tensor(all_pheno_embs).to(device)
-        train_patho_loss, train_pheno_loss, train_loss, train_seq_pheno_loss, train_struct_pheno_loss, \
-            train_labels, train_scores, train_vars, train_pheno_results = eval_epoch(model, device, train_loader, pheno_vocab_emb=all_pheno_embs, w_l=model_args['w_l'])
+        train_loss_dict, train_labels, train_scores, train_vars, train_pheno_results = eval_epoch(model, device, train_loader, pheno_vocab_emb=all_pheno_embs, w_l=model_args['w_l'])
         train_aupr = compute_aupr(train_labels, train_scores)
         train_auc = compute_roc(train_labels, train_scores)
         train_topk_acc = compute_topk_acc(train_pheno_results['pos_pheno_idx'], train_pheno_results['similarities'], topk_lst=model_args['topk'], label_lst=list(range(len(phenotype_vocab))))
-
+        seq_weight = torch.sigmoid(model.alpha.detach().cpu()).item()
         data_name = 'train'
-        logging.info(f'<{data_name}> loss={train_loss:.4f} patho-loss={train_patho_loss:.4f} pheno-loss={train_pheno_loss:.4f} (seq: {train_seq_pheno_loss:.4f} struct: {train_struct_pheno_loss:.4f})'
+        logging.info(f'<{data_name}> loss={train_loss_dict["epoch_loss"]:.4f} patho-loss={train_loss_dict["epoch_patho_loss"]:.4f} pheno-loss={train_loss_dict["epoch_pheno_loss"]:.4f} '
+                     f'(seq: {train_loss_dict["epoch_seq_pheno_loss"]:.4f} struct: {train_loss_dict["epoch_struct_pheno_loss"]:.4f} seq_weight: {seq_weight:.4f}) '
                      f'auPR={train_aupr:.4f} auROC={train_auc:.4f} top{topk_max}_acc={train_topk_acc[topk_max]:.4f}')
 
-        val_patho_loss, val_pheno_loss, val_loss, val_seq_pheno_loss, val_struct_pheno_loss, \
-            val_labels, val_scores, val_vars, val_pheno_results = eval_epoch(model, device, validation_loader, pheno_vocab_emb=all_pheno_embs, w_l=model_args['w_l'])
+        val_loss_dict, val_labels, val_scores, val_vars, val_pheno_results = eval_epoch(model, device, validation_loader, pheno_vocab_emb=all_pheno_embs, w_l=model_args['w_l'])
         # lr_scheduler.step(val_patho_loss)
         val_aupr = compute_aupr(val_labels, val_scores)
         val_auc = compute_roc(val_labels, val_scores)
         val_topk_acc = compute_topk_acc(val_pheno_results['pos_pheno_idx'], val_pheno_results['similarities'], topk_lst=model_args['topk'], label_lst=list(range(len(phenotype_vocab))))
 
         data_name = 'validation'
-        logging.info(f'<{data_name}> loss={val_loss:.4f} patho-loss={val_patho_loss:.4f} pheno-loss={val_pheno_loss:.4f} (seq: {val_seq_pheno_loss:.4f} struct: {val_struct_pheno_loss:.4f})'
+        logging.info(f'<{data_name}> loss={val_loss_dict["epoch_loss"]:.4f} patho-loss={val_loss_dict["epoch_patho_loss"]:.4f} pheno-loss={val_loss_dict["epoch_pheno_loss"]:.4f} '
+                     f'(seq: {val_loss_dict["epoch_seq_pheno_loss"]:.4f} struct: {val_loss_dict["epoch_struct_pheno_loss"]:.4f} seq_weight: {seq_weight:.4f}) '
                      f'auPR={val_aupr:.4f} auROC={val_auc:.4f} top{topk_max}_acc={val_topk_acc[topk_max]:.4f}')
+        # logging.info(f'<{data_name}> loss={val_loss:.4f} patho-loss={val_patho_loss:.4f} pheno-loss={val_pheno_loss:.4f} '
+        #              f'(seq: {val_seq_pheno_loss:.4f} struct: {val_struct_pheno_loss:.4f} seq_weight: {seq_weight:.4f}) '
+        #              f'auPR={val_aupr:.4f} auROC={val_auc:.4f} top{topk_max}_acc={val_topk_acc[topk_max]:.4f}')
 
-        test_patho_loss, test_pheno_loss, test_loss, test_seq_pheno_loss, test_struct_pheno_loss, \
-            test_labels, test_scores, test_vars, test_pheno_results = eval_epoch(model, device, test_loader, pheno_vocab_emb=all_pheno_embs, w_l=model_args['w_l'])
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        test_loss_dict, test_labels, test_scores, test_vars, test_pheno_results = eval_epoch(model, device, test_loader, pheno_vocab_emb=all_pheno_embs, w_l=model_args['w_l'])
+        if val_loss_dict["epoch_loss"] < best_val_loss:
+            best_val_loss = val_loss_dict["epoch_loss"]
             best_epoch = epoch
             best_weights = copy.deepcopy(model.state_dict())
             best_optim = copy.deepcopy(optimizer.state_dict())
@@ -667,17 +684,21 @@ def main():
         test_topk_acc = compute_topk_acc(test_pheno_results['pos_pheno_idx'], test_pheno_results['similarities'], topk_lst=model_args['topk'], label_lst=list(range(len(phenotype_vocab))))
 
         data_name = 'test'
-        logging.info(f'<{data_name}> loss={test_loss:.4f} patho-loss={test_patho_loss:.4f} pheno-loss={test_pheno_loss:.4f} (seq: {test_seq_pheno_loss:.4f} struct: {test_struct_pheno_loss:.4f})'
+        logging.info(f'<{data_name}> loss={test_loss_dict["epoch_loss"]:.4f} patho-loss={test_loss_dict["epoch_patho_loss"]:.4f} pheno-loss={test_loss_dict["epoch_pheno_loss"]:.4f} '
+                     f'(seq: {test_loss_dict["epoch_seq_pheno_loss"]:.4f} struct: {test_loss_dict["epoch_struct_pheno_loss"]:.4f} seq_weight: {seq_weight:.4f}) '
                      f'auPR={test_aupr:.4f} auROC={test_auc:.4f} top{topk_max}_acc={test_topk_acc[topk_max]:.4f}')
-        if val_patho_loss < best_patho_loss:
-            best_patho_loss = val_patho_loss
+        # logging.info(f'<{data_name}> loss={test_loss:.4f} patho-loss={test_patho_loss:.4f} pheno-loss={test_pheno_loss:.4f} '
+        #              f'(seq: {test_seq_pheno_loss:.4f} struct: {test_struct_pheno_loss:.4f} seq_weight: {seq_weight:.4f}) '
+        #              f'auPR={test_aupr:.4f} auROC={test_auc:.4f} top{topk_max}_acc={test_topk_acc[topk_max]:.4f}')
+        if val_loss_dict["epoch_patho_loss"] < best_patho_loss:
+            best_patho_loss = val_loss_dict["epoch_patho_loss"]
             torch.save({'args': config, 
                         'state_dict': model.state_dict(), 
                         'optimizer_state_dict': optimizer.state_dict()},
                        model_save_path / 'best_patho_model.pt'.format(epoch))
             
-        if val_pheno_loss < best_pheno_loss:
-            best_pheno_loss = val_pheno_loss
+        if val_loss_dict["epoch_pheno_loss"] < best_pheno_loss:
+            best_pheno_loss = val_loss_dict["epoch_pheno_loss"]
             save_emb = True
             torch.save({'args': config, 
                         'state_dict': model.state_dict(), 
@@ -706,23 +727,27 @@ def main():
             tb_writer.add_pr_curve('Val/PR-curve', val_labels, val_scores, epoch)
 
             tb_writer.add_scalar('alpha', model.alpha.item(), epoch)
-            tb_writer.add_scalar('train/loss', train_loss, epoch)
-            tb_writer.add_scalar('train/patho_loss', train_patho_loss, epoch)
-            tb_writer.add_scalar('train/pheno_loss', train_pheno_loss, epoch)
-            tb_writer.add_scalar('train/pheno_loss_seq', train_seq_pheno_loss, epoch)
-            tb_writer.add_scalar('train/pheno_loss_struct', train_struct_pheno_loss, epoch)
+            for loss_key in train_loss_dict.keys():
+                tb_writer.add_scalar('train/{}'.format(loss_key.split('_', 1)[-1]), train_loss_dict[loss_key], epoch)
+                tb_writer.add_scalar('validation/{}'.format(loss_key.split('_', 1)[-1]), val_loss_dict[loss_key], epoch)
+                tb_writer.add_scalar('test/{}'.format(loss_key.split('_', 1)[-1]), test_loss_dict[loss_key], epoch)
+            # tb_writer.add_scalar('train/loss', train_loss, epoch)
+            # tb_writer.add_scalar('train/patho_loss', train_loss_dict['epoch_patho_loss'], epoch)
+            # tb_writer.add_scalar('train/pheno_loss', train_loss_dict['epoch_pheno_loss'], epoch)
+            # tb_writer.add_scalar('train/pheno_loss_seq', train_loss_dict['epoch_seq_pheno_loss'], epoch)
+            # tb_writer.add_scalar('train/pheno_loss_struct', train_loss_dict['epoch_struct_pheno_loss'], epoch)
 
-            tb_writer.add_scalar('validation/loss', val_loss, epoch)
-            tb_writer.add_scalar('validation/patho_loss', val_patho_loss, epoch)
-            tb_writer.add_scalar('validation/pheno_loss', val_pheno_loss, epoch)
-            tb_writer.add_scalar('validation/pheno_loss_seq', val_seq_pheno_loss, epoch)
-            tb_writer.add_scalar('validation/pheno_loss_struct', val_struct_pheno_loss, epoch)
+            # tb_writer.add_scalar('validation/loss', val_loss, epoch)
+            # tb_writer.add_scalar('validation/patho_loss', val_patho_loss, epoch)
+            # tb_writer.add_scalar('validation/pheno_loss', val_pheno_loss, epoch)
+            # tb_writer.add_scalar('validation/pheno_loss_seq', val_seq_pheno_loss, epoch)
+            # tb_writer.add_scalar('validation/pheno_loss_struct', val_struct_pheno_loss, epoch)
 
-            tb_writer.add_scalar('test/loss', test_loss, epoch)
-            tb_writer.add_scalar('test/patho_loss', test_patho_loss, epoch)
-            tb_writer.add_scalar('test/pheno_loss', test_pheno_loss, epoch)
-            tb_writer.add_scalar('test/pheno_loss_seq', test_seq_pheno_loss, epoch)
-            tb_writer.add_scalar('test/pheno_loss_struct', test_struct_pheno_loss, epoch)
+            # tb_writer.add_scalar('test/loss', test_loss, epoch)
+            # tb_writer.add_scalar('test/patho_loss', test_patho_loss, epoch)
+            # tb_writer.add_scalar('test/pheno_loss', test_pheno_loss, epoch)
+            # tb_writer.add_scalar('test/pheno_loss_seq', test_seq_pheno_loss, epoch)
+            # tb_writer.add_scalar('test/pheno_loss_struct', test_struct_pheno_loss, epoch)
             for k in model_args['topk']:
                 tb_writer.add_scalar(f'train/top{k}_acc', train_topk_acc[k], epoch)
                 tb_writer.add_scalar(f'validation/top{k}_acc', val_topk_acc[k], epoch)

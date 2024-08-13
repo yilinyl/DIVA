@@ -119,6 +119,8 @@ class ProteinVariantDatset(Dataset):
         max_phenotype_length: int = 1000,
         # unknown_label = -100,
         phenotype_vocab: List = None,  # phenotype vocabulary
+        use_pheno_desc: bool = False,
+        pheno_desc_dict: Dict[str, str] = None,
         # pheno_embs: List = None,  # pre-computed phenotype embeddings
         pos_offset = 1,
         pid_col='UniProt',
@@ -133,6 +135,7 @@ class ProteinVariantDatset(Dataset):
         binary_inference_only=False,  # infer pathogenic vs benign only
         update_var_cache=True,  # if True, current variant (disease) will be visible to other variants (set to False at inference)
         use_struct_neighbor=False,
+        max_struct_dist=20,
         af_graph_dir='',
         pdb_graph_dir='',
         use_struct_vocab=False,
@@ -178,9 +181,11 @@ class ProteinVariantDatset(Dataset):
         self.update_var_cache = update_var_cache
         self.has_phenotype_label = False
         self.use_struct_neighbor = use_struct_neighbor
+        self.max_struct_dist = max_struct_dist
         if self.use_struct_neighbor:
             self.af_graph_root = Path(af_graph_dir)
             self.pdb_graph_root = Path(pdb_graph_dir)
+        self.num_struct_neighbors = []
         self.use_struct_vocab = use_struct_vocab
         self.comb_seq_dict = comb_seq_dict
         self.access_to_context = access_to_context
@@ -191,6 +196,8 @@ class ProteinVariantDatset(Dataset):
         df_var = pd.read_csv(self.data_root / variant_file)
         
         self._load_variant_data(df_var, pid_col, pos_col)
+        if self.use_struct_neighbor:
+            self.build_var_context_graph(use_pheno_desc=use_pheno_desc, pheno_desc_dict=pheno_desc_dict)
     
 
     def _load_variant_data(self, df_var, pid_col='UniProt', pos_col='Protein_position'):
@@ -451,6 +458,28 @@ class ProteinVariantDatset(Dataset):
                                               }
                 # self.prot_var_cache.update(self.protein_variants)
 
+    
+    def build_var_context_graph(self, use_pheno_desc=False, pheno_desc_dict=None):
+        for i, cur_variant in enumerate(self.variant_data):
+            if not cur_variant['infer_phenotype']:
+                continue
+            uprot = cur_variant['uprot']
+            var_idx = cur_variant['var_idx']
+            protein_info = self.protein_variants[uprot]
+            prot_context_var_idx = protein_info['context_var_idx']
+            var_context_graph = extract_context_graph(var_idx, prot_context_var_idx, protein_info['struct_graph'], 
+                                                      use_pheno_desc=use_pheno_desc, pheno_desc_dict=pheno_desc_dict, 
+                                                      mask_token_id=self.text_tokenizer.mask_token_id, 
+                                                      mask_token=self.text_tokenizer.mask_token, 
+                                                      dist_cutoff=self.max_struct_dist)
+            self.num_struct_neighbors.append(var_context_graph.number_of_nodes() - 1)
+            cur_variant['var_struct_graph'] = var_context_graph
+
+
+    def average_struct_neighbors(self):
+        return np.mean(self.num_struct_neighbors)
+
+
     def encode_protein_seq(self, seq):
         aa_list = list(seq)
         if self.max_protein_seq_length is not None:
@@ -520,6 +549,7 @@ class ProteinVariantDataCollator:
     has_phenotype_label: bool = True
     use_struct_vocab: bool = False
     use_struct_neighbor: bool = False
+    struct_radius_cutoff: float = 25
     include_unknown: bool = False
     context_agg_opt: str = 'concat'
 
@@ -539,7 +569,8 @@ class ProteinVariantDataCollator:
                                            use_pheno_desc=self.use_pheno_desc, pheno_desc_dict=self.pheno_desc_dict, 
                                            max_protein_length=self.max_protein_length, max_pheno_desc_length=self.max_pheno_desc_length, 
                                            half_window_size=self.half_window_size, mode=self.mode, has_phenotype_label=self.has_phenotype_label,
-                                           use_struct_vocab=self.use_struct_vocab, use_struct_neighbor=self.use_struct_neighbor, include_unknown=self.include_unknown, context_agg_opt=self.context_agg_opt)
+                                           use_struct_vocab=self.use_struct_vocab, use_struct_neighbor=self.use_struct_neighbor, struct_radius=self.struct_radius_cutoff,
+                                           include_unknown=self.include_unknown, context_agg_opt=self.context_agg_opt)
 
         return batch
     
@@ -710,7 +741,7 @@ def protein_variant_collate_fn(
     has_phenotype_label: bool = True,
     use_struct_vocab: bool = False,
     use_struct_neighbor: bool = False,
-    struct_radius: float = 20,
+    struct_radius: float = 25,
     include_unknown: bool = False,
     context_agg_opt: str = 'concat'  # concat: concatenate in-context phenotypes; count: aggregate by count
 ):   
@@ -805,10 +836,11 @@ def protein_variant_collate_fn(
             # context_info_joined = text_tokenizer.sep_token.join([prot_desc] + phenos_in_frame_cur)  # joined into single string
             if use_struct_neighbor:
                 # TODO: check empty graph case
-                var_context_graph = extract_context_graph(var_idx, prot_context_var_idx, protein_info_cur['struct_graph'], 
-                                                          use_pheno_desc=use_pheno_desc, pheno_desc_dict=pheno_desc_dict, 
-                                                          mask_token_id=text_tokenizer.mask_token_id, mask_token=text_tokenizer.mask_token)
-                if not nx.is_empty(var_context_graph):
+                # var_context_graph = extract_context_graph(var_idx, prot_context_var_idx, protein_info_cur['struct_graph'], 
+                #                                           use_pheno_desc=use_pheno_desc, pheno_desc_dict=pheno_desc_dict, 
+                #                                           mask_token_id=text_tokenizer.mask_token_id, mask_token=text_tokenizer.mask_token, dist_cutoff=struct_radius)
+                var_context_graph = elem['var_struct_graph']
+                if var_context_graph.number_of_nodes() > 1:
                     struct_context_pheno_uniq.update(nx.get_node_attributes(var_context_graph, 'pheno_descs').values())
                     var_struct_graphs_raw.append(var_context_graph)
                     has_struct_context = True
@@ -986,7 +1018,8 @@ def extract_context_graph(var_idx,
                           use_pheno_desc=False, 
                           pheno_desc_dict=None, 
                           mask_token_id=1, 
-                          mask_token='[MASK]'):
+                          mask_token='[MASK]',
+                          dist_cutoff=25):
     
     var_context_graph = nx.DiGraph()
     if nx.is_empty(g_prot):
@@ -995,14 +1028,23 @@ def extract_context_graph(var_idx,
         return var_context_graph
     
     edge_dist_list = []
+    dist_to_target = nx.single_source_dijkstra_path_length(g_prot, var_idx, cutoff=dist_cutoff, weight='distance')
+    edge_dist_list.append((var_idx, var_idx, 1e-5))  # add self-loop for context nodes
     for context_idx in prot_context_var_idx:
         if context_idx == var_idx:
             continue
-        if context_idx not in g_prot:
-            continue
-        dist = nx.dijkstra_path_length(g_prot, var_idx, context_idx, weight='distance')
-        edge_dist_list.append((context_idx, var_idx, dist))
-        edge_dist_list.append((context_idx, context_idx, 1e-5))  # add self-loop for context nodes
+        if context_idx in dist_to_target:
+            edge_dist_list.append((context_idx, var_idx, dist_to_target[context_idx]))
+            edge_dist_list.append((context_idx, context_idx, 1e-5))  # add self-loop for context nodes
+    # for context_idx in prot_context_var_idx:
+    #     if context_idx == var_idx:
+    #         continue
+    #     if context_idx not in g_prot:
+    #         continue
+    #     dist = nx.dijkstra_path_length(g_prot, var_idx, context_idx, weight='distance')
+    #     if dist <= dist_cutoff:
+    #         edge_dist_list.append((context_idx, var_idx, dist))
+    #         edge_dist_list.append((context_idx, context_idx, 1e-5))  # add self-loop for context nodes
     var_context_graph.add_weighted_edges_from(edge_dist_list, weight='distance')
     
     update_dict = dict()

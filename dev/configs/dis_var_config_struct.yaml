@@ -1,9 +1,9 @@
 exp_dir: /local/storage/yl986/data/dis_var_experiment/
-experiment: debug
-# experiment: debug_lora
+experiment: dis_esm480_struct
+# experiment: debug
 mode: train
 device: cuda:1
-batch_size: 4
+batch_size: 8
 pheno_batch_size: 8
 scoring: wt-marginals  # one of wt-marginals, masked-marginals
 # output_file: ./dms_ontoprot_wt_score.csv
@@ -14,7 +14,7 @@ lr_reduce_factor: 0.5
 lr_schedule_patience: 3
 # clr_reduce_factor: 0.5
 # clr_schedule_patience: 5
-epochs: 5
+epochs: 30
 use_adapter: False  # if true, will use adapter for fine tuning
 adapter_targets: ['key', 'query']
 
@@ -32,7 +32,8 @@ model:
   # decoder_config_path: /local/storage/yl986/script_hub/KeAP/initial_decoder_config/config.json
   frozen_bert: True
   # prot_bert_unfreeze: ['esm.encoder.layer.32']  # for esm-2 1280
-  prot_bert_unfreeze: ['esm.encoder.layer.29']  # for esm-2 640
+  # prot_bert_unfreeze: ['esm.encoder.layer.29']  # for esm-2 640
+  prot_bert_unfreeze: ['esm.encoder.layer.11']  # for esm-2 480
   # prot_bert_unfreeze: ['bert.encoder.layer.29']  # for OntoProtein
   # text_bert_unfreeze: ['bert.encoder.layer.11']
   text_bert_unfreeze: []
@@ -54,7 +55,7 @@ dataset:
               "/local/storage/yl986/data/UniProt/uniprot_sprot_varsplic.fasta"]
   prot_meta_data: ["/local/storage/yl986/data/UniProt/uniprot_sprot_human_meta.txt",
                     "/local/storage/yl986/data/UniProt/uniprot_trembl_human_meta.txt"]
-  data_dir: /local/storage/yl986/data/variant_data/pred/pheno_select/struct/sample/
+  data_dir: /local/storage/yl986/data/variant_data/pred/pheno_select/struct/
   input_file:
     train: train.csv
     test: test.csv
@@ -75,5 +76,6 @@ dataset:
   # max_phenotype_length: null
   use_protein_desc: True
   use_struct_neighbor: True
+  struct_radius_cutoff: 25
   use_struct_vocab: False  # enable structure-aware sequence
   struct_seq_file: '/home/yl986/data/variant_data/pred/prot_combine_seq.json'  # pre-processed structure-aware sequence (SaProt)
