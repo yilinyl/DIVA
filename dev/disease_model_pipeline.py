@@ -646,7 +646,10 @@ def main():
         train_aupr = compute_aupr(train_labels, train_scores)
         train_auc = compute_roc(train_labels, train_scores)
         train_topk_acc = compute_topk_acc(train_pheno_results['pos_pheno_idx'], train_pheno_results['similarities'], topk_lst=model_args['topk'], label_lst=list(range(len(phenotype_vocab))))
-        seq_weight = torch.sigmoid(model.alpha.detach().cpu()).item()
+        if data_configs['use_struct_neighbor']:
+            seq_weight = torch.sigmoid(model.alpha.detach().cpu()).item()
+        else:
+            seq_weight = 1
         data_name = 'train'
         logging.info(f'<{data_name}> loss={train_loss_dict["epoch_loss"]:.4f} patho-loss={train_loss_dict["epoch_patho_loss"]:.4f} pheno-loss={train_loss_dict["epoch_pheno_loss"]:.4f} '
                      f'(seq: {train_loss_dict["epoch_seq_pheno_loss"]:.4f} struct: {train_loss_dict["epoch_struct_pheno_loss"]:.4f} seq_weight: {seq_weight:.4f}) '
