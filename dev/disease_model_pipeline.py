@@ -473,7 +473,8 @@ def main():
                                         #  use_struct_neighbor=data_configs['use_struct_neighbor'],
                                          comb_seq_dict=prot2comb_seq,
                                          access_to_context=True)
-    logging.info('Average structural neighbors per variant in training: {:.2f}'.format(train_dataset.average_struct_neighbors()))
+    if data_configs['use_struct_neighbor']:
+        logging.info('Average structural neighbors per variant in training: {:.2f}'.format(train_dataset.average_struct_neighbors()))
     # var_db = pd.read_csv(data_root / data_configs['input_file']['train']).query('label == 1').\
     #     drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
     prot_var_cache = train_dataset.get_protein_cache()
@@ -492,7 +493,8 @@ def main():
     # val_variants = pd.read_csv(data_root / data_configs['input_file']['val']).query('label == 1').\
     #     drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
     # var_db = pd.concat([var_db, val_variants])
-    logging.info('Average structural neighbors per variant in validation: {:.2f}'.format(val_dataset.average_struct_neighbors()))
+    if data_configs['use_struct_neighbor']:
+        logging.info('Average structural neighbors per variant in validation: {:.2f}'.format(val_dataset.average_struct_neighbors()))
 
     prot_var_cache = val_dataset.get_protein_cache()
     
@@ -508,7 +510,8 @@ def main():
                                         #  use_struct_neighbor=data_configs['use_struct_neighbor'],
                                          comb_seq_dict=prot2comb_seq,
                                          access_to_context=False)
-    logging.info('Average structural neighbors per variant in test set: {:.2f}'.format(test_dataset.average_struct_neighbors()))
+    if data_configs['use_struct_neighbor']:
+        logging.info('Average structural neighbors per variant in test set: {:.2f}'.format(test_dataset.average_struct_neighbors()))
 
     # Initilize pretrained encoders:
     # seq_encoder = EsmForMaskedLM.from_pretrained(model_args['protein_lm_path'])
