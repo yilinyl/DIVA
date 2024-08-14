@@ -180,26 +180,29 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
                 pheno_score_neg_seq = torch.cosine_similarity(seq_pheno_emb, neg_emb_proj)
                 pheno_score_pos = pheno_score_pos_seq.clone()
                 pheno_score_neg = pheno_score_neg_seq.clone()
+
+                pheno_score_pos_str = torch.zeros_like(pheno_score_pos_seq, device=pheno_score_pos_seq.device)
+                pheno_score_neg_str = torch.zeros_like(pheno_score_neg_seq, device=pheno_score_neg_seq.device)
                 if variant_data['use_struct']:
                     seq_weight = torch.sigmoid(model.alpha.detach()).item()
-                    pheno_score_pos_str = torch.zeros_like(pheno_score_pos_seq, device=pheno_score_pos_seq.device)
+                    # pheno_score_pos_str = torch.zeros_like(pheno_score_pos_seq, device=pheno_score_pos_seq.device)
                     pheno_score_pos_str[var_struct_mask] = torch.cosine_similarity(struct_pheno_emb, pos_emb_proj[var_struct_mask])
                     pheno_score_pos[var_struct_mask] = seq_weight * pheno_score_pos_seq[var_struct_mask] + (1 - seq_weight) * pheno_score_pos_str[var_struct_mask]
 
-                    pheno_score_neg_str = torch.zeros_like(pheno_score_neg_seq, device=pheno_score_neg_seq.device)
+                    # pheno_score_neg_str = torch.zeros_like(pheno_score_neg_seq, device=pheno_score_neg_seq.device)
                     pheno_score_neg_str[var_struct_mask] = torch.cosine_similarity(struct_pheno_emb, neg_emb_proj[var_struct_mask])
                     pheno_score_neg[var_struct_mask] = seq_weight * pheno_score_neg_seq[var_struct_mask] + (1 - seq_weight) * pheno_score_neg_str[var_struct_mask]
 
-                    all_pheno_pos_scores_seq.append(pheno_score_pos_seq.detach().cpu().numpy())
-                    all_pheno_neg_scores_seq.append(pheno_score_neg_seq.detach().cpu().numpy())
-                    all_pheno_pos_scores_str.append(pheno_score_pos_str.detach().cpu().numpy())
-                    all_pheno_neg_scores_str.append(pheno_score_neg_str.detach().cpu().numpy())
-
                     all_str_pheno_emb_pred.append(struct_pheno_emb.detach().cpu().numpy())
-                    all_struct_mask.extend(var_struct_mask)
+                all_struct_mask.extend(var_struct_mask)
 
                 all_pheno_scores.append(pheno_score_pos.detach().cpu().numpy())
                 all_pheno_neg_scores.append(pheno_score_neg.detach().cpu().numpy())
+
+                all_pheno_pos_scores_seq.append(pheno_score_pos_seq.detach().cpu().numpy())
+                all_pheno_neg_scores_seq.append(pheno_score_neg_seq.detach().cpu().numpy())
+                all_pheno_pos_scores_str.append(pheno_score_pos_str.detach().cpu().numpy())
+                all_pheno_neg_scores_str.append(pheno_score_neg_str.detach().cpu().numpy())
 
                 all_seq_pheno_emb_pred.append(seq_pheno_emb.detach().cpu().numpy())
                 all_pheno_emb_label.append(pos_emb_proj.detach().cpu().numpy())

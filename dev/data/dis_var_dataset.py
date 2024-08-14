@@ -197,7 +197,7 @@ class ProteinVariantDatset(Dataset):
         
         self._load_variant_data(df_var, pid_col, pos_col)
         if self.use_struct_neighbor:
-            self.build_var_context_graph(use_pheno_desc=use_pheno_desc, pheno_desc_dict=pheno_desc_dict)
+            self.build_var_context_graph()
     
 
     def _load_variant_data(self, df_var, pid_col='UniProt', pos_col='Protein_position'):
@@ -457,9 +457,8 @@ class ProteinVariantDatset(Dataset):
                                               'var_pheno_descs': pos_pheno_desc
                                               }
                 # self.prot_var_cache.update(self.protein_variants)
-
     
-    def build_var_context_graph(self, use_pheno_desc=False, pheno_desc_dict=None):
+    def build_var_context_graph(self):
         for i, cur_variant in enumerate(self.variant_data):
             if not cur_variant['infer_phenotype']:
                 continue
@@ -467,14 +466,9 @@ class ProteinVariantDatset(Dataset):
             var_idx = cur_variant['var_idx']
             protein_info = self.protein_variants[uprot]
             prot_context_var_idx = protein_info['context_var_idx']
-            var_context_graph = extract_context_graph(var_idx, prot_context_var_idx, protein_info['struct_graph'], 
-                                                      use_pheno_desc=use_pheno_desc, pheno_desc_dict=pheno_desc_dict, 
-                                                      mask_token_id=self.text_tokenizer.mask_token_id, 
-                                                      mask_token=self.text_tokenizer.mask_token, 
-                                                      dist_cutoff=self.max_struct_dist)
+            var_context_graph = extract_context_graph(var_idx, prot_context_var_idx, protein_info['struct_graph'], dist_cutoff=self.max_struct_dist)
             self.num_struct_neighbors.append(var_context_graph.number_of_nodes() - 1)
             cur_variant['var_struct_graph'] = var_context_graph
-
 
     def average_struct_neighbors(self):
         return np.mean(self.num_struct_neighbors)
@@ -841,6 +835,9 @@ def protein_variant_collate_fn(
                 #                                           mask_token_id=text_tokenizer.mask_token_id, mask_token=text_tokenizer.mask_token, dist_cutoff=struct_radius)
                 var_context_graph = elem['var_struct_graph']
                 if var_context_graph.number_of_nodes() > 1:
+                    var_context_graph = update_node_attrs(var_idx, var_context_graph, protein_info_cur['struct_graph'], 
+                                                          use_pheno_desc=use_pheno_desc, pheno_desc_dict=pheno_desc_dict, 
+                                                          mask_token_id=text_tokenizer.mask_token_id, mask_token=text_tokenizer.mask_token)
                     struct_context_pheno_uniq.update(nx.get_node_attributes(var_context_graph, 'pheno_descs').values())
                     var_struct_graphs_raw.append(var_context_graph)
                     has_struct_context = True
@@ -1015,10 +1012,6 @@ def sample_negative(pheno_vocab, pos_pheno_desc):
 def extract_context_graph(var_idx, 
                           prot_context_var_idx, 
                           g_prot, 
-                          use_pheno_desc=False, 
-                          pheno_desc_dict=None, 
-                          mask_token_id=1, 
-                          mask_token='[MASK]',
                           dist_cutoff=25):
     
     var_context_graph = nx.DiGraph()
@@ -1036,30 +1029,40 @@ def extract_context_graph(var_idx,
         if context_idx in dist_to_target:
             edge_dist_list.append((context_idx, var_idx, dist_to_target[context_idx]))
             edge_dist_list.append((context_idx, context_idx, 1e-5))  # add self-loop for context nodes
-    # for context_idx in prot_context_var_idx:
-    #     if context_idx == var_idx:
-    #         continue
-    #     if context_idx not in g_prot:
-    #         continue
-    #     dist = nx.dijkstra_path_length(g_prot, var_idx, context_idx, weight='distance')
-    #     if dist <= dist_cutoff:
-    #         edge_dist_list.append((context_idx, var_idx, dist))
-    #         edge_dist_list.append((context_idx, context_idx, 1e-5))  # add self-loop for context nodes
+
     var_context_graph.add_weighted_edges_from(edge_dist_list, weight='distance')
     
+    return var_context_graph
+    # update_dict = dict()
+    # # nodes = set(prot_context_var_idx + [var_idx])
+    # nodes = var_context_graph.nodes()
+    # for nid in nodes:
+    #     ndata_dict = g_prot.nodes[nid]
+    #     update_dict[nid] = copy.deepcopy(ndata_dict)
+    #     update_dict[nid]['mask'] = 0 if nid != var_idx else 1
+    #     if use_pheno_desc and pheno_desc_dict is not None:
+    #         update_dict[nid]['pheno_descs'] = '{name} {desc}'.format(name=ndata_dict['pheno_descs'], desc=pheno_desc_dict.get(ndata_dict['pheno_descs'], '')).strip()
+    # nx.set_node_attributes(var_context_graph, update_dict)
+    # nx.set_node_attributes(var_context_graph, values={var_idx: {'pheno_idx': mask_token_id, 'pheno_descs': mask_token}})
+    
+    # struct_context_pheno_uniq.update(nx.get_node_attributes(var_context_graph, 'pheno_descs').values())
+    # return var_context_graph
+
+def update_node_attrs(var_idx, var_graph, prot_graph, use_pheno_desc=False, pheno_desc_dict=None, mask_token_id=0, mask_token='[MASK]'):
     update_dict = dict()
     # nodes = set(prot_context_var_idx + [var_idx])
-    nodes = var_context_graph.nodes()
+    nodes = var_graph.nodes()
     for nid in nodes:
-        ndata_dict = g_prot.nodes[nid]
+        ndata_dict = prot_graph.nodes[nid]
         update_dict[nid] = copy.deepcopy(ndata_dict)
         update_dict[nid]['mask'] = 0 if nid != var_idx else 1
         if use_pheno_desc and pheno_desc_dict is not None:
             update_dict[nid]['pheno_descs'] = '{name} {desc}'.format(name=ndata_dict['pheno_descs'], desc=pheno_desc_dict.get(ndata_dict['pheno_descs'], '')).strip()
-    nx.set_node_attributes(var_context_graph, update_dict)
-    nx.set_node_attributes(var_context_graph, values={var_idx: {'pheno_idx': mask_token_id, 'pheno_descs': mask_token}})
+    nx.set_node_attributes(var_graph, update_dict)
+    nx.set_node_attributes(var_graph, values={var_idx: {'pheno_idx': mask_token_id, 'pheno_descs': mask_token}})
     # struct_context_pheno_uniq.update(nx.get_node_attributes(var_context_graph, 'pheno_descs').values())
-    return var_context_graph
+    return var_graph
+
 
 def pad_phenotype_input(raw_input_ids: List[List[int]],  
                         # var_idx_list, 
