@@ -140,6 +140,7 @@ class DiseaseVariantEncoder(nn.Module):
                  dist_fn_name='cosine_sigmoid',
                  init_margin=1,
                  freq_norm_factor=None,
+                 seq_weight_scaler=1,
                  device='cpu',
                  **kwargs):
         super(DiseaseVariantEncoder, self).__init__()
@@ -186,6 +187,7 @@ class DiseaseVariantEncoder(nn.Module):
             gnn_in_dim = gnn_out_dim * num_heads[l]
         
         self.alpha = nn.Parameter(torch.tensor(-1e-3))
+        self.seq_weight_scaler = seq_weight_scaler
         self.struct_pheno_comb = nn.Linear(self.seq_emb_dim + gnn_out_dim + self.text_emb_dim, self.hidden_size) # concatenated embedding of alt_seq, prot_desc, struct_context_pheno
 
         self.dist_fn = _dist_fn_map[dist_fn_name]
@@ -406,8 +408,10 @@ class DiseaseVariantEncoder(nn.Module):
             return seq_contrast_loss.mean(), None, seq_contrast_loss.mean()
         struct_contrast_loss = self.contrast_loss_fn(struct_var_emb, pos_emb[struct_mask], neg_emb[struct_mask])
         combine_contrast_loss = seq_contrast_loss.clone()
-        combine_contrast_loss[struct_mask] = torch.sigmoid(self.alpha) * combine_contrast_loss[struct_mask] + (1 - torch.sigmoid(self.alpha)) * struct_contrast_loss
-        
+        seq_weight = torch.sigmoid(self.alpha) * self.seq_weight_scaler
+        # combine_contrast_loss[struct_mask] = torch.sigmoid(self.alpha) * combine_contrast_loss[struct_mask] + (1 - torch.sigmoid(self.alpha)) * struct_contrast_loss
+        combine_contrast_loss[struct_mask] = seq_weight * combine_contrast_loss[struct_mask] + (1 - seq_weight) * struct_contrast_loss
+
         return seq_contrast_loss.mean(), struct_contrast_loss.mean(), combine_contrast_loss.mean()
 
         # return self.cos_sim_loss_fn(var_emb, pos_emb, targets[0]) + \

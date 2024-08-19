@@ -33,6 +33,7 @@ from metrics import *
 from dev.preprocess.utils import parse_fasta_info
 from models.protein_encoder import DiseaseVariantEncoder
 
+# torch.set_default_dtype(torch.float32)
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -116,7 +117,7 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5,
     return epoch_patho_loss, epoch_pheno_loss, epoch_loss, optimizer
 
 
-def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
+def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5, use_struct_neighbor=False):
     model.eval()
     running_loss = 0
     running_patho_loss = 0
@@ -184,7 +185,7 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
                 pheno_score_pos_str = torch.zeros_like(pheno_score_pos_seq, device=pheno_score_pos_seq.device)
                 pheno_score_neg_str = torch.zeros_like(pheno_score_neg_seq, device=pheno_score_neg_seq.device)
                 if variant_data['use_struct']:
-                    seq_weight = torch.sigmoid(model.alpha.detach()).item()
+                    seq_weight = torch.sigmoid(model.alpha.detach()).item() * model.seq_weight_scaler
                     # pheno_score_pos_str = torch.zeros_like(pheno_score_pos_seq, device=pheno_score_pos_seq.device)
                     pheno_score_pos_str[var_struct_mask] = torch.cosine_similarity(struct_pheno_emb, pos_emb_proj[var_struct_mask])
                     pheno_score_pos[var_struct_mask] = seq_weight * pheno_score_pos_seq[var_struct_mask] + (1 - seq_weight) * pheno_score_pos_str[var_struct_mask]
@@ -262,7 +263,7 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
                          'neg_score': all_pheno_neg_scores,
                          'similarities': np.concatenate(all_similarities, 0)}
     
-    if variant_data['use_struct']:
+    if use_struct_neighbor:
         all_pheno_results.update({
             'seq_weight': seq_weight,
             'str_pred_emb': np.concatenate(all_str_pheno_emb_pred, 0),
@@ -580,6 +581,7 @@ def main():
                                   dist_fn_name=model_args['dist_fn_name'],
                                   init_margin=model_args['margin'],
                                   freq_norm_factor=model_args['freq_norm_factor'],
+                                  seq_weight_scaler=model_args['seq_weight_scaler'],
                                   device=device)
     total_param = 0
     total_param_with_grad = 0
@@ -648,7 +650,8 @@ def main():
         all_pheno_embs = embed_phenotypes(model, device, phenotype_loader)
         # all_pheno_embs = all_pheno_embs.to(device)
         all_pheno_embs = torch.tensor(all_pheno_embs).to(device)
-        train_loss_dict, train_labels, train_scores, train_vars, train_pheno_results = eval_epoch(model, device, train_loader, pheno_vocab_emb=all_pheno_embs, w_l=model_args['w_l'])
+        train_loss_dict, train_labels, train_scores, train_vars, train_pheno_results = eval_epoch(model, device, train_loader, pheno_vocab_emb=all_pheno_embs, 
+                                                                                                  w_l=model_args['w_l'], use_struct_neighbor=data_configs['use_struct_neighbor'])
         train_aupr = compute_aupr(train_labels, train_scores)
         train_auc = compute_roc(train_labels, train_scores)
         train_topk_acc = compute_topk_acc(train_pheno_results['pos_pheno_idx'], train_pheno_results['similarities'], topk_lst=model_args['topk'], label_lst=list(range(len(phenotype_vocab))))
@@ -658,7 +661,8 @@ def main():
                      f'(seq: {train_loss_dict["epoch_seq_pheno_loss"]:.4f} struct: {train_loss_dict["epoch_struct_pheno_loss"]:.4f} seq_weight: {seq_weight:.4f}) '
                      f'auPR={train_aupr:.4f} auROC={train_auc:.4f} top{topk_max}_acc={train_topk_acc[topk_max]:.4f}')
 
-        val_loss_dict, val_labels, val_scores, val_vars, val_pheno_results = eval_epoch(model, device, validation_loader, pheno_vocab_emb=all_pheno_embs, w_l=model_args['w_l'])
+        val_loss_dict, val_labels, val_scores, val_vars, val_pheno_results = eval_epoch(model, device, validation_loader, pheno_vocab_emb=all_pheno_embs, 
+                                                                                        w_l=model_args['w_l'], use_struct_neighbor=data_configs['use_struct_neighbor'])
         # lr_scheduler.step(val_patho_loss)
         val_aupr = compute_aupr(val_labels, val_scores)
         val_auc = compute_roc(val_labels, val_scores)
@@ -672,7 +676,8 @@ def main():
         #              f'(seq: {val_seq_pheno_loss:.4f} struct: {val_struct_pheno_loss:.4f} seq_weight: {seq_weight:.4f}) '
         #              f'auPR={val_aupr:.4f} auROC={val_auc:.4f} top{topk_max}_acc={val_topk_acc[topk_max]:.4f}')
 
-        test_loss_dict, test_labels, test_scores, test_vars, test_pheno_results = eval_epoch(model, device, test_loader, pheno_vocab_emb=all_pheno_embs, w_l=model_args['w_l'])
+        test_loss_dict, test_labels, test_scores, test_vars, test_pheno_results = eval_epoch(model, device, test_loader, pheno_vocab_emb=all_pheno_embs, 
+                                                                                             w_l=model_args['w_l'], use_struct_neighbor=data_configs['use_struct_neighbor'])
         if val_loss_dict["epoch_loss"] < best_val_loss:
             best_val_loss = val_loss_dict["epoch_loss"]
             best_epoch = epoch
@@ -732,7 +737,7 @@ def main():
             tb_writer.add_pr_curve('Test/PR-curve', test_labels, test_scores, epoch)
             tb_writer.add_pr_curve('Val/PR-curve', val_labels, val_scores, epoch)
 
-            tb_writer.add_scalar('alpha', model.alpha.item(), epoch)
+            tb_writer.add_scalar('seq_weight', model.seq_weight_scaler * model.alpha.detach().item(), epoch)
             for loss_key in train_loss_dict.keys():
                 tb_writer.add_scalar('train/{}'.format(loss_key.split('_', 1)[-1]), train_loss_dict[loss_key], epoch)
                 tb_writer.add_scalar('validation/{}'.format(loss_key.split('_', 1)[-1]), val_loss_dict[loss_key], epoch)

@@ -1,6 +1,6 @@
 # config on G2-server with structural context
 exp_dir: ./scratch/
-experiment: dis_esm480_struct_mix
+experiment: dis_esm480_a08_struct_mix
 # experiment: debug
 mode: train
 device: cuda:0
@@ -44,6 +44,7 @@ model:
   dist_fn_name: cosine_sigmoid
   margin: 0.25  # margin for contrast loss
   freq_norm_factor: 32  # normalization factor for in-context phenotype counts
+  seq_weight_scaler: 0.8  # maximum weight for seq-context features
   max_pathogenicity_epochs: 50  # number of epochs to train pathogencity objective
   topk: [20, 50, 100]
 

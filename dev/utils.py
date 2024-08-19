@@ -8,6 +8,7 @@ import dgl
 from datetime import datetime
 from pathlib import Path
 import logging
+import psutil
 
 def str2bool(v):
     """Used in argparse.ArgumentParser.add_argument to indicate
@@ -168,6 +169,11 @@ def view_model_param(model):
     total_param = sum([p.numel() for p in model.parameters()])
 
     return total_param
+
+
+def get_memory_usage():
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss
 
 
 def _save_scores(var_ids, target, pred, name, epoch='', exp_dir='./output', mode='train'):
