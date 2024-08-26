@@ -953,7 +953,7 @@ def protein_variant_collate_fn(
             variant_dict.update({
                 'pos_pheno_name': pos_pheno_name_all,
                 'pos_pheno_desc': pos_pheno_desc_all,
-                'pos_pheno_idx': pos_pheno_idx_all,
+                'pos_pheno_idx': torch.tensor(pos_pheno_idx_all),
                 'pos_pheno_input_ids': pos_pheno_tokenized['input_ids'],
                 'pos_pheno_attention_mask': pos_pheno_tokenized['attention_mask']})
             

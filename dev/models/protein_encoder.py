@@ -197,7 +197,7 @@ class DiseaseVariantEncoder(nn.Module):
         # self.desc_loss_fn = nn.CosineEmbeddingLoss()
         # self.cos_sim_loss_fn = nn.CosineEmbeddingLoss()
         self.contrast_loss_fn = nn.TripletMarginWithDistanceLoss(distance_function=self.dist_fn, margin=init_margin, reduction='none')
-    
+        self.nce_loss_fn = InfoNCELoss()
 
     # def forward(self, seq_input_feat, variant_data, desc_input_feat=None):
         
@@ -433,4 +433,51 @@ class DiseaseVariantEncoder(nn.Module):
                                              clip_negative_at_logit=clip_negative_at_logit,
                                              clip_positive_at_logit=clip_positive_at_logit)
         
-        loss = (torch.sum(loss, axis=(-2, -1)) / (1e-8 + torch.sum(labels.size(0), axis=(-2, -1))))
+        loss = (torch.sum(loss, axis=(-2, -1)) / (1e-8 + torch.sum(labels.size(0), axis=(-2, -1))))    
+
+    def info_nce_loss(self, seq_var_emb, pheno_embs, positive_indices, negative_indices):
+        
+        return self.nce_loss_fn(seq_var_emb, pheno_embs, positive_indices, negative_indices)
+
+
+class InfoNCELoss(nn.Module):
+    """
+    Modified InfoNCE loss
+    """
+    def __init__(self, 
+                 temperature=0.07,
+                 reduce=True,
+                 normalize=True):
+        super(InfoNCELoss, self).__init__()
+        self.temperature = temperature
+        assert self.temperature > 0.0
+        self.reduce = reduce
+        self.normalize = normalize
+
+    def forward(self, query_embs, ref_embs, positive_indices, negative_indices):
+        """
+        query_embs: Tensor of shape (batch_size, embedding_dim)
+        ref_embs: Tensor of shape (vocab_size, embedding_dim)
+        """        
+        # Normalize embeddings to compute cosine similarity
+        if self.normalize:
+            query_embs_norm = F.normalize(query_embs, dim=-1)
+            ref_embs_norm = F.normalize(ref_embs, dim=-1)
+            # negatives = F.normalize(negatives, dim=-1)
+        else:
+            query_embs_norm = query_embs
+            ref_embs_norm = ref_embs
+        
+        batch_size = query_embs.size(0)
+        row_indices = torch.arange(batch_size).unsqueeze(1)
+        indices_all = torch.cat([positive_indices.unsqueeze(1), negative_indices], dim=-1)
+        
+        # positive_embs = ref_embs_norm[positive_indices]  # (batch_size, batch_size)
+        cos_sim_with_temp = torch.matmul(query_embs_norm, ref_embs_norm.t()) / self.temperature  # (batch_size, vocab_size)
+        numer = cos_sim_with_temp[row_indices, positive_indices.unsqueeze(1)]  # (batch_size, )  
+        denom = torch.logsumexp(cos_sim_with_temp[row_indices, indices_all], dim=-1).unsqueeze(1)
+
+        loss = -numer + denom
+        if self.reduce:
+            return loss.mean()
+        return loss

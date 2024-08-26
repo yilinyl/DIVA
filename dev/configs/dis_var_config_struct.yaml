@@ -1,10 +1,10 @@
 exp_dir: /local/storage/yl986/data/dis_var_experiment/
-experiment: dis_esm480_struct
-# experiment: debug
+experiment: dis_esm480_seq_hardneg
+# experiment: debug_hn
 mode: train
-device: cuda:1
+device: cuda:0
 batch_size: 8
-pheno_batch_size: 8
+pheno_batch_size: 32
 scoring: wt-marginals  # one of wt-marginals, masked-marginals
 # output_file: ./dms_ontoprot_wt_score.csv
 init_lr: 0.001
@@ -37,13 +37,15 @@ model:
   # prot_bert_unfreeze: ['bert.encoder.layer.29']  # for OntoProtein
   # text_bert_unfreeze: ['bert.encoder.layer.11']
   text_bert_unfreeze: []
-  w_l: 0.5  # weight applied to pathogenicity loss
+  w_l: 1  # weight applied to pathogenicity loss
   # margin: 0.25  # for cosine
   dist_fn_name: cosine_sigmoid
   margin: 0.25  # margin for contrast loss
   freq_norm_factor: 32  # normalization factor for in-context phenotype counts
   max_pathogenicity_epochs: 50  # number of epochs to train pathogencity objective
   topk: [20, 50, 100]
+  seq_weight_scaler: 1
+  pheno_emb_update_interval: 50
 
 dataset:
   task_name: var_pred
@@ -75,7 +77,7 @@ dataset:
   half_window_size: 64
   # max_phenotype_length: null
   use_protein_desc: True
-  use_struct_neighbor: True
+  use_struct_neighbor: False
   struct_radius_cutoff: 25
   use_struct_vocab: False  # enable structure-aware sequence
   struct_seq_file: '/home/yl986/data/variant_data/pred/prot_combine_seq.json'  # pre-processed structure-aware sequence (SaProt)
