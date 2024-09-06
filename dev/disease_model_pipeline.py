@@ -582,10 +582,10 @@ def main():
 
     if config['use_adapter']:
         model_args['frozen_bert'] = False
-        lora_config = LoraConfig(r=4, 
+        lora_config = LoraConfig(r=8, 
                                  lora_alpha=16, 
                                  target_modules=config['adapter_targets'], 
-                                 lora_dropout=0.1)
+                                 lora_dropout=0.0)
         seq_encoder = LoraModel(seq_encoder, lora_config, 'default')
         text_encoder = LoraModel(text_encoder, lora_config, 'default')
 
@@ -603,11 +603,12 @@ def main():
         # text_unfreeze_layers = ['bert.encoder.layer.11']
         for name, parameters in text_encoder.named_parameters():
             parameters.requires_grad = False
-            for tags in model_args['text_bert_unfreeze']:
-                if tags in name:
-                    parameters.requires_grad = True
-                    unfreeze_params.append(name)
-                    break
+            if model_args['num_warmup_epochs'] == 0:  # No warm-up
+                for tags in model_args['text_bert_unfreeze']:
+                    if tags in name:
+                        parameters.requires_grad = True
+                        unfreeze_params.append(name)
+                        break
     # print(unfreeze_params)
     seq_encoder = seq_encoder.to(device)
     text_encoder = text_encoder.to(device)
@@ -670,6 +671,21 @@ def main():
         # logging.info('Epoch %d' % epoch)
         # if tb_writer:
         #     tb_writer.add_scalar("train/epoch", epoch)
+        if epoch == model_args['num_warmup_epochs']:
+            logging.info(f'Unfreeze selected text encoder parameters after epoch {epoch}')
+            for name, parameters in text_encoder.named_parameters():
+                for tags in model_args['text_bert_unfreeze']:
+                    if tags in name:
+                        parameters.requires_grad = True
+                        unfreeze_params.append(name)
+                        break
+            total_param_with_grad = 0
+            for p in model.parameters():
+                if p.requires_grad:
+                    total_param_with_grad += p.numel()
+                total_param += p.numel()
+            logging.info(f'Updated model parameters (trainable/all): {total_param_with_grad} / {total_param}')
+
         if (epoch > model_args['max_pathogenicity_epochs']) & train_pathogenicity:
             train_pathogenicity = False
             logging.info(f'Disable pathogenicity optimization after epoch {epoch}')
