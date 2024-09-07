@@ -1,6 +1,6 @@
 exp_dir: /local/storage/yl986/data/dis_var_experiment/
-experiment: dis_esm480_seq_hardneg
-# experiment: debug_hn
+experiment: dis_esm480_seq_randneg1
+# experiment: debug
 mode: train
 device: cuda:0
 batch_size: 8
@@ -14,9 +14,10 @@ lr_reduce_factor: 0.5
 lr_schedule_patience: 3
 # clr_reduce_factor: 0.5
 # clr_schedule_patience: 5
-epochs: 30
+epochs: 20
 use_adapter: False  # if true, will use adapter for fine tuning
 adapter_targets: ['key', 'query']
+# adapter_targets:  ["query", "key", "value", "intermediate.dense", "output.dense"]
 
 model:
   type: esm
@@ -45,7 +46,10 @@ model:
   max_pathogenicity_epochs: 50  # number of epochs to train pathogencity objective
   topk: [20, 50, 100]
   seq_weight_scaler: 1
-  pheno_emb_update_interval: 50
+  pheno_emb_update_interval: 10
+  num_warmup_epochs: 0
+  use_hardneg: False
+  n_neg_samples: 1
 
 dataset:
   task_name: var_pred

@@ -416,6 +416,16 @@ class DiseaseVariantEncoder(nn.Module):
 
         # return self.cos_sim_loss_fn(var_emb, pos_emb, targets[0]) + \
         #     self.cos_sim_loss_fn(var_emb, neg_emb, targets[1])
+    
+    def contrast_nce_loss(self, var_emb, pos_emb, neg_emb, temperature=0.07):
+        sim_pos = torch.cosine_similarity(var_emb, pos_emb) / temperature
+        sim_neg = torch.cosine_similarity(var_emb, neg_emb) / temperature
+        sim_scores_all = torch.cat([sim_pos[:, None], sim_neg[:, None]], dim=-1)
+        denom = torch.logsumexp(sim_scores_all, dim=-1)
+
+        loss = -sim_pos + denom
+
+        return loss.mean()
 
     # TODO: ref_aa, alt_aa, label format, how to convert into mask / 1-hot matrix 
     def log_diff_patho_score(self, logits, ref_aa, alt_aa):

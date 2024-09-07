@@ -23,7 +23,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from transformers import AutoModel, AutoTokenizer, BertTokenizer, BertModel, BertForMaskedLM, EsmForMaskedLM, AutoModelForMaskedLM
 from transformers.models.bert.modeling_bert import BertOnlyMLMHead
-from peft import LoraModel, LoraConfig
+# from peft import LoraModel, LoraConfig
 
 from data.dis_var_dataset import ProteinVariantDatset, ProteinVariantDataCollator, PhenotypeDataset, TextDataCollator
 import logging
@@ -78,8 +78,25 @@ def select_hard_negatives(query_embs, ref_embs, positive_indices, topk_escape=50
     return hard_neg_indices
 
 
+def sample_random_negative(vocab_size, positive_indices, n_neg=1):
+    batch_size = len(positive_indices)
+    pheno_idx_all = np.arange(vocab_size)
+    neg_idx_list = []
+    for i in range(batch_size):
+        pos_idx = positive_indices.detach()[i].item()
+        sample_mask = np.zeros(vocab_size, dtype=bool)
+        sample_mask[pos_idx] = True
+        
+        neg_sample_idx = np.random.choice(pheno_idx_all[~sample_mask], size=n_neg, replace=False)  # scalar
+        neg_idx_list.append(neg_sample_idx)
+    
+    negative_indices = torch.tensor(neg_idx_list, device=positive_indices.device)
+
+    return negative_indices
+
+
 def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5, opt_patho=True, 
-                pheno_loader=None, text_emb_update_freq=10):
+                pheno_loader=None, text_emb_update_freq=10, use_hardneg=False, n_neg_samples=100):
     model.train()
     running_loss = 0
     running_patho_loss = 0
@@ -90,6 +107,7 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5,
         # TODO: check batch_data structure
         if not opt_patho and not batch_data['variant']['infer_phenotype']:
             continue
+        # if use_hardneg:
         if batch_idx % text_emb_update_freq == 0:
             all_pheno_emb_list = []
             with torch.no_grad():
@@ -99,6 +117,7 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5,
                     batch_pheno_embs = model.get_pheno_emb(pheno_input_dict, proj=True, agg_opt='cls')
                     all_pheno_emb_list.append(batch_pheno_embs)
                 all_pheno_embs = torch.cat(all_pheno_emb_list, dim=0)
+            pheno_vocab_size = all_pheno_embs.size(0)
 
         seq_feat_dict = load_input_to_device(batch_data['seq_input_feat'], device)
         desc_feat_dict = load_input_to_device(batch_data['desc_input_feat'], device)
@@ -115,20 +134,33 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5,
 
         # patho_loss = model.pathogenicity_loss(logit_diff, batch_labels)
         # patho_loss = model.patho_loss_fn(logit_diff, batch_labels.float())
+        if batch_data['variant']['infer_phenotype']:
+            pos_pheno_idx = variant_data['pos_pheno_idx']
+            if use_hardneg:
+                neg_pheno_idx = select_hard_negatives(seq_pheno_emb, all_pheno_embs, pos_pheno_idx, n_negatives=n_neg_samples)
+            else:
+                # neg_pheno_idx = variant_data['neg_pheno_idx'].unsqueeze(1)
+                neg_pheno_idx = sample_random_negative(pheno_vocab_size, pos_pheno_idx, n_neg=n_neg_samples)
         if opt_patho:
             if batch_data['variant']['infer_phenotype']:
-                # contrast_loss(self, seq_var_emb, pos_emb, neg_emb, struct_var_emb=None, struct_mask=None)
-                pos_pheno_idx = variant_data['pos_pheno_idx']
-                neg_pheno_idx = select_hard_negatives(seq_pheno_emb, all_pheno_embs, pos_pheno_idx)
+                # pos_pheno_idx = variant_data['pos_pheno_idx']
+                # if use_hardneg:
                 contrast_loss = model.info_nce_loss(seq_pheno_emb, all_pheno_embs, pos_pheno_idx, neg_pheno_idx)
-                # seq_contrast_loss, struct_contrast_loss, contrast_loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb, struct_mask=variant_data['has_struct_context'])
+                    # neg_pheno_idx = select_hard_negatives(seq_pheno_emb, all_pheno_embs, pos_pheno_idx)
+                # else:
+                #     contrast_loss = model.contrast_nce_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj)
+                    # seq_contrast_loss, struct_contrast_loss, contrast_loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb, struct_mask=variant_data['has_struct_context'])
                 loss = contrast_loss + patho_loss * w_l
             else:
                 loss = patho_loss
         else:
             # assert batch_data['variant']['infer_phenotype']
+            # pos_pheno_idx = variant_data['pos_pheno_idx']
+            # if use_hardneg:
             contrast_loss = model.info_nce_loss(seq_pheno_emb, all_pheno_embs, pos_pheno_idx, neg_pheno_idx)
-            # seq_contrast_loss, struct_contrast_loss, contrast_loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb, struct_mask=variant_data['has_struct_context'])
+            # else:
+            #     contrast_loss = model.contrast_nce_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj)
+                # seq_contrast_loss, struct_contrast_loss, contrast_loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb, struct_mask=variant_data['has_struct_context'])
             loss = contrast_loss
 
         loss.backward()
@@ -580,15 +612,6 @@ def main():
                                                use_struct_neighbor=data_configs['use_struct_neighbor'], struct_radius_cutoff=data_configs['struct_radius_cutoff'])
     test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
 
-    if config['use_adapter']:
-        model_args['frozen_bert'] = False
-        lora_config = LoraConfig(r=8, 
-                                 lora_alpha=16, 
-                                 target_modules=config['adapter_targets'], 
-                                 lora_dropout=0.0)
-        seq_encoder = LoraModel(seq_encoder, lora_config, 'default')
-        text_encoder = LoraModel(text_encoder, lora_config, 'default')
-
     unfreeze_params = []
     if model_args['frozen_bert']:
         # prot_unfreeze_layers = ['esm.encoder.layer.11']
@@ -702,13 +725,15 @@ def main():
                 total_param += p.numel()
             logging.info(f'Updated model parameters (trainable/all): {total_param_with_grad} / {total_param}')
         logging.info('Epoch %d' % epoch)
-        train_patho_loss, train_pheno_loss, train_loss, optimizer = train_epoch(model, optimizer, device, train_loader, w_l=model_args['w_l'], opt_patho=train_pathogenicity, pheno_loader=phenotype_loader)
+        train_patho_loss, train_pheno_loss, train_loss, optimizer = train_epoch(model, optimizer, device, train_loader, w_l=model_args['w_l'], opt_patho=train_pathogenicity, 
+                                                                                pheno_loader=phenotype_loader, text_emb_update_freq=model_args['pheno_emb_update_interval'], 
+                                                                                use_hardneg=model_args['use_hardneg'], n_neg_samples=model_args['n_neg_samples'])
         # train_patho_loss, train_pheno_loss, train_loss, optimizer, contrast_optimizer = train_epoch_sep(model, optimizer, contrast_optimizer, device, train_loader, w_l=model_args['w_l'])
         all_pheno_embs = embed_phenotypes(model, device, phenotype_loader)
         # all_pheno_embs = all_pheno_embs.to(device)
         all_pheno_embs = torch.tensor(all_pheno_embs).to(device)
         train_labels, train_scores, train_vars, train_pheno_results = eval_epoch(model, device, train_loader, pheno_vocab_emb=all_pheno_embs, 
-                                                                                                  w_l=model_args['w_l'], use_struct_neighbor=data_configs['use_struct_neighbor'])
+                                                                                 w_l=model_args['w_l'], use_struct_neighbor=data_configs['use_struct_neighbor'])
         train_aupr = compute_aupr(train_labels, train_scores)
         train_auc = compute_roc(train_labels, train_scores)
         train_topk_acc = compute_topk_acc(train_pheno_results['pos_pheno_idx'], train_pheno_results['similarities'], topk_lst=model_args['topk'], label_lst=list(range(len(phenotype_vocab))))
@@ -721,7 +746,7 @@ def main():
         #              f'auPR={train_aupr:.4f} auROC={train_auc:.4f} top{topk_max}_acc={train_topk_acc[topk_max]:.4f}')
 
         val_labels, val_scores, val_vars, val_pheno_results = eval_epoch(model, device, validation_loader, pheno_vocab_emb=all_pheno_embs, 
-                                                                                        w_l=model_args['w_l'], use_struct_neighbor=data_configs['use_struct_neighbor'])
+                                                                         w_l=model_args['w_l'], use_struct_neighbor=data_configs['use_struct_neighbor'])
         # lr_scheduler.step(val_patho_loss)
         val_aupr = compute_aupr(val_labels, val_scores)
         val_auc = compute_roc(val_labels, val_scores)
@@ -737,7 +762,7 @@ def main():
         #              f'auPR={val_aupr:.4f} auROC={val_auc:.4f} top{topk_max}_acc={val_topk_acc[topk_max]:.4f}')
 
         test_labels, test_scores, test_vars, test_pheno_results = eval_epoch(model, device, test_loader, pheno_vocab_emb=all_pheno_embs, 
-                                                                                             w_l=model_args['w_l'], use_struct_neighbor=data_configs['use_struct_neighbor'])
+                                                                             w_l=model_args['w_l'], use_struct_neighbor=data_configs['use_struct_neighbor'])
         # print('# Loss: train= {0:.5f}; validation= {1:.5f}; test= {2:.5f};'.format(train_loss, val_loss, test_loss))
         test_aupr = compute_aupr(test_labels, test_scores)
         test_auc = compute_roc(test_labels, test_scores)

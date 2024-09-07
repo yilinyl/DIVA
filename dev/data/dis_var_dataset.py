@@ -777,6 +777,7 @@ def protein_variant_collate_fn(
     pos_pheno_name_all = []
     pos_pheno_idx_all = []
     neg_pheno_desc_all = []
+    neg_pheno_idx_all = []
     pos_pheno_known_vec = []
     phenos_in_frame_all = []
     context_pheno_dict = defaultdict(list)  # for context-disease information
@@ -886,6 +887,7 @@ def protein_variant_collate_fn(
                 else:
                     neg_pheno_desc = neg_pheno_name
                 neg_pheno_desc_all.append(neg_pheno_desc)
+                neg_pheno_idx_all.append(neg_pheno_idx)
 
         # phenos_all.extend([prot_desc] + phenos_in_frame_cur)
             # max_pheno_length = max(max_pheno_length, phenos_input_ids_cur.shape[-1])
@@ -960,6 +962,7 @@ def protein_variant_collate_fn(
         if mode == 'train':
             neg_pheno_tokenized = text_tokenizer(neg_pheno_desc_all, padding=True, return_tensors='pt', truncation=True, max_length=max_pheno_desc_length)
             variant_dict.update({
+                'neg_pheno_idx': torch.tensor(neg_pheno_idx_all),
                 'neg_pheno_desc': neg_pheno_desc_all,
                 'neg_pheno_input_ids': neg_pheno_tokenized['input_ids'],
                 'neg_pheno_attention_mask': neg_pheno_tokenized['attention_mask']})
