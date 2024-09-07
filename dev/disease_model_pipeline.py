@@ -90,7 +90,7 @@ def sample_random_negative(vocab_size, positive_indices, n_neg=1):
         neg_sample_idx = np.random.choice(pheno_idx_all[~sample_mask], size=n_neg, replace=False)  # scalar
         neg_idx_list.append(neg_sample_idx)
     
-    negative_indices = torch.tensor(neg_idx_list, device=positive_indices.device)
+    negative_indices = torch.tensor(np.array(neg_idx_list), device=positive_indices.device)
 
     return negative_indices
 
