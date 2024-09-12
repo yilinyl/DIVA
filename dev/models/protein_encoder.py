@@ -46,6 +46,7 @@ class ProteinEncoder(nn.Module):
             desc_outputs = self.text_encoder(
                 desc_input_data['input_ids'],
                 attention_mask=desc_input_data['attention_mask'],
+                token_type_ids=torch.zeros(desc_input_data['input_ids'].size(), dtype=torch.long, device=self.device),
                 # token_type_ids=desc_input_data['token_type_ids'],
                 output_attentions=False,
                 output_hidden_states=True,

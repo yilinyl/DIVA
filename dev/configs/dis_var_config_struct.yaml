@@ -80,7 +80,6 @@ dataset:
   max_protein_seq_length: 1024
   half_window_size: 64
   # max_phenotype_length: null
-  use_protein_desc: True
   use_struct_neighbor: False
   struct_radius_cutoff: 25
   use_struct_vocab: False  # enable structure-aware sequence

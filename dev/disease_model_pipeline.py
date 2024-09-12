@@ -381,7 +381,7 @@ def gpu_setup(device='cpu'):
     return device
 
 
-def env_setup(args, config):
+def env_setup(args, config, use_timestamp=True):
     
     device = gpu_setup(config['device'])
     now = datetime.now()
@@ -391,9 +391,13 @@ def env_setup(args, config):
         config['exp_dir'] = args.exp_dir
     if args.experiment is not None:
         config['experiment'] = args.experiment
-    config['exp_dir'] = '{exp_root}/{name}/{date_time}'.format(exp_root=config['exp_dir'],
-                                                               name=config['experiment'],
-                                                               date_time=date_time)
+    if use_timestamp:
+        config['exp_dir'] = '{exp_root}/{name}/{date_time}'.format(exp_root=config['exp_dir'],
+                                                                name=config['experiment'],
+                                                                date_time=date_time)
+    else:
+        config['exp_dir'] = '{exp_root}/{name}'.format(exp_root=config['exp_dir'],
+                                                                name=config['experiment'])
     # Set up logging file
     setup_logger(config['exp_dir'], log_prefix=config['mode'], log_level=args.log_level)
     logging.info(json.dumps(config, indent=4))
