@@ -1,21 +1,21 @@
 # config on G2-server with structural context
 exp_dir: ./scratch/
-experiment: dis_esm480_pm_seq_hardneg_warmstart
-# experiment: debug_lora
+experiment: dis_esm480_seq_randneg500_i50
+# experiment: debug
 mode: train
 device: cuda:0
 batch_size: 16
 pheno_batch_size: 32
 scoring: wt-marginals  # one of wt-marginals, masked-marginals
 # output_file: ./dms_ontoprot_wt_score.csv
-init_lr: 0.0001
+init_lr: 0.001
 # init_clr: 0.002
 # clr_t0: 10
 # lr_reduce_factor: 0.5
 # lr_schedule_patience: 3
 # clr_reduce_factor: 0.5
 # clr_schedule_patience: 5
-epochs: 30
+epochs: 20
 use_adapter: False  # if true, will use adapter for fine tuning
 adapter_targets: ['key', 'query']
 #adapter_targets:  ["query", "key", "value", "intermediate.dense", "output.dense"]
@@ -39,18 +39,20 @@ model:
   prot_bert_unfreeze: ['esm.encoder.layer.11']  # for esm-2 480
   # prot_bert_unfreeze: ['bert.encoder.layer.29']  # for OntoProtein
   # text_bert_unfreeze: ['bert.encoder.layer.11']
-  text_bert_unfreeze: ['bert.encoder.layer.11']
-  # text_bert_unfreeze: []
+  # text_bert_unfreeze: ['bert.encoder.layer.11']
+  text_bert_unfreeze: []
   w_l: 1  # weight applied to pathogenicity loss
   # margin: 0.25  # for cosine
   dist_fn_name: cosine_sigmoid
   margin: 0.25  # margin for contrast loss
   freq_norm_factor: 32  # normalization factor for in-context phenotype counts
-  seq_weight_scaler: 1  # maximum weight for seq-context features
   max_pathogenicity_epochs: 50  # number of epochs to train pathogencity objective
-  topk: [20, 50, 100]
+  num_warmup_epochs: 0
+  topk: [10, 20, 50, 100]
+  seq_weight_scaler: 1
   pheno_emb_update_interval: 50
-  num_warmup_epochs: 1
+  use_hardneg: False
+  n_neg_samples: 500
 
 dataset:
   task_name: var_pred
