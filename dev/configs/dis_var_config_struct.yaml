@@ -1,5 +1,5 @@
 exp_dir: /local/storage/yl986/data/dis_var_experiment/
-experiment: dis_esm480_seq_randneg1
+experiment: dis_esm480_seq_hard100_attn
 # experiment: debug
 mode: train
 device: cuda:0
@@ -14,7 +14,7 @@ lr_reduce_factor: 0.5
 lr_schedule_patience: 3
 # clr_reduce_factor: 0.5
 # clr_schedule_patience: 5
-epochs: 20
+epochs: 40
 use_adapter: False  # if true, will use adapter for fine tuning
 adapter_targets: ['key', 'query']
 # adapter_targets:  ["query", "key", "value", "intermediate.dense", "output.dense"]
@@ -44,12 +44,12 @@ model:
   margin: 0.25  # margin for contrast loss
   freq_norm_factor: 32  # normalization factor for in-context phenotype counts
   max_pathogenicity_epochs: 50  # number of epochs to train pathogencity objective
-  topk: [20, 50, 100]
+  topk: [1, 10, 20, 50, 100]
   seq_weight_scaler: 1
-  pheno_emb_update_interval: 10
+  pheno_emb_update_interval: 50
   num_warmup_epochs: 0
-  use_hardneg: False
-  n_neg_samples: 1
+  use_hardneg: True
+  n_neg_samples: 100
 
 dataset:
   task_name: var_pred
@@ -69,7 +69,7 @@ dataset:
   phenotype_vocab_file: /local/storage/yl986/data/variant_data/pred/pheno_select/phenotype_vocab.txt
   phenotype_desc_file: /local/storage/yl986/data/variant_data/short_name2desc.json  # phenotype name-to-description
   use_pheno_desc: True
-  context_agg_option: concat
+  context_agg_option: stack
   # pheno_emb_cache_file:
   pid_col: UniProt
   pos_col: Protein_position

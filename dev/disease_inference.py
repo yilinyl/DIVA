@@ -32,7 +32,7 @@ from datetime import datetime
 from utils import str2bool, setup_logger, set_seed, load_input_to_device, _save_scores
 from metrics import *
 from dev.preprocess.utils import parse_fasta_info
-from models.protein_encoder import DiseaseVariantEncoder
+from models.protein_encoder import DiseaseVariantAttnEncoder
 
 
 def parse_args():
@@ -310,7 +310,7 @@ if __name__ == '__main__':
     text_encoder = BertForMaskedLM(text_config)
     # seq_encoder = seq_encoder.to(device)
     # text_encoder = text_encoder.to(device)
-    model = DiseaseVariantEncoder(seq_encoder=seq_encoder,
+    model = DiseaseVariantAttnEncoder(seq_encoder=seq_encoder,
                                   text_encoder=text_encoder,
                                   n_residue_types=protein_tokenizer.vocab_size,
                                   hidden_size=512,

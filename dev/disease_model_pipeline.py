@@ -22,8 +22,6 @@ from torch.utils.data.dataloader import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from transformers import AutoModel, AutoTokenizer, BertTokenizer, BertModel, BertForMaskedLM, EsmForMaskedLM, AutoModelForMaskedLM
-from transformers.models.bert.modeling_bert import BertOnlyMLMHead
-# from peft import LoraModel, LoraConfig
 
 from data.dis_var_dataset import ProteinVariantDatset, ProteinVariantDataCollator, PhenotypeDataset, TextDataCollator
 import logging
@@ -31,7 +29,7 @@ from datetime import datetime
 from utils import str2bool, setup_logger, set_seed, load_input_to_device, _save_scores
 from metrics import *
 from dev.preprocess.utils import parse_fasta_info
-from models.protein_encoder import DiseaseVariantEncoder
+from models.protein_encoder import DiseaseVariantAttnEncoder
 
 # torch.set_default_dtype(torch.float32)
 
@@ -639,7 +637,7 @@ def main():
     # print(unfreeze_params)
     seq_encoder = seq_encoder.to(device)
     text_encoder = text_encoder.to(device)
-    model = DiseaseVariantEncoder(seq_encoder=seq_encoder,
+    model = DiseaseVariantAttnEncoder(seq_encoder=seq_encoder,
                                   text_encoder=text_encoder,
                                   n_residue_types=protein_tokenizer.vocab_size,
                                   hidden_size=512,
@@ -661,19 +659,7 @@ def main():
     model = model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=config['init_lr'])
     logging.info('Initializing optimizers...')
-    # optimizer = optim.AdamW(model.parameters(), lr=config['init_lr'])
-    # lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    #     optimizer, factor=config['lr_reduce_factor'], patience=config['lr_schedule_patience'],
-    # )
-    # contrast_optimizer = optim.Adam(model.parameters(), lr=config['init_clr'])
-    # clr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    #     optimizer, factor=config['clr_reduce_factor'], patience=config['clr_schedule_patience'],
-    # )
-    # lr_scheduler_contrastive = (
-    #         torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-    #             opt_contrastive, T_0=config['clr_t0']
-    #         )
-    #     )
+
     logging.info("Training starts...")
     # best_ep_scores_train = None
     # best_ep_labels_train = None
@@ -745,9 +731,6 @@ def main():
         data_name = 'train'
         logging.info(f'<{data_name}> loss={train_loss:.4f} patho-loss={train_patho_loss:.4f} pheno-loss={train_pheno_loss:.4f} '
                      f'auPR={train_aupr:.4f} auROC={train_auc:.4f} top{topk_max}_acc={train_topk_acc[topk_max]:.4f}')
-        # logging.info(f'<{data_name}> loss={train_loss_dict["epoch_loss"]:.4f} patho-loss={train_loss_dict["epoch_patho_loss"]:.4f} pheno-loss={train_loss_dict["epoch_pheno_loss"]:.4f} '
-        #              f'(seq: {train_loss_dict["epoch_seq_pheno_loss"]:.4f} struct: {train_loss_dict["epoch_struct_pheno_loss"]:.4f} seq_weight: {seq_weight:.4f}) '
-        #              f'auPR={train_aupr:.4f} auROC={train_auc:.4f} top{topk_max}_acc={train_topk_acc[topk_max]:.4f}')
 
         val_labels, val_scores, val_vars, val_pheno_results = eval_epoch(model, device, validation_loader, pheno_vocab_emb=all_pheno_embs, 
                                                                          w_l=model_args['w_l'], use_struct_neighbor=data_configs['use_struct_neighbor'])
@@ -758,12 +741,6 @@ def main():
 
         data_name = 'validation'
         logging.info(f'<{data_name}> auPR={val_aupr:.4f} auROC={val_auc:.4f} top{topk_max}_acc={val_topk_acc[topk_max]:.4f}')
-        # logging.info(f'<{data_name}> loss={val_loss_dict["epoch_loss"]:.4f} patho-loss={val_loss_dict["epoch_patho_loss"]:.4f} pheno-loss={val_loss_dict["epoch_pheno_loss"]:.4f} '
-        #              f'(seq: {val_loss_dict["epoch_seq_pheno_loss"]:.4f} struct: {val_loss_dict["epoch_struct_pheno_loss"]:.4f} seq_weight: {seq_weight:.4f}) '
-        #              f'auPR={val_aupr:.4f} auROC={val_auc:.4f} top{topk_max}_acc={val_topk_acc[topk_max]:.4f}')
-        # logging.info(f'<{data_name}> loss={val_loss:.4f} patho-loss={val_patho_loss:.4f} pheno-loss={val_pheno_loss:.4f} '
-        #              f'(seq: {val_seq_pheno_loss:.4f} struct: {val_struct_pheno_loss:.4f} seq_weight: {seq_weight:.4f}) '
-        #              f'auPR={val_aupr:.4f} auROC={val_auc:.4f} top{topk_max}_acc={val_topk_acc[topk_max]:.4f}')
 
         test_labels, test_scores, test_vars, test_pheno_results = eval_epoch(model, device, test_loader, pheno_vocab_emb=all_pheno_embs, 
                                                                              w_l=model_args['w_l'], use_struct_neighbor=data_configs['use_struct_neighbor'])
@@ -774,13 +751,7 @@ def main():
 
         data_name = 'test'
         logging.info(f'<{data_name}> auPR={test_aupr:.4f} auROC={test_auc:.4f} top{topk_max}_acc={test_topk_acc[topk_max]:.4f}')
-        # logging.info(f'<{data_name}> loss={test_loss_dict["epoch_loss"]:.4f} patho-loss={test_loss_dict["epoch_patho_loss"]:.4f} pheno-loss={test_loss_dict["epoch_pheno_loss"]:.4f} '
-        #              f'(seq: {test_loss_dict["epoch_seq_pheno_loss"]:.4f} struct: {test_loss_dict["epoch_struct_pheno_loss"]:.4f} seq_weight: {seq_weight:.4f}) '
-        #              f'auPR={test_aupr:.4f} auROC={test_auc:.4f} top{topk_max}_acc={test_topk_acc[topk_max]:.4f}')
-        # logging.info(f'<{data_name}> loss={test_loss:.4f} patho-loss={test_patho_loss:.4f} pheno-loss={test_pheno_loss:.4f} '
-        #              f'(seq: {test_seq_pheno_loss:.4f} struct: {test_struct_pheno_loss:.4f} seq_weight: {seq_weight:.4f}) '
-        #              f'auPR={test_aupr:.4f} auROC={test_auc:.4f} top{topk_max}_acc={test_topk_acc[topk_max]:.4f}')
-        # if val_loss_dict["epoch_patho_loss"] < best_patho_loss:
+        
         if val_aupr > best_val_aupr:
             best_val_aupr = val_aupr
             # best_patho_loss = val_loss_dict["epoch_patho_loss"]
