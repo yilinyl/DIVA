@@ -700,21 +700,27 @@ def fetch_phenotypes_in_frame(
         # target_idx = var_idx - start
 
         pheno_in_frame = []
+        context_pheno_idx_list = []  # position index for contextual disease variants
         for i, idx in enumerate(sorted(set(context_var_idx + [var_idx]))):
             if idx == var_idx:
                 pheno_in_frame.append(mask_token)
+                context_pheno_idx_list.append(idx)
             elif idx in range(start, end+1):
                 if include_unknown or pos_pheno_descs[idx] != unknown_token:
                     pheno_in_frame.append(pos_pheno_descs[idx])
+                    context_pheno_idx_list.append(idx)
             if idx > end:
                 break
+
         target_pheno_loc = pheno_in_frame.index(mask_token)
         if max_num:
             if len(pheno_in_frame) > max_num:
                 if target_pheno_loc <= max_num - 1:
                     pheno_in_frame = pheno_in_frame[:max_num]  # right truncation
+                    context_pheno_idx_list = context_pheno_idx_list[:max_num]
                 else:
                     pheno_in_frame = pheno_in_frame[-max_num:]
+                    context_pheno_idx_list = context_pheno_idx_list[-max_num:]
         
         # pheno_in_frame.pop(target_pheno_loc)
         pheno_desc_in_frame = []
@@ -723,9 +729,9 @@ def fetch_phenotypes_in_frame(
                 pheno_desc = '{name} {desc}'.format(name=name, desc=pheno_desc_dict.get(name, '')).strip()
                 pheno_desc_in_frame.append(pheno_desc)
             
-            return pheno_desc_in_frame
+            return pheno_desc_in_frame, context_pheno_idx_list
 
-        return pheno_in_frame
+        return pheno_in_frame, context_pheno_idx_list
 
 
 def protein_variant_collate_fn(
@@ -825,11 +831,11 @@ def protein_variant_collate_fn(
         # for var_idx in var_idx_lst:
         has_struct_context = False
         if elem['infer_phenotype']:
-            phenos_in_frame_cur = fetch_phenotypes_in_frame(var_idx, prot_lengths[prot_idx_cur], prot_context_var_idx, 
-                                                            protein_info_cur['var_pheno_descs'], half_window_size, max_context_phenos, 
-                                                            use_pheno_desc=use_pheno_desc, pheno_desc_dict=pheno_desc_dict,
-                                                            mask_token=text_tokenizer.mask_token, unknown_token=text_tokenizer.unk_token,
-                                                            include_unknown=include_unknown)
+            phenos_in_frame_cur, context_pheno_var_idx_cur = fetch_phenotypes_in_frame(var_idx, prot_lengths[prot_idx_cur], prot_context_var_idx, 
+                                                                                   protein_info_cur['var_pheno_descs'], half_window_size, max_context_phenos, 
+                                                                                   use_pheno_desc=use_pheno_desc, pheno_desc_dict=pheno_desc_dict,
+                                                                                   mask_token=text_tokenizer.mask_token, unknown_token=text_tokenizer.unk_token,
+                                                                                   include_unknown=include_unknown)
             patho_var_prot_idx.append(prot_idx_cur)
             pheno_var_names.append(elem['id'])
             if has_phenotype_label:
@@ -860,25 +866,30 @@ def protein_variant_collate_fn(
                     # var_struct_graphs.append(dgl.from_networkx(var_context_graph, node_attrs=['pheno_idx'], edge_attrs=['distance']))
             has_struct_context_all.append(has_struct_context)
 
-            if context_agg_opt == 'count':
-                target_idx = phenos_in_frame_cur.index(text_tokenizer.mask_token)
-                phenos_in_frame_cur.pop(target_idx)  # remove mask token at target idx
-                if not phenos_in_frame_cur:
-                    phenos_in_frame_cur.append(text_tokenizer.unk_token)
-                context_count_dict = Counter(phenos_in_frame_cur)
-                pheno_list_cur, pheno_counts_cur = list(context_count_dict.keys()), list(context_count_dict.values())
-                # phenos_in_frame_all.extend(list(context_count_dict.keys()))
-                context_pheno_dict['phenotype'].extend(pheno_list_cur)
-                context_pheno_dict['counts'].extend(pheno_counts_cur)
-                context_pheno_dict['indice'].extend([pheno_var_indice]*len(pheno_list_cur))  # indice of variant in the batch
-            else:
+            # if context_agg_opt == 'count':
+            #     target_idx = phenos_in_frame_cur.index(text_tokenizer.mask_token)
+            #     phenos_in_frame_cur.pop(target_idx)  # remove mask token at target idx
+            #     if not phenos_in_frame_cur:
+            #         phenos_in_frame_cur.append(text_tokenizer.unk_token)
+            #     context_count_dict = Counter(phenos_in_frame_cur)
+            #     pheno_list_cur, pheno_counts_cur = list(context_count_dict.keys()), list(context_count_dict.values())
+            #     # phenos_in_frame_all.extend(list(context_count_dict.keys()))
+            #     context_pheno_dict['phenotype'].extend(pheno_list_cur)
+            #     # context_pheno_dict['counts'].extend(pheno_counts_cur)
+            #     context_pheno_dict['indice'].extend([pheno_var_indice]*len(pheno_list_cur))  # indice of variant in the batch
+            # else:
+            if context_agg_opt == 'concat':
                 context_info_joined = text_tokenizer.sep_token.join(phenos_in_frame_cur)  # remove protein desc from context (treat separately)
                 # phenos_in_frame_all.append(context_info_joined)
                 context_pheno_dict['phenotype'].append(context_info_joined)
-                context_pheno_dict['counts'].append(1)
-                context_pheno_dict['indice'].append(pheno_var_indice)
+            else:  # stack
+                context_pheno_dict['phenotype'].extend(phenos_in_frame_cur)  # modified
+            # context_pheno_dict['counts'].append(1)
+            # context_pheno_dict['indice'].extend([pheno_var_indice] * len(phenos_in_frame_cur))
+            context_pheno_dict['size'].append(len(context_pheno_var_idx_cur))  # number of contextual disease variants
+            context_pheno_dict['position_idx'].extend(context_pheno_var_idx_cur)  # position index of each disease variant
             # phenos_in_frame_all.append([prot_desc] + phenos_in_frame_cur)
-            pheno_var_indice += 1
+            # pheno_var_indice += 1
 
             if mode == 'train':
                 neg_pheno_idx, neg_pheno_name = sample_negative(pheno_vocab, pos_pheno_name)
@@ -918,9 +929,10 @@ def protein_variant_collate_fn(
         # batch_pheno_tokenized = text_tokenizer(phenos_in_frame_all, padding=True, return_tensors='pt', truncation=True, max_length=max_pheno_desc_length)
         batch_pheno_tokenized = text_tokenizer(context_pheno_dict['phenotype'], padding=True, return_tensors='pt', truncation=True, max_length=max_pheno_desc_length)
         batch_pheno_input_ids = batch_pheno_tokenized['input_ids']
+        batch_uniq_input_ids, batch_uniq_indices = torch.unique(batch_pheno_input_ids, dim=0, return_inverse=True)
 
         # batch_pheno_input_ids = torch.stack(pheno_input_ids_padded)  # n_variants, max_phenos_in_frame + 1, max_pheno_length
-        batch_pheno_attenton_mask = (batch_pheno_input_ids != text_tokenizer.pad_token_id).long()
+        batch_pheno_attenton_mask = (batch_uniq_input_ids != text_tokenizer.pad_token_id).long()
         variant_dict = {
             'indices': [elem['indice'] for elem in batch_data_raw], 
             'var_pos': [elem['var_pos'] for elem in batch_data_raw],
@@ -931,15 +943,12 @@ def protein_variant_collate_fn(
             'ref_aa': torch.LongTensor(ref_aa),
             'alt_aa': torch.LongTensor(alt_aa),
             'infer_phenotype': True,
-            # 'pos_pheno_name': pos_pheno_name_all,
-            # 'pos_pheno_desc': pos_pheno_desc_all,
-            # 'pos_pheno_idx': pos_pheno_idx_all,
-            # 'pos_pheno_input_ids': pos_pheno_tokenized['input_ids'],
-            # 'pos_pheno_attention_mask': pos_pheno_tokenized['attention_mask'],
-            'context_pheno_input_ids': batch_pheno_input_ids,
+            'context_pheno_input_ids': batch_uniq_input_ids,
             'context_pheno_attention_mask': batch_pheno_attenton_mask,
-            'context_pheno_indices': torch.LongTensor(context_pheno_dict['indice']),
-            'context_pheno_counts': torch.tensor(context_pheno_dict['counts']),
+            'context_pheno_indices': batch_uniq_indices,
+            # 'context_pheno_indices': torch.LongTensor(context_pheno_dict['indice']),
+            "context_pheno_positions": torch.LongTensor(context_pheno_dict['position_idx']),
+            'context_pheno_size': context_pheno_dict['size'],  # list
             # 'n_variants': [len(elem['alt_aa']) for elem in batch_data_raw],
             'patho_var_prot_idx': patho_var_prot_idx,
             'pos_pheno_avail': pos_pheno_known_vec,
