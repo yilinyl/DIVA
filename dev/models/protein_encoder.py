@@ -14,7 +14,7 @@ from transformers import BertModel, BertTokenizer
 from transformers import PreTrainedTokenizerBase, PreTrainedModel
 import pandas as pd
 
-from .model_utils import *
+from .loss import *
 
 _dist_fn_map = {'euclidean': nn.PairwiseDistance(),
                 'cosine_sigmoid': sigmoid_cosine_distance_p}

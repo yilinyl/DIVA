@@ -26,9 +26,10 @@ from transformers import AutoModel, AutoTokenizer, BertTokenizer, BertModel, Ber
 from data.dis_var_dataset import ProteinVariantDatset, ProteinVariantDataCollator, PhenotypeDataset, TextDataCollator
 import logging
 from datetime import datetime
-from utils import str2bool, setup_logger, set_seed, load_input_to_device, _save_scores
+from utils import str2bool, env_setup, load_input_to_device, _save_scores, load_config
 from metrics import *
 from dev.preprocess.utils import parse_fasta_info
+from models.model_utils import sample_random_negative, select_hard_negatives, embed_phenotypes
 from models.protein_encoder import DiseaseVariantAttnEncoder
 
 # torch.set_default_dtype(torch.float32)
@@ -51,46 +52,6 @@ def parse_args():
     args = parser.parse_args()
 
     return args
-
-
-def select_hard_negatives(query_embs, ref_embs, positive_indices, topk_escape=50, n_negatives=100):
-    """
-    pred_embs: Tensors of shape (batch_size, embedding_dim)
-    vocab_embs: Tensors of shape (vocab_size, embedding_dim)
-    positive_indices: Tensors of shape (batch_size, )
-    """
-    pred_embs_norm = F.normalize(query_embs, dim=-1)
-    vocab_embs_norm = F.normalize(ref_embs, dim=-1)
-    positive_embs = vocab_embs_norm[positive_indices]  # (batch_size, embedding_dim)
-    sim_with_pred = torch.matmul(pred_embs_norm, vocab_embs_norm.t())  # (batch_size, vocab_size)
-    sim_with_positive = torch.matmul(positive_embs, vocab_embs_norm.t())
-    batch_size = positive_embs.size(0)
-
-    escape_indices = torch.topk(sim_with_positive, k=topk_escape, dim=-1).indices
-    row_indices = torch.arange(batch_size).unsqueeze(1)
-    mask = torch.zeros_like(sim_with_positive)
-    mask[row_indices, escape_indices] = 1
-    sim_with_positive[mask.bool()] = -1
-    hard_neg_indices = torch.topk(sim_with_pred, k=n_negatives).indices
-
-    return hard_neg_indices
-
-
-def sample_random_negative(vocab_size, positive_indices, n_neg=1):
-    batch_size = len(positive_indices)
-    pheno_idx_all = np.arange(vocab_size)
-    neg_idx_list = []
-    for i in range(batch_size):
-        pos_idx = positive_indices.detach()[i].item()
-        sample_mask = np.zeros(vocab_size, dtype=bool)
-        sample_mask[pos_idx] = True
-        
-        neg_sample_idx = np.random.choice(pheno_idx_all[~sample_mask], size=n_neg, replace=False)  # scalar
-        neg_idx_list.append(neg_sample_idx)
-    
-    negative_indices = torch.tensor(np.array(neg_idx_list), device=positive_indices.device)
-
-    return negative_indices
 
 
 def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5, opt_patho=True, 
@@ -187,13 +148,7 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5,
 
 def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5, use_struct_neighbor=False):
     model.eval()
-    running_loss = 0
-    running_patho_loss = 0
-    running_pheno_loss = 0
-    running_seq_pheno_loss = 0
-    running_struct_pheno_loss = 0
-    n_sample = 0
-    n_pheno_sample = 0
+    
     all_vars, all_scores, all_labels, all_pheno_scores = [], [], [], []
     all_pheno_pos_scores_seq, all_pheno_neg_scores_seq = [], []
     all_pheno_pos_scores_str, all_pheno_neg_scores_str = [], []
@@ -217,26 +172,7 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5, use_struct_
             # patho_loss = model.patho_loss_fn(logit_diff, batch_labels.float())
             if batch_data['variant']['infer_phenotype']:
                 var_struct_mask = variant_data['has_struct_context']
-            #     # contrast_loss = model.info_nce_loss(seq_pheno_emb, all_pheno_embs, pos_pheno_idx, neg_pheno_idx)
-            #     seq_contrast_loss, struct_contrast_loss, contrast_loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb, struct_mask=var_struct_mask)
-            #     loss = contrast_loss + patho_loss * w_l
-                
-            # else:
-            #     loss = patho_loss
             
-            # loss_ = loss.detach().item()
-            # size = batch_labels.size()[0]
-            # cur_pheno_size = batch_labels.sum().item()
-            # running_patho_loss += patho_loss.detach().item() * size
-            # if batch_data['variant']['infer_phenotype']:
-            #     running_pheno_loss += contrast_loss.detach().item() * cur_pheno_size
-            #     running_seq_pheno_loss += seq_contrast_loss.detach().item() * cur_pheno_size
-            #     if variant_data['use_struct']:
-            #         running_struct_pheno_loss += struct_contrast_loss.detach().item() * cur_pheno_size
-            # running_loss += loss_* size
-            # n_sample += size
-            # n_pheno_sample += cur_pheno_size
-            # batch_patho_scores = torch.sigmoid(logit_diff)
             batch_patho_scores = torch.softmax(patho_logits, 1)[:, 1]
             if batch_patho_scores.ndim > 1:
                 batch_patho_scores = batch_patho_scores.squeeze(-1)
@@ -298,12 +234,6 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5, use_struct_
                 # all_topk_indices.append(topk_indices.detach().cpu().numpy())
                 all_similarities.append(cos_sim_all.detach().cpu().numpy())
 
-        # epoch_patho_loss = running_patho_loss / n_sample
-        # epoch_pheno_loss = running_pheno_loss / n_pheno_sample
-        # epoch_loss = w_l * epoch_patho_loss + epoch_pheno_loss
-        # epoch_seq_pheno_loss = running_seq_pheno_loss / n_pheno_sample
-        # epoch_struct_pheno_loss = running_struct_pheno_loss / n_pheno_sample
-        # epoch_loss = running_loss / n_sample
         all_labels = np.concatenate(all_labels, 0)
         all_scores = np.concatenate(all_scores, 0)
         all_pheno_scores = np.concatenate(all_pheno_scores, 0)
@@ -313,12 +243,6 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5, use_struct_
         all_seq_pheno_emb_pred = np.concatenate(all_seq_pheno_emb_pred, 0)
         all_pheno_emb_label = np.concatenate(all_pheno_emb_label, 0)
         all_pheno_emb_neg = np.concatenate(all_pheno_emb_neg, 0)
-    
-    # loss_dict = {'epoch_patho_loss': epoch_patho_loss,
-    #              'epoch_pheno_loss': epoch_pheno_loss,
-    #              'epoch_loss': w_l * epoch_patho_loss + epoch_pheno_loss,
-    #              'epoch_seq_pheno_loss': running_seq_pheno_loss / n_pheno_sample,
-    #              'epoch_struct_pheno_loss': running_struct_pheno_loss / n_pheno_sample}
 
     all_pheno_results = {'var_names': all_patho_vars,
                          'label': all_labels,
@@ -353,58 +277,6 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5, use_struct_
     # return loss_dict, all_labels, all_scores, all_vars, all_pheno_results
 
 
-def load_config(cfg_file, format='yaml'):
-    if format.lower() == 'yaml':
-        with open(cfg_file, 'r') as f:
-            config = yaml.safe_load(f)
-    elif format.lower() == 'json':
-        with open(cfg_file, 'r') as f:
-            config = json.load(cfg_file)
-    else:
-        raise ValueError(f'{format} not supported! Please use one of [JSON, YAML]')
-    
-    return config
-
-def gpu_setup(device='cpu'):
-    """
-    Setup GPU device
-    """
-    
-    if torch.cuda.is_available() and device != 'cpu':
-        device = torch.device(device)
-    else:
-        device = torch.device('cpu')
-        logging.info('GPU not available, running on CPU')
-
-    return device
-
-
-def env_setup(args, config, use_timestamp=True):
-    
-    device = gpu_setup(config['device'])
-    now = datetime.now()
-    date_time = now.strftime("%Y-%m-%d-%H-%M-%S")
-
-    if args.exp_dir is not None:
-        config['exp_dir'] = args.exp_dir
-    if args.experiment is not None:
-        config['experiment'] = args.experiment
-    if use_timestamp:
-        config['exp_dir'] = '{exp_root}/{name}/{date_time}'.format(exp_root=config['exp_dir'],
-                                                                name=config['experiment'],
-                                                                date_time=date_time)
-    else:
-        config['exp_dir'] = '{exp_root}/{name}'.format(exp_root=config['exp_dir'],
-                                                                name=config['experiment'])
-    # Set up logging file
-    setup_logger(config['exp_dir'], log_prefix=config['mode'], log_level=args.log_level)
-    logging.info(json.dumps(config, indent=4))
-    
-    set_seed(args.seed, device)
-
-    return config, device
-
-
 def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=False, compute_tsne=False, use_struct=False):
     if isinstance(save_path, str):
         save_path = Path(save_path)
@@ -430,25 +302,6 @@ def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=Fals
         if use_struct:
             np.save(save_path / f'ep{epoch}_{split}_pheno_str_pred_emb.npy', pheno_result_dict['str_pred_emb'])
         # pd.DataFrame(pheno_result_dict['neg_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_neg_emb.tsv', sep='\t', index=False, header=False)
-    
-
-def embed_phenotypes(model, device, pheno_loader):
-    model.eval()
-    all_pheno_embs = []
-
-    with torch.no_grad():
-        for idx, batch_pheno in enumerate(pheno_loader):
-            # pheno_input_dict = load_input_to_device(batch_pheno, device)
-            pheno_input_dict = batch_pheno.to(device)
-            pheno_embs = model.get_pheno_emb(pheno_input_dict, proj=True, agg_opt='cls')
-            all_pheno_embs.append(pheno_embs.detach().cpu().numpy())
-    
-        all_pheno_embs = np.concatenate(all_pheno_embs, 0)
-        # all_pheno_embs = torch.tensor(all_pheno_embs, device='cpu')
-        # pheno_sims = torch.cosine_similarity(all_pheno_embs, all_pheno_embs)
-        # pheno_sims = torch.cosine_similarity(all_pheno_embs.unsqueeze(1), all_pheno_embs.unsqueeze(0), dim=-1)
-    
-    return all_pheno_embs
 
 
 def main():

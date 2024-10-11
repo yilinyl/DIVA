@@ -32,24 +32,6 @@ class LMBaseModel(nn.Module):
                                               device=self.device)
     
     def forward(self, seq_input_feat, variant_data, desc_input_feat):
-        # seq_outputs = self.seq_encoder(
-        #     seq_input_feat['input_ids'],
-        #     attention_mask=seq_input_feat['attention_mask'],
-        #     # token_type_ids=seq_input_data['token_type_ids'],
-        #     output_attentions=False,
-        #     output_hidden_states=True,
-        # )
-        # # seq_embs = torch.stack([seq_outputs.last_hidden_state[i, attn_mask[i, :], :][1:-1].mean(dim=0) for i in range(num_batch_size)], dim=0)
-        # seq_embs, mlm_logits = seq_outputs.hidden_states[-1], seq_outputs.logits
-
-        # prot_desc_emb = self.text_encoder(
-        #     desc_input_feat['input_ids'],
-        #     attention_mask=desc_input_feat['attention_mask'],
-        #     token_type_ids=torch.zeros(desc_input_feat['input_ids'].size(), dtype=torch.long, device=self.device),
-        #     output_attentions=False,
-        #     output_hidden_states=True,
-        #     return_dict=None
-        # ).hidden_states[-1]
         seq_embs, mlm_logits, prot_desc_emb = self.protein_encoder(seq_input_feat, desc_input_feat)
 
         # Pathogenicity prediction
