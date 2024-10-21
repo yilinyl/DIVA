@@ -1,0 +1,58 @@
+# config on G2-server
+exp_dir: /home/yl986/scripts/3d_vip/dev/scratch/
+experiment: dis_var_pred_biobridge_orig1
+# experiment: biobridge_debug
+mode: inference
+device: cuda:0
+batch_size: 2
+pheno_batch_size: 16
+checkpoint_dir: /home/yl986/scripts/BioBridge/checkpoints
+# disease_emb_cache: /home/yl986/scripts/3d_vip/dev/scratch/dis_esm480_pmbert_feat/embeddings/phenotype_emb_raw.npy
+# disease_emb_cache: /home/yl986/scripts/3d_vip/dev/scratch/dis_var_pred_biobridge/disease_pmbert_emb_raw.npy
+disease_emb_cache: /home/yl986/scripts/BioBridge/data/embeddings/esm2b_unimo_pubmedbert/disease.pkl
+# output_file: ./dms_ontoprot_wt_score.csv
+encode_disease_only: True
+
+model:
+  type: esm
+  # protein_lm_path: /local/storage/yl986/script_hub/KeAP/pretrained  # KeAP model
+  # protein_lm_path: zjunlp/OntoProtein
+  # protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
+  # protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
+  # protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
+  protein_lm_path: facebook/esm2_t36_3B_UR50D  # ESM2 2560
+  # protein_lm_path: facebook/esm1b_t33_650M_UR50S  # ESM-1b
+  # protein_lm_path: zjunlp/OntoProtein
+  text_lm_path: microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext  # PubMedBERT
+  # text_lm_path: dmis-lab/biobert-base-cased-v1.2  # BioBERT
+  # text_lm_path: microsoft/BiomedNLP-KRISSBERT-PubMed-UMLS-EL  # KrissBERT
+  # text_lm_path: michiyasunaga/BioLinkBERT-base  # BioLinkBERT-base
+
+dataset:
+  task_name: var_pred
+  # data_dir: /home/yl986/data/variant_data/pred/pheno_select/disease_select
+  data_dir: /home/yl986/data/variant_data/pred/pheno_select/disease_subset/
+  seq_fasta: ["/home/yl986/data/UniProt/uniprot_sprot.fasta",
+              "/home/yl986/data/UniProt/uniprot_sprot_varsplic.fasta"]
+  input_file:
+    test: 
+        # - sample.csv
+        - train.csv
+        - test.csv
+        - val.csv
+  disease_table_file: /home/yl986/scripts/BioBridge/data/Processed/disease.csv
+  phenotype_vocab_file: /home/yl986/data/variant_data/pred/pheno_select/phenotype_vocab.txt
+  phenotype_desc_file: /home/yl986/data/variant_data/short_name2desc.json  # phenotype name-to-description
+  use_pheno_desc: True
+  variant_cache_file: /home/yl986/data/variant_data/prot_var_cache.json
+  pid_col: UniProt
+  pos_col: Protein_position
+  # label_col: label
+  # pheno_col: pheno_clean
+  pheno_col: phenotype
+  load_variant: True
+  use_protein_desc: True
+  max_protein_seq_length: 1024
+  # max_phenotype_length: null
+  use_protein_desc: True
+  binary_inference_only: False
