@@ -91,6 +91,105 @@ class ProteinDataset(Dataset):
         return len(self.data)
 
 
+class ProteinVariantSeqDataset(Dataset):
+    def __init__(
+        self,
+        data_dir: str,
+        seq_dict: dict,
+        variant_file: str = None,
+        protein_tokenizer: PreTrainedTokenizerBase = None,
+        max_protein_seq_length: int = None,
+        phenotype_vocab: List = None,
+        pos_offset = 1,
+        pid_col='UniProt',
+        pos_col='Protein_position',
+        label_col='label',
+        pheno_col='phenotype',
+        emb_idx_dict: Dict = None,
+        **kwargs
+    ):
+        super(ProteinVariantSeqDataset, self).__init__()
+        self.data_root = Path(data_dir)
+        self.seq_dict = seq_dict
+        self.variant_data = []  # list of variant dict
+        self.protein_ids = []
+        self.pos_offset = pos_offset  # 1 for 1-based position
+        self.protein_tokenizer = protein_tokenizer
+        self.max_protein_seq_length = max_protein_seq_length
+        self.pheno_descs = phenotype_vocab
+        self.unk_pheno_mask = []
+        self.label = []
+        self.label_col = label_col
+        self.pheno_col = pheno_col
+        self.emb_idx_dict = emb_idx_dict
+        
+        df_var = pd.read_csv(self.data_root / variant_file)
+        self._load_variant_data(df_var, pid_col, pos_col)
+
+    
+    def _load_variant_data(self, df_var, pid_col='UniProt', pos_col='Protein_position'):
+        prots_all = df_var[pid_col].drop_duplicates().tolist()
+        self.protein_ids = prots_all
+
+        self.has_phenotype_label = self.pheno_col in df_var.columns
+
+        cur_indice = 0
+        for i, uprot in enumerate(prots_all):
+            cur_protein = dict()
+            if uprot not in self.seq_dict:
+                seq = fetch_prot_seq(uprot, seq_only=True)
+                self.seq_dict[uprot] = seq
+            else:
+                seq = self.seq_dict[uprot]
+            
+            df_prot = df_var[df_var[pid_col] == uprot]
+            if len(df_prot) == 0:
+                continue
+            # var_names = []
+            for j, record in df_prot.iterrows():
+                # pheno_cur = record[self.pheno_col]
+                if record[pos_col] >= self.max_protein_seq_length:  # skip out-of-bound variants for now
+                    continue
+                if record[pos_col] > len(seq):
+                    logging.warning('Invalid variant position {} for protein {} with length {}'.format(record[pos_col], uprot, len(seq)))
+                    continue
+                var_pos_idx = record[pos_col] - self.pos_offset
+                ref_aa_cur = record['REF_AA']
+                alt_aa_cur = record['ALT_AA']
+                cur_var_name = '{}_{}_{}/{}'.format(uprot, record[pos_col], record['REF_AA'], record['ALT_AA'])
+                pheno_cur = record[self.pheno_col]
+                if self.emb_idx_dict:
+                    try:  # limited to pre-computed disease embeddings
+                        pheno_idx = self.emb_idx_dict[pheno_cur]
+                    except KeyError:
+                        continue
+                else:
+                    pheno_idx = self.pheno_descs.index(pheno_cur)
+                cur_variant = {'id': cur_var_name,
+                               'uprot': uprot,
+                               'indice': cur_indice,
+                               'var_idx': var_pos_idx,
+                               'var_pos': record[pos_col],
+                            #    'label': record[self.label_col],
+                               'ref_aa': self.protein_tokenizer.convert_tokens_to_ids(ref_aa_cur),
+                               'alt_aa': self.protein_tokenizer.convert_tokens_to_ids(alt_aa_cur),
+                               'pos_pheno_desc': pheno_cur,
+                               'pos_pheno_idx': pheno_idx
+                               }
+                self.variant_data.append(cur_variant)
+                
+
+    def __getitem__(self, index):
+        # return self.protein_variants[index]
+        return self.variant_data[index]
+
+    def __len__(self):
+        return len(self.variant_data)
+
+    def get_all_protein_seq(self):
+        return self.seq_dict
+
+
 class ProteinVariantDatset(Dataset):
     """
     Dataset for Protein variants.
@@ -646,7 +745,83 @@ class ProteinVariantDataCollator:
         inputs[indices_random] = random_words[indices_random]
 
         return inputs, labels, masked_indices, indices_replaced, indices_random
+
+
+@dataclass
+class ProteinVariantSeqCollator:
+    """
+    Seq-only variant data collator
+    """
+    protein_data: Dict
+    protein_tokenizer: PreTrainedTokenizerBase
+    protein_seq_dict: Dict
+
+    def __call__(
+        self,
+        batch_data_raw: List[Dict],
+    ) -> Dict[str, torch.Tensor]:
+        batch = variant_seq_collate_fn(batch_data_raw, self.protein_tokenizer, self.protein_seq_dict)
+
+        return batch
+
+
+def variant_seq_collate_fn(
+    batch_data_raw: List[Dict], 
+    protein_tokenizer: PreTrainedTokenizerBase,
+    protein_seq_dict: Dict,
+    max_protein_length: int = None
+):
+    # max_seq_length = max(prot_lengths)
+    if not max_protein_length:
+        max_protein_length = protein_tokenizer.model_max_length
+    else:
+        max_protein_length = min(max_protein_length, protein_tokenizer.model_max_length)
+
+    batch_prot_ids = [elem['uprot'] for elem in batch_data_raw]
+    prot_unique = list(set(batch_prot_ids))
+    # protein sequence
+    seq_lst = [protein_seq_dict[pid] for pid in prot_unique]
+    prot_lengths = [len(seq) for seq in seq_lst]
+    batch_seq_tokenized = protein_tokenizer(seq_lst, padding=True, truncation=True, return_tensors='pt', max_length=max_protein_length)
+    batch_seq_input_lst = batch_seq_tokenized['input_ids'].tolist()
     
+    var_idx_all = []
+    var_seq_input_ids = []
+    var_names_all = []
+    prot_idx_all = []
+    pos_pheno_name_all = []
+    pos_pheno_idx_all = []
+
+    for b, elem in enumerate(batch_data_raw):
+        uprot = elem['uprot']
+        prot_idx_cur = prot_unique.index(uprot)
+        var_idx = elem['var_idx']
+        ref_seq_input_ids = batch_seq_input_lst[prot_idx_cur]
+        var_seq_input_cur = ref_seq_input_ids[:var_idx+1] + [elem['alt_aa']] + ref_seq_input_ids[var_idx+2:]
+
+        var_seq_input_ids.append(var_seq_input_cur)
+        var_idx_all.append(var_idx)
+        var_names_all.append(elem['id'])
+        prot_idx_all.append(prot_idx_cur)
+        pos_pheno_name_all.append(elem['pos_pheno_desc'])
+        pos_pheno_idx_all.append(elem['pos_pheno_idx'])
+    
+    variant_dict = {
+            'indices': [elem['indice'] for elem in batch_data_raw], 
+            'prot_idx': prot_idx_all,
+            'var_pos': [elem['var_pos'] for elem in batch_data_raw],
+            'var_idx': var_idx_all,
+            'var_names': var_names_all,
+            'var_seq_input_ids': torch.tensor(var_seq_input_ids),
+            'var_seq_attention_mask': batch_seq_tokenized['attention_mask'][prot_idx_all],
+            # 'pos_pheno_name': pos_pheno_name_all,
+            'pos_pheno_name': pos_pheno_name_all,
+            'pos_pheno_idx': torch.tensor(pos_pheno_idx_all),
+            # 'pheno_var_names': pheno_var_names,
+        }
+    
+    return variant_dict
+
 
 def protein_seq_collate_fn(
     batch_data_raw: List[int], 
@@ -1215,11 +1390,11 @@ class PhenotypeDataset(Dataset):
 class TextDataCollator:
     tokenizer: PreTrainedTokenizerBase
     padding: Union[bool, str] = True
-    # truncation: bool = True
-    # max_length: int = None
+    truncation: bool = True
+    max_length: int = 512
 
     def __call__(self, batch):
-        batch_tokenized = self.tokenizer(batch, padding=self.padding, return_tensors='pt')
+        batch_tokenized = self.tokenizer(batch, padding=self.padding, truncation=self.truncation, return_tensors='pt', max_length=self.max_length)
         return batch_tokenized
 
 @dataclass
