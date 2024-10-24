@@ -15,7 +15,7 @@ from transformers import PreTrainedTokenizerBase, PreTrainedModel
 import pandas as pd
 from dgl.nn.pytorch import GATConv
 
-from .model_utils import clipped_sigmoid_cross_entropy, InfoNCELoss, sigmoid_cosine_distance_p
+from .loss import clipped_sigmoid_cross_entropy, InfoNCELoss, sigmoid_cosine_distance_p
 from .protein_encoder import ProteinEncoder
 
 _dist_fn_map = {'euclidean': nn.PairwiseDistance(),
@@ -195,19 +195,6 @@ class DiseaseVariantEncoder(nn.Module):
             ).hidden_states[-1]  # n_var, max_neg_pheno_length, pheno_emb_dim
         
         seq_context_pheno_emb_raw = torch.stack([seq_context_pheno_emb_raw[i, pheno_attn_mask[i, :].bool(), :][0] for i in range(n_uniq_phenos)], dim=0)
-        pheno_var_indices = torch.unique(pheno_indices)
-        emb_agg_lst = []
-        for var_idx in pheno_var_indices:
-            cur_var_indices = pheno_indices == var_idx
-            if cur_var_indices.sum() == 1:
-                emb_agg_lst.append(seq_context_pheno_emb_raw[cur_var_indices])
-            else:
-                cur_counts = variant_data['context_pheno_counts'][cur_var_indices]
-                if not self.freq_norm_factor:  # relative frequency
-                    emb_agg_lst.append((seq_context_pheno_emb_raw[cur_var_indices] * cur_counts.unsqueeze(1) / cur_counts.sum()).sum(0).unsqueeze(0))
-                else:  # absolute frequency (with normalization factor)
-                    emb_agg_lst.append((seq_context_pheno_emb_raw[cur_var_indices] * cur_counts.unsqueeze(1) / self.freq_norm_factor).sum(0).unsqueeze(0))
-        seq_context_pheno_emb_raw = torch.concat(emb_agg_lst, dim=0)
         # Update: use embedding corresponding to [CLS] token instead of average as sequence-level embedding 
         
         # variant_pheno_emb = torch.stack([variant_pheno_emb[i, pheno_attn_mask[i, :].bool(), :][0] for i in range(n_pheno_vars)], dim=0)

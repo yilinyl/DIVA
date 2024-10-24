@@ -1057,6 +1057,10 @@ def protein_variant_collate_fn(
                 context_info_joined = text_tokenizer.sep_token.join(phenos_in_frame_cur)  # remove protein desc from context (treat separately)
                 # phenos_in_frame_all.append(context_info_joined)
                 context_pheno_dict['phenotype'].append(context_info_joined)
+                context_pheno_dict['size'].append(1)
+                context_pheno_dict['indice'].append(pheno_var_indice)
+                # context_pheno_dict['indice'].extend([pheno_var_indice] * len(phenos_in_frame_cur))
+                pheno_var_indice += 1
             else:  # stack
                 context_pheno_dict['phenotype'].extend(phenos_in_frame_cur)  # modified
             # context_pheno_dict['counts'].append(1)
@@ -1104,10 +1108,8 @@ def protein_variant_collate_fn(
         # batch_pheno_tokenized = text_tokenizer(phenos_in_frame_all, padding=True, return_tensors='pt', truncation=True, max_length=max_pheno_desc_length)
         batch_pheno_tokenized = text_tokenizer(context_pheno_dict['phenotype'], padding=True, return_tensors='pt', truncation=True, max_length=max_pheno_desc_length)
         batch_pheno_input_ids = batch_pheno_tokenized['input_ids']
-        batch_uniq_input_ids, batch_uniq_indices = torch.unique(batch_pheno_input_ids, dim=0, return_inverse=True)
-
         # batch_pheno_input_ids = torch.stack(pheno_input_ids_padded)  # n_variants, max_phenos_in_frame + 1, max_pheno_length
-        batch_pheno_attenton_mask = (batch_uniq_input_ids != text_tokenizer.pad_token_id).long()
+        # batch_pheno_attenton_mask = (batch_uniq_input_ids != text_tokenizer.pad_token_id).long()
         variant_dict = {
             'indices': [elem['indice'] for elem in batch_data_raw], 
             'var_pos': [elem['var_pos'] for elem in batch_data_raw],
@@ -1118,10 +1120,6 @@ def protein_variant_collate_fn(
             'ref_aa': torch.LongTensor(ref_aa),
             'alt_aa': torch.LongTensor(alt_aa),
             'infer_phenotype': True,
-            'context_pheno_input_ids': batch_uniq_input_ids,
-            'context_pheno_attention_mask': batch_pheno_attenton_mask,
-            'context_pheno_indices': batch_uniq_indices,
-            # 'context_pheno_indices': torch.LongTensor(context_pheno_dict['indice']),
             "context_pheno_positions": torch.LongTensor(context_pheno_dict['position_idx']),
             'context_pheno_size': context_pheno_dict['size'],  # list
             # 'n_variants': [len(elem['alt_aa']) for elem in batch_data_raw],
@@ -1131,6 +1129,15 @@ def protein_variant_collate_fn(
             'use_struct': use_struct_neighbor and any(has_struct_context_all),
             'has_struct_context': has_struct_context_all
         }
+        if context_agg_opt == 'concat':
+            variant_dict['context_pheno_indices'] = torch.LongTensor(context_pheno_dict['indice'])
+            variant_dict['context_pheno_input_ids'] = batch_pheno_input_ids
+            variant_dict['context_pheno_attention_mask'] = (batch_pheno_input_ids != text_tokenizer.pad_token_id).long()
+        else:
+            batch_uniq_input_ids, batch_uniq_indices = torch.unique(batch_pheno_input_ids, dim=0, return_inverse=True)
+            variant_dict['context_pheno_indices'] = batch_uniq_indices
+            variant_dict['context_pheno_input_ids'] = batch_uniq_input_ids
+            variant_dict['context_pheno_attention_mask'] = (batch_uniq_input_ids != text_tokenizer.pad_token_id).long()
         # if context_agg_opt == 'count':
         #     variant_dict['context_pheno_counts'] = torch.tensor(context_pheno_dict['counts'])
 

@@ -31,7 +31,7 @@ from metrics import *
 from dev.preprocess.utils import parse_fasta_info
 from models.model_utils import sample_random_negative, select_hard_negatives, embed_phenotypes
 from models.protein_encoder import DiseaseVariantAttnEncoder
-
+from models.dis_var_models import DiseaseVariantEncoder
 # torch.set_default_dtype(torch.float32)
 
 def parse_args():
@@ -490,17 +490,30 @@ def main():
     # print(unfreeze_params)
     seq_encoder = seq_encoder.to(device)
     text_encoder = text_encoder.to(device)
-    model = DiseaseVariantAttnEncoder(seq_encoder=seq_encoder,
-                                  text_encoder=text_encoder,
-                                  n_residue_types=protein_tokenizer.vocab_size,
-                                  hidden_size=512,
-                                  use_desc=True,
-                                  pad_label_idx=-100,
-                                  dist_fn_name=model_args['dist_fn_name'],
-                                  init_margin=model_args['margin'],
-                                  freq_norm_factor=model_args['freq_norm_factor'],
-                                  seq_weight_scaler=model_args['seq_weight_scaler'],
-                                  device=device)
+    if data_configs['context_agg_option'] == 'stack':
+        model = DiseaseVariantAttnEncoder(seq_encoder=seq_encoder,
+                                    text_encoder=text_encoder,
+                                    n_residue_types=protein_tokenizer.vocab_size,
+                                    hidden_size=512,
+                                    use_desc=True,
+                                    pad_label_idx=-100,
+                                    dist_fn_name=model_args['dist_fn_name'],
+                                    init_margin=model_args['margin'],
+                                    freq_norm_factor=model_args['freq_norm_factor'],
+                                    seq_weight_scaler=model_args['seq_weight_scaler'],
+                                    device=device)
+    else:  # concat
+        model = DiseaseVariantEncoder(seq_encoder=seq_encoder,
+                                    text_encoder=text_encoder,
+                                    n_residue_types=protein_tokenizer.vocab_size,
+                                    hidden_size=512,
+                                    use_desc=True,
+                                    pad_label_idx=-100,
+                                    dist_fn_name=model_args['dist_fn_name'],
+                                    init_margin=model_args['margin'],
+                                    freq_norm_factor=model_args['freq_norm_factor'],
+                                    seq_weight_scaler=model_args['seq_weight_scaler'],
+                                    device=device)
     total_param = 0
     total_param_with_grad = 0
     for p in model.parameters():
