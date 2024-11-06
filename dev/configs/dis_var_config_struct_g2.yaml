@@ -1,6 +1,6 @@
 # config on G2-server with structural context
 exp_dir: ./scratch/
-experiment: dis_esm480_seq_randneg500_i50
+experiment: dis_esm480_seq_hard100_attn_new_pe001
 # experiment: debug
 mode: train
 device: cuda:0
@@ -15,11 +15,7 @@ init_lr: 0.001
 # lr_schedule_patience: 3
 # clr_reduce_factor: 0.5
 # clr_schedule_patience: 5
-epochs: 20
-use_adapter: False  # if true, will use adapter for fine tuning
-adapter_targets: ['key', 'query']
-#adapter_targets:  ["query", "key", "value", "intermediate.dense", "output.dense"]
-# adapter_targets:  ["query", "key", "value", "output.dense"]
+epochs: 40
 
 model:
   type: esm
@@ -48,11 +44,12 @@ model:
   freq_norm_factor: 32  # normalization factor for in-context phenotype counts
   max_pathogenicity_epochs: 50  # number of epochs to train pathogencity objective
   num_warmup_epochs: 0
-  topk: [10, 20, 50, 100]
+  topk: [1, 10, 20, 50, 100]
   seq_weight_scaler: 1
+  pe_scalor: 0.01
   pheno_emb_update_interval: 50
   use_hardneg: False
-  n_neg_samples: 500
+  n_neg_samples: 100
 
 dataset:
   task_name: var_pred
@@ -64,20 +61,24 @@ dataset:
               "/home/yl986/data/UniProt/uniprot_sprot_varsplic.fasta"]
   prot_meta_data: ["/home/yl986/data/UniProt/meta/uniprot_sprot_human_meta.txt",
                    "/home/yl986/data/UniProt/meta/uniprot_trembl_human_meta.txt"]
-  data_dir: /home/yl986/data/variant_data/pred/pheno_select/struct/
+  data_dir: /home/yl986/data/variant_data/pred/disease_clean1
+  # data_dir: /home/yl986/data/variant_data/pred/pheno_select/struct/sample
   input_file:
     train: train.csv
     test: test.csv
     val: val.csv
-  phenotype_vocab_file: /home/yl986/data/variant_data/pred/pheno_select/phenotype_vocab.txt
-  phenotype_desc_file: /home/yl986/data/variant_data/short_name2desc.json  # phenotype name-to-description
+  # phenotype_vocab_file: /home/yl986/data/variant_data/pred/pheno_select/phenotype_vocab.txt
+  # phenotype_desc_file: /home/yl986/data/variant_data/short_name2desc.json  # phenotype name-to-description
+  phenotype_vocab_file: /home/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab.txt
+  phenotype_desc_file: /home/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab_desc.json  # phenotype name-to-description
   use_pheno_desc: True
-  context_agg_option: concat
+  context_agg_option: stack
   # pheno_emb_cache_file:
   pid_col: UniProt
   pos_col: Protein_position
   label_col: label
-  pheno_col: pheno_clean
+  pheno_col: phenotype
+  # pheno_col: pheno_clean
   load_variant: True
   use_protein_desc: True
   max_protein_seq_length: 1024

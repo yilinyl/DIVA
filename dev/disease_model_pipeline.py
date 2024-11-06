@@ -501,6 +501,7 @@ def main():
                                     init_margin=model_args['margin'],
                                     freq_norm_factor=model_args['freq_norm_factor'],
                                     seq_weight_scaler=model_args['seq_weight_scaler'],
+                                    pe_scalor=model_args['pe_scalor'],
                                     device=device)
     else:  # concat
         model = DiseaseVariantEncoder(seq_encoder=seq_encoder,

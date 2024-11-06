@@ -104,7 +104,7 @@ class DiseaseVariantAttnEncoder(nn.Module):
                  init_margin=1,
                  freq_norm_factor=None,
                  seq_weight_scaler=1,
-                 kv_dim=64,
+                 pe_scalor=1,
                  device='cpu',
                  **kwargs):
         super(DiseaseVariantAttnEncoder, self).__init__()
@@ -126,6 +126,7 @@ class DiseaseVariantAttnEncoder(nn.Module):
         self.freq_norm_factor = freq_norm_factor
 
         self.max_vars_per_batch = max_vars_per_batch
+        self.pe_scalor = pe_scalor
         self.position_encoding = PositionalEncoding(self.hidden_size, self.max_prot_length)
         self.seq_func_encoder = nn.Linear(self.seq_emb_dim + self.text_emb_dim, self.hidden_size)  # concatenated embedding of ref_seq, prot_desc
         self.seq_pheno_comb = nn.Linear(self.seq_emb_dim + self.text_emb_dim * 2, self.hidden_size) # concatenated embedding of alt_seq, prot_desc, context_pheno
@@ -262,7 +263,7 @@ class DiseaseVariantAttnEncoder(nn.Module):
         
         seq_context_pheno_emb_raw = torch.stack([seq_context_pheno_emb_raw[i, pheno_attn_mask[i, :].bool(), :][0] for i in range(pheno_input_ids.size(0))], dim=0)  # batch_context_vars, text_emb_size
         seq_context_pheno_emb_raw = seq_context_pheno_emb_raw[context_pheno_indices]
-        context_pos_enc = self.position_encoding(seq_context_pheno_emb_raw, variant_data['context_pheno_positions'])  # batch_context_vars, pos_enc_dim
+        context_pos_enc = self.pe_scalor * self.position_encoding(seq_context_pheno_emb_raw, variant_data['context_pheno_positions'])  # batch_context_vars, pos_enc_dim
         
         pheno_alt_seq_func_embs = alt_seq_func_embs[variant_data['infer_pheno_vec'].bool()]  # n_pheno_vars, concat_emb_dim
         ref_seq_func_embs = torch.cat([ref_seq_embs[variant_data['prot_idx']], desc_emb_agg[variant_data['prot_idx']]], dim=-1)
@@ -283,7 +284,7 @@ class DiseaseVariantAttnEncoder(nn.Module):
         alt_emb_padded = torch.stack([F.pad(ts, (0, 0, 0, max_context_size - ts.size(0))) for ts in alt_emb_splits])
         
         # TODO: construct valid input for MHA (batch_size, max_seq_length, emb_dim); key_padding_mask of size (batch_size, max_seq_length)
-        attn_outputs, _ = self.mha(alt_emb_padded, ref_emb_padded, ref_emb_padded, key_padding_mask=context_attn_mask)  # query, key, value
+        attn_outputs, _ = self.mha(ref_emb_padded, alt_emb_padded, alt_emb_padded, key_padding_mask=context_attn_mask)  # query, key, value
         alt_emb_padded = alt_emb_padded + attn_outputs
         alt_pheno_attn_emb = self.final_mlp(alt_emb_padded) + alt_emb_padded
         var_seq_pheno_emb_final = torch.stack([alt_pheno_attn_emb[i, ~context_attn_mask[i, :], :].mean(dim=0) for i in range(alt_pheno_attn_emb.size(0))], dim=0)
