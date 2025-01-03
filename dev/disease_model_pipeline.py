@@ -87,12 +87,12 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5,
         # TODO: parse phenotype information
         # seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
         patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(seq_feat_dict, variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
-        patho_loss = model.patho_loss_fn(patho_logits, batch_labels.squeeze(-1))
+        # patho_loss = model.patho_loss_fn(patho_logits, batch_labels.squeeze(-1))
         # shapes = batch_logits.size()
         # batch_logits = batch_logits.view(shapes[0]*shapes[1])
 
         # patho_loss = model.pathogenicity_loss(logit_diff, batch_labels)
-        # patho_loss = model.patho_loss_fn(logit_diff, batch_labels.float())
+        patho_loss = model.patho_loss_fn(patho_logits, batch_labels.float())
         if batch_data['variant']['infer_phenotype']:
             pos_pheno_idx = variant_data['pos_pheno_idx']
             if use_hardneg:
@@ -165,7 +165,7 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5, use_struct_
             batch_labels = batch_data['variant']['label'].unsqueeze(1).to(device)
 
             # seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data, desc_feat_dict)
-            patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(seq_feat_dict, variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
+            logit_diff, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(seq_feat_dict, variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
             # patho_loss = model.patho_loss_fn(patho_logits, batch_labels.squeeze(-1))
             
             # patho_loss = model.pathogenicity_loss(logit_diff, batch_labels)
@@ -173,7 +173,8 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5, use_struct_
             if batch_data['variant']['infer_phenotype']:
                 var_struct_mask = variant_data['has_struct_context']
             
-            batch_patho_scores = torch.softmax(patho_logits, 1)[:, 1]
+            # batch_patho_scores = torch.softmax(patho_logits, 1)[:, 1]
+            batch_patho_scores = torch.sigmoid(logit_diff)
             if batch_patho_scores.ndim > 1:
                 batch_patho_scores = batch_patho_scores.squeeze(-1)
 
@@ -541,7 +542,7 @@ def main():
     best_val_acc = 0
     best_val_aupr = 0
     
-    train_pathogenicity = True
+    train_pathogenicity = config['train_pathogenicity']
     topk_max = max(model_args['topk'])
     
     # all_pheno_embs, pheno_sims = embed_phenotypes(model, device, phenotype_loader)  # TODO: uncomment later

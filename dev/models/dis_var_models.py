@@ -88,8 +88,8 @@ class DiseaseVariantEncoder(nn.Module):
 
         self.dist_fn = _dist_fn_map[dist_fn_name]
         # self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)
-        # self.patho_loss_fn = nn.BCEWithLogitsLoss()
-        self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)  # for softmax
+        self.patho_loss_fn = nn.BCEWithLogitsLoss()
+        # self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)  # for softmax
         # self.desc_loss_fn = nn.CosineEmbeddingLoss()
         # self.cos_sim_loss_fn = nn.CosineEmbeddingLoss()
         self.contrast_loss_fn = nn.TripletMarginWithDistanceLoss(distance_function=self.dist_fn, margin=init_margin, reduction='none')
@@ -141,11 +141,12 @@ class DiseaseVariantEncoder(nn.Module):
         alt_seq_embs = self.protein_encoder.embed_protein_seq(alt_seq_input_feat)
         alt_seq_embs = torch.stack([alt_seq_embs[i, alt_seq_input_feat['attention_mask'][i, :].bool(), :][0] for i in range(alt_seq_embs.size(0))], dim=0)
         alt_seq_func_embs = torch.cat([alt_seq_embs, desc_emb_agg[variant_data['prot_idx']]], dim=-1)  # concatenate alt-seq embedding & prot-desc embedding
-        var_patho_logits = self.patho_output_layer(alt_seq_func_embs)
+        # var_patho_logits = self.patho_output_layer(alt_seq_func_embs)
+        _, var_logit_diff = self.binary_step(seq_input_feat, variant_data)
 
         n_pheno_vars = variant_data['infer_pheno_vec'].sum().item()
         if n_pheno_vars == 0:  # Pathogenicity 
-            return var_patho_logits, None, None, None, None
+            return var_logit_diff, None, None, None, None
     
         max_text_length = self.text_encoder.config.max_position_embeddings
         # pheno_input_ids = variant_data['context_pheno_input_ids'].view(n_pheno_vars, -1)
@@ -241,7 +242,7 @@ class DiseaseVariantEncoder(nn.Module):
         else:
             neg_emb_proj = None
 
-        return var_patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb
+        return var_logit_diff, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb
 
     
     def get_pheno_emb(self, pheno_input_dict, proj=True, agg_opt='mean'):

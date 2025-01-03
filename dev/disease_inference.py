@@ -33,6 +33,7 @@ from utils import str2bool, setup_logger, set_seed, load_input_to_device, _save_
 from metrics import *
 from dev.preprocess.utils import parse_fasta_info
 from models.protein_encoder import DiseaseVariantAttnEncoder
+from models.dis_var_models import DiseaseVariantEncoder
 
 
 def parse_args():
@@ -91,17 +92,21 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
             variant_data = load_input_to_device(batch_data['variant'], device=device, exclude_keys=['var_names'])
             batch_labels = batch_data['variant']['label'].unsqueeze(1).to(device)
 
-            seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data, desc_feat_dict)
-            
+            # seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data, desc_feat_dict)
+            patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(seq_feat_dict, variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
+
             size = batch_labels.size()[0]
             cur_pheno_size = batch_labels.sum().item()
 
             # running_loss += loss_* size
             n_sample += size
             n_pheno_sample += cur_pheno_size
-            batch_patho_scores = torch.sigmoid(logit_diff)
+            batch_patho_scores = torch.sigmoid(patho_logits)
+            # batch_patho_scores = torch.softmax(patho_logits, 1)[:, 1]
+            if batch_patho_scores.ndim > 1:
+                batch_patho_scores = batch_patho_scores.squeeze(-1)
 
-            all_scores.append(batch_patho_scores.squeeze(1).detach().cpu().numpy())
+            all_scores.append(batch_patho_scores.detach().cpu().numpy())
             all_vars.extend(batch_data['variant']['var_names'])
             all_labels.append(batch_labels.squeeze(1).detach().cpu().numpy())
 
@@ -260,6 +265,14 @@ if __name__ == '__main__':
         except FileNotFoundError:
             pass
     
+    prot2comb_seq = None
+    if data_configs['use_struct_vocab']:
+        if os.path.exists(data_configs['struct_seq_file']):
+            with open(data_configs['struct_seq_file']) as f_js:
+                prot2comb_seq = json.load(f_js)
+        else:
+            data_configs['use_struct_vocab'] = False
+
     data_configs['seq_dict'] = prot2seq
     data_configs['protein_info_dict'] = prot2desc
 
@@ -295,6 +308,7 @@ if __name__ == '__main__':
                                             text_tokenizer=text_tokenizer,
                                             mode='train',
                                             update_var_cache=True,
+                                            comb_seq_dict=prot2comb_seq,
                                             access_to_context=True)
         # var_db = pd.read_csv(data_root / data_configs['input_file']['train']).query('label == 1').\
         #     drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
@@ -310,7 +324,7 @@ if __name__ == '__main__':
     text_encoder = BertForMaskedLM(text_config)
     # seq_encoder = seq_encoder.to(device)
     # text_encoder = text_encoder.to(device)
-    model = DiseaseVariantAttnEncoder(seq_encoder=seq_encoder,
+    model = DiseaseVariantEncoder(seq_encoder=seq_encoder,
                                   text_encoder=text_encoder,
                                   n_residue_types=protein_tokenizer.vocab_size,
                                   hidden_size=512,
@@ -346,10 +360,12 @@ if __name__ == '__main__':
                                             prot_var_cache=prot_var_cache,
                                             mode='eval',
                                             update_var_cache=False,
+                                            comb_seq_dict=prot2comb_seq,
                                             access_to_context=False)
         logging.info('{} variants loaded'.format(len(test_dataset)))
         test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
                                                use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'],
+                                               use_struct_vocab=data_configs['use_struct_vocab'], 
                                                use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict)
         test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
         # train_labels, train_scores, train_vars, train_pheno_results = inference(model, device, train_loader, pheno_vocab_emb=all_pheno_embs, topk=100)
@@ -360,16 +376,16 @@ if __name__ == '__main__':
         # np.save(pheno_result_path / 'train_pheno_similarity.npy', train_topk_results['similarities'])
         # np.save(pheno_result_path / 'test_pheno_similarity.npy', test_topk_results['similarities'])
         # np.save(pheno_result_path / 'val_pheno_similarity.npy', val_topk_results['similarities'])
+        if not data_configs['binary_inference_only'] and test_pheno_results:
+            result_dict = {'topk_scores': test_pheno_results['topk_scores'],
+                        'topk_indices': test_pheno_results['topk_indices']}
+            if 'pos_pheno_idx' in test_pheno_results:
+                result_dict.update({'label': test_pheno_results['pos_pheno_idx']})
 
-        result_dict = {'topk_scores': test_pheno_results['topk_scores'],
-                    'topk_indices': test_pheno_results['topk_indices']}
-        if 'pos_pheno_idx' in test_pheno_results:
-            result_dict.update({'label': test_pheno_results['pos_pheno_idx']})
+            with open(exp_path / f'{fname}_topk.pkl', 'wb') as f_pkl:
+                pickle.dump(result_dict, f_pkl)
 
-        with open(exp_path / f'{fname}_topk.pkl', 'wb') as f_pkl:
-            pickle.dump(result_dict, f_pkl)
-
-        save_pheno_results(test_pheno_results, exp_path, name=fname, save_emb=True)
+            save_pheno_results(test_pheno_results, exp_path, name=fname, save_emb=True)
         logging.info('Done!')
 
     np.save(exp_path / 'phenotype_emb.npy', all_pheno_embs.detach().cpu().numpy())
