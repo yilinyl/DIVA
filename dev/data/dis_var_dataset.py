@@ -293,7 +293,7 @@ class ProteinVariantDatset(Dataset):
         if not variant_file:
             variant_file = split + '.csv'
         
-        df_var = pd.read_csv(self.data_root / variant_file)
+        df_var = pd.read_csv(self.data_root / variant_file).drop_duplicates([pid_col, pos_col, label_col, 'REF_AA', 'ALT_AA']).reset_index(drop=True)
         
         self._load_variant_data(df_var, pid_col, pos_col)
         if self.use_struct_neighbor:
@@ -415,8 +415,8 @@ class ProteinVariantDatset(Dataset):
             
             for j, record in df_prot.iterrows():
                 # pheno_cur = record[self.pheno_col]
-                if record[pos_col] >= self.max_protein_seq_length:  # skip out-of-bound variants for now
-                    continue
+                # if record[pos_col] >= self.max_protein_seq_length:  # skip out-of-bound variants for now
+                #     continue
                 if record[pos_col] > len(seq):
                     logging.warning('Invalid variant position {} for protein {} with length {}'.format(record[pos_col], uprot, len(seq)))
                     continue
@@ -512,8 +512,10 @@ class ProteinVariantDatset(Dataset):
                                'var_idx': var_pos_idx,
                                'var_pos': record[pos_col],
                                'label': record[self.label_col],
-                               'ref_aa': self.protein_tokenizer.convert_tokens_to_ids(ref_aa_cur),
-                               'alt_aa': self.protein_tokenizer.convert_tokens_to_ids(alt_aa_cur),
+                            #    'ref_aa': self.protein_tokenizer.convert_tokens_to_ids(ref_aa_cur),
+                            #    'alt_aa': self.protein_tokenizer.convert_tokens_to_ids(alt_aa_cur),
+                               'ref_aa': ref_aa_cur,
+                               'alt_aa': alt_aa_cur,
                                'pos_pheno_desc': pheno_cur,
                                'pos_pheno_idx': pheno_idx,
                             #    'neg_pheno_desc': neg_pheno_cur,
@@ -646,7 +648,8 @@ class ProteinVariantDataCollator:
     pheno_desc_dict: Dict[str, str] = None
     use_pheno_desc: bool = False  # use phenotype description or not
     half_window_size: int = 64
-    max_protein_length: int = 1024
+    truncate_protein: bool = True
+    max_protein_length: int = None
     max_pheno_desc_length: int = 512
     mode: str = 'train'
     has_phenotype_label: bool = True
@@ -670,7 +673,7 @@ class ProteinVariantDataCollator:
         batch = protein_variant_collate_fn(batch_data_raw, self.protein_tokenizer, self.text_tokenizer, self.protein_data,
                                            pheno_vocab=self.phenotype_vocab, use_prot_desc=self.use_prot_desc, 
                                            use_pheno_desc=self.use_pheno_desc, pheno_desc_dict=self.pheno_desc_dict, 
-                                           max_protein_length=self.max_protein_length, max_pheno_desc_length=self.max_pheno_desc_length, 
+                                           truncate_protein=self.truncate_protein, max_protein_length=self.max_protein_length, max_pheno_desc_length=self.max_pheno_desc_length, 
                                            half_window_size=self.half_window_size, mode=self.mode, has_phenotype_label=self.has_phenotype_label,
                                            use_struct_vocab=self.use_struct_vocab, use_struct_neighbor=self.use_struct_neighbor, struct_radius=self.struct_radius_cutoff,
                                            include_unknown=self.include_unknown, context_agg_opt=self.context_agg_opt)
@@ -909,6 +912,18 @@ def fetch_phenotypes_in_frame(
         return pheno_in_frame, context_pheno_idx_list
 
 
+def get_optimal_window(var_position, seq_len_raw, model_window):
+    half_model_window = model_window // 2
+    if seq_len_raw <= model_window:  # full sequence
+        return [0, seq_len_raw]
+    elif var_position < half_model_window:  # truncate tail
+        return [0, model_window]
+    elif var_position >= seq_len_raw - half_model_window:  # truncate head
+        return [seq_len_raw - model_window, seq_len_raw]
+    else:  # truncate both sides (centered at variant)
+        return [max(0, var_position - half_model_window), min(seq_len_raw, var_position + half_model_window)]
+    
+
 def protein_variant_collate_fn(
     batch_data_raw: List[Dict],
     protein_tokenizer: PreTrainedTokenizerBase,
@@ -918,6 +933,7 @@ def protein_variant_collate_fn(
     use_pheno_desc: bool = False,
     use_prot_desc: bool = True,
     half_window_size: int = 64,
+    truncate_protein: bool = True,
     max_protein_length: int = None,
     max_context_phenos: int = None,
     max_pheno_desc_length: int = None,
@@ -925,6 +941,7 @@ def protein_variant_collate_fn(
     pheno_desc_dict: Dict[str, str] = None,
     has_phenotype_label: bool = True,
     use_struct_vocab: bool = False,
+    foldseek_vocab: str = "pynwrqhgdlvtmfsaeikc#",
     use_struct_neighbor: bool = False,
     struct_radius: float = 25,
     include_unknown: bool = False,
@@ -942,18 +959,19 @@ def protein_variant_collate_fn(
     if use_struct_vocab:
         seq_lst = [protein_data[pid]['comb_seq'] for pid in prot_unique]
     # max_seq_length = max(prot_lengths)
-    if not max_protein_length:
-        max_protein_length = protein_tokenizer.model_max_length
-    else:
-        max_protein_length = min(max_protein_length, protein_tokenizer.model_max_length)
+    # if not max_protein_length:
+    #     max_protein_length = protein_tokenizer.model_max_length
+    # else:
+    #     max_protein_length = min(max_protein_length, protein_tokenizer.model_max_length)
 
-    batch_seq_tokenized = protein_tokenizer(seq_lst, padding=True, truncation=True, return_tensors='pt', max_length=max_protein_length)
+    # batch_seq_tokenized = protein_tokenizer(seq_lst, padding=True, truncation=True, return_tensors='pt', max_length=max_protein_length)
 
     patho_var_prot_idx = []  # index of protein in the batch for pathogenic variants
     prot_idx_all = []
     var_idx_all = []
-    ref_aa = []
-    alt_aa = []
+    offset_all = []
+    ref_aa_idx = []
+    alt_aa_idx = []
     pos_pheno_desc_all = []
     pos_pheno_name_all = []
     pos_pheno_idx_all = []
@@ -966,12 +984,14 @@ def protein_variant_collate_fn(
     batch_label = []
     pheno_var_names = []
     infer_pheno_vec = []
-    var_seq_input_ids = []
+    # var_seq_input_ids = []
+    masked_seq_list = []
+    var_seq_list = []
     has_struct_context_all = []
     var_struct_graphs_raw = []
     struct_context_pheno_uniq = set()
 
-    batch_seq_input_lst = batch_seq_tokenized['input_ids'].tolist()
+    # batch_seq_input_lst = batch_seq_tokenized['input_ids'].tolist()
     # phenos_in_frame_input_ids = [] # List[torch.Tensor] --> length=n_variants
     pheno_var_indice = 0
 
@@ -989,17 +1009,42 @@ def protein_variant_collate_fn(
         else:
             pos_pheno_descs = elem['pos_pheno_desc']
         # neg_pheno_descs = elem['neg_pheno_desc']
-        ref_aa.append(elem['ref_aa'])
-        alt_aa.append(elem['alt_aa'])
+        if use_struct_vocab:
+            ref_aa_idx.append(protein_tokenizer.convert_tokens_to_ids(elem['ref_aa'][0] + foldseek_vocab[0]))  # start index (will sum over all possible struct)
+            alt_aa_idx.append(protein_tokenizer.convert_tokens_to_ids(elem['alt_aa'][0] + foldseek_vocab[0]))
+        else:
+            ref_aa_idx.append(protein_tokenizer.convert_tokens_to_ids(elem['ref_aa']))
+            alt_aa_idx.append(protein_tokenizer.convert_tokens_to_ids(elem['alt_aa']))
+
         var_names_all.append(elem['id'])
         var_idx = elem['var_idx']
         batch_label.append(elem['label'])
         infer_pheno_vec.append(int(elem['infer_phenotype']))
         pos_pheno_known_vec.append(int(elem['pos_pheno_is_known']))
 
-        ref_seq_input_ids = batch_seq_input_lst[prot_idx_cur]
-        var_seq_input_cur = ref_seq_input_ids[:var_idx+1] + [elem['alt_aa']] + ref_seq_input_ids[var_idx+2:]
-        var_seq_input_ids.append(var_seq_input_cur)
+        # ref_seq_input_ids = batch_seq_input_lst[prot_idx_cur]
+        ref_seq = seq_lst[prot_idx_cur]  # TODO: NEED TO REVISE FOR STRUCT_VOCAB (SaProt)
+        cur_length = prot_lengths[prot_idx_cur]
+        masked_seq_tokens = protein_tokenizer.tokenize(ref_seq)
+        start = 0
+        end = cur_length
+        if truncate_protein:
+            start, end = get_optimal_window(var_idx+1, cur_length, max_protein_length)
+        offset_all.append(start)
+        if use_struct_vocab:
+            masked_seq_tokens[var_idx] = '#' + elem['ref_aa'][-1]  # mask AA type, keep original struct token
+        else:
+            masked_seq_tokens[var_idx] = protein_tokenizer.mask_token
+        alt_seq_tokens = masked_seq_tokens[:var_idx] + [elem['alt_aa']] + masked_seq_tokens[var_idx+1: ]
+        masked_seq_cur = ''.join(masked_seq_tokens[start:end])
+        var_seq_cur = ''.join(alt_seq_tokens[start:end])
+        # else:
+        #     masked_seq_cur = ref_seq[:var_idx+1] + protein_tokenizer.mask_token + ref_seq[var_idx+2: ]
+        #     var_seq_cur = ref_seq[:var_idx+1] + elem['alt_aa'] + ref_seq[var_idx+2: ]
+        masked_seq_list.append(masked_seq_cur)
+        var_seq_list.append(var_seq_cur)
+        # var_seq_input_cur = ref_seq_input_ids[:var_idx+1] + [elem['alt_aa']] + ref_seq_input_ids[var_idx+2:]
+        # var_seq_input_ids.append(var_seq_input_cur)
         
         var_idx_all.append(var_idx)
         prot_idx_all.append(prot_idx_cur)
@@ -1041,18 +1086,6 @@ def protein_variant_collate_fn(
                     # var_struct_graphs.append(dgl.from_networkx(var_context_graph, node_attrs=['pheno_idx'], edge_attrs=['distance']))
             has_struct_context_all.append(has_struct_context)
 
-            # if context_agg_opt == 'count':
-            #     target_idx = phenos_in_frame_cur.index(text_tokenizer.mask_token)
-            #     phenos_in_frame_cur.pop(target_idx)  # remove mask token at target idx
-            #     if not phenos_in_frame_cur:
-            #         phenos_in_frame_cur.append(text_tokenizer.unk_token)
-            #     context_count_dict = Counter(phenos_in_frame_cur)
-            #     pheno_list_cur, pheno_counts_cur = list(context_count_dict.keys()), list(context_count_dict.values())
-            #     # phenos_in_frame_all.extend(list(context_count_dict.keys()))
-            #     context_pheno_dict['phenotype'].extend(pheno_list_cur)
-            #     # context_pheno_dict['counts'].extend(pheno_counts_cur)
-            #     context_pheno_dict['indice'].extend([pheno_var_indice]*len(pheno_list_cur))  # indice of variant in the batch
-            # else:
             if context_agg_opt == 'concat':
                 context_info_joined = text_tokenizer.sep_token.join(phenos_in_frame_cur)  # remove protein desc from context (treat separately)
                 # phenos_in_frame_all.append(context_info_joined)
@@ -1081,7 +1114,10 @@ def protein_variant_collate_fn(
 
         # phenos_all.extend([prot_desc] + phenos_in_frame_cur)
             # max_pheno_length = max(max_pheno_length, phenos_input_ids_cur.shape[-1])
-            # phenos_in_frame_input_ids.append(phenos_input_ids_cur) 
+            # phenos_in_frame_input_ids.append(phenos_input_ids_cur)
+    masked_seq_tokenized = protein_tokenizer(masked_seq_list, padding=True, return_tensors='pt')
+    var_seq_tokenized = protein_tokenizer(var_seq_list, padding=True, return_tensors='pt')
+
     if use_prot_desc:
         desc_lst = [protein_data[pid]['prot_desc'] for pid in prot_unique]
         batch_desc_tokenized = text_tokenizer(desc_lst, padding=True, return_tensors='pt', truncation=True, max_length=max_pheno_desc_length)
@@ -1093,15 +1129,26 @@ def protein_variant_collate_fn(
             'var_pos': [elem['var_pos'] for elem in batch_data_raw],
             'var_idx': var_idx_all,
             'var_names': var_names_all,
-            'ref_aa': torch.LongTensor(ref_aa),
-            'alt_aa': torch.LongTensor(alt_aa),
+            'offset_idx': torch.tensor(offset_all),
+            'ref_aa': torch.LongTensor(ref_aa_idx),
+            'alt_aa': torch.LongTensor(alt_aa_idx),
             'infer_phenotype': False,
-            'var_seq_input_ids': torch.tensor(var_seq_input_ids),
+            # 'var_seq_input_ids': torch.tensor(var_seq_tokenized['input_ids']),
             # 'n_variants': [len(elem['alt_aa']) for elem in batch_data_raw],
             'pos_pheno_is_known': torch.tensor(pos_pheno_known_vec),
             'prot_idx': prot_idx_all,
             'use_struct': use_struct_neighbor and any(has_struct_context_all),
-            'has_struct_context': has_struct_context_all
+            'has_struct_context': has_struct_context_all,
+            'var_seq_input_feat': {
+                'input_ids': var_seq_tokenized['input_ids'],  # batch_size x max_length
+                'attention_mask': var_seq_tokenized['attention_mask'],  # 1 if token should be attended to
+                'token_type_ids': torch.zeros_like(var_seq_tokenized['input_ids'], dtype=torch.long)
+            },
+            'masked_seq_input_feat': {
+                'input_ids': masked_seq_tokenized['input_ids'],  # batch_size x max_length
+                'attention_mask': masked_seq_tokenized['attention_mask'],  # 1 if token should be attended to
+                'token_type_ids': torch.zeros_like(masked_seq_tokenized['input_ids'], dtype=torch.long)
+            },
         }
     else:
        
@@ -1115,10 +1162,11 @@ def protein_variant_collate_fn(
             'var_pos': [elem['var_pos'] for elem in batch_data_raw],
             'var_idx': var_idx_all,
             'var_names': var_names_all,
-            'var_seq_input_ids': torch.tensor(var_seq_input_ids),
+            # 'var_seq_input_ids': torch.tensor(var_seq_tokenized['input_ids']),
+            'offset_idx': torch.tensor(offset_all),
             'pheno_var_names': pheno_var_names,
-            'ref_aa': torch.LongTensor(ref_aa),
-            'alt_aa': torch.LongTensor(alt_aa),
+            'ref_aa': torch.LongTensor(ref_aa_idx),
+            'alt_aa': torch.LongTensor(alt_aa_idx),
             'infer_phenotype': True,
             "context_pheno_positions": torch.LongTensor(context_pheno_dict['position_idx']),
             'context_pheno_size': context_pheno_dict['size'],  # list
@@ -1127,7 +1175,17 @@ def protein_variant_collate_fn(
             'pos_pheno_avail': pos_pheno_known_vec,
             'prot_idx': prot_idx_all,
             'use_struct': use_struct_neighbor and any(has_struct_context_all),
-            'has_struct_context': has_struct_context_all
+            'has_struct_context': has_struct_context_all,
+            'var_seq_input_feat': {
+                'input_ids': var_seq_tokenized['input_ids'],  # batch_size x max_length
+                'attention_mask': var_seq_tokenized['attention_mask'],  # 1 if token should be attended to
+                'token_type_ids': torch.zeros_like(var_seq_tokenized['input_ids'], dtype=torch.long)
+            },
+            'masked_seq_input_feat': {
+                'input_ids': masked_seq_tokenized['input_ids'],  # batch_size x max_length
+                'attention_mask': masked_seq_tokenized['attention_mask'],  # 1 if token should be attended to
+                'token_type_ids': torch.zeros_like(masked_seq_tokenized['input_ids'], dtype=torch.long)
+            },
         }
         if context_agg_opt == 'concat':
             variant_dict['context_pheno_indices'] = torch.LongTensor(context_pheno_dict['indice'])
@@ -1190,12 +1248,11 @@ def protein_variant_collate_fn(
         # 'variant_mask': batch_var_mask,  # true for variant (batch_size, max_length)
         # 'pathogenic_mask': batch_patho_mask,  # true for pathogenic (batch_size, max_length)
         'label': batch_label,  # 1: pathogenic, 0: benign, -100: non-variant spots
-        
-        'seq_input_feat': {
-            'input_ids': batch_seq_tokenized['input_ids'],  # batch_size x max_length
-            'attention_mask': batch_seq_tokenized['attention_mask'],  # 1 if token should be attended to
-            'token_type_ids': torch.zeros_like(batch_seq_tokenized['input_ids'], dtype=torch.long)
-        },
+        # 'seq_input_feat': {  # reference sequence
+        #     'input_ids': batch_seq_tokenized['input_ids'],  # batch_size x max_length
+        #     'attention_mask': batch_seq_tokenized['attention_mask'],  # 1 if token should be attended to
+        #     'token_type_ids': torch.zeros_like(batch_seq_tokenized['input_ids'], dtype=torch.long)
+        # },
         'desc_input_feat': {
             'input_ids': batch_desc_tokenized['input_ids'],
             'attention_mask': batch_desc_tokenized['attention_mask'],

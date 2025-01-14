@@ -87,21 +87,24 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
 
     with torch.no_grad():
         for batch_idx, batch_data in enumerate(data_loader):
-            seq_feat_dict = load_input_to_device(batch_data['seq_input_feat'], device)
+            # seq_feat_dict = load_input_to_device(batch_data['seq_input_feat'], device)
             desc_feat_dict = load_input_to_device(batch_data['desc_input_feat'], device)
             variant_data = load_input_to_device(batch_data['variant'], device=device, exclude_keys=['var_names'])
+            for key in ['var_seq_input_feat', 'masked_seq_input_feat']:
+                variant_data[key] = load_input_to_device(variant_data[key], device=device)
             batch_labels = batch_data['variant']['label'].unsqueeze(1).to(device)
 
             # seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data, desc_feat_dict)
-            patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(seq_feat_dict, variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
-
+            # patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(seq_feat_dict, variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
+            logit_diff, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
             size = batch_labels.size()[0]
             cur_pheno_size = batch_labels.sum().item()
 
             # running_loss += loss_* size
             n_sample += size
             n_pheno_sample += cur_pheno_size
-            batch_patho_scores = torch.sigmoid(patho_logits)
+            batch_patho_scores = torch.sigmoid(logit_diff)
+            # batch_patho_scores = logit_diff
             # batch_patho_scores = torch.softmax(patho_logits, 1)[:, 1]
             if batch_patho_scores.ndim > 1:
                 batch_patho_scores = batch_patho_scores.squeeze(-1)
@@ -264,7 +267,21 @@ if __name__ == '__main__':
             prot2desc.update(desc_dict)  # string of protein definition E.g. BRCA1_HUMAN Breast cancer type 1 susceptibility protein
         except FileNotFoundError:
             pass
-    
+
+    for fpath in data_configs['prot_meta_data']:
+        try:
+            df_meta = pd.read_csv(fpath, sep='\t').dropna(subset=['function'])
+            # meta_info_all.append(df)
+            prot_func_dict = dict(zip(df_meta['UniProt'], df_meta['function']))
+            prot2desc.update(prot_func_dict)
+        except FileNotFoundError:
+            pass
+        
+    for prot, desc in prot2desc.items():
+        # update description of isoforms
+        if prot.find('-') >= 0:
+            prot2desc[prot] = ' '.join([desc, prot2desc.get(prot.split('-')[0], '')]).strip()
+
     prot2comb_seq = None
     if data_configs['use_struct_vocab']:
         if os.path.exists(data_configs['struct_seq_file']):
@@ -332,6 +349,7 @@ if __name__ == '__main__':
                                   pad_label_idx=-100,
                                   dist_fn_name=model_args['dist_fn_name'],
                                   init_margin=model_args['margin'],
+                                  use_struct_vocab=data_configs['use_struct_vocab'],
                                   device=device)
     checkpt_dict = torch.load(config['model_path'], map_location='cpu')
     model.load_state_dict(checkpt_dict['state_dict'])
@@ -364,7 +382,8 @@ if __name__ == '__main__':
                                             access_to_context=False)
         logging.info('{} variants loaded'.format(len(test_dataset)))
         test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
-                                               use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'],
+                                               use_prot_desc=True, truncate_protein=data_configs['truncate_protein'], 
+                                               max_protein_length=data_configs['max_protein_seq_length'],
                                                use_struct_vocab=data_configs['use_struct_vocab'], 
                                                use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict)
         test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)

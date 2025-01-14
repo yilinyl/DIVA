@@ -28,6 +28,7 @@ class DiseaseVariantEncoder(nn.Module):
                  text_encoder: Union[nn.Module, PreTrainedModel],
                  n_residue_types,
                  hidden_size,
+                 desc_proj_dim=128,
                  use_desc=True,
                  pad_label_idx=-100,
                  num_heads=4,
@@ -36,6 +37,8 @@ class DiseaseVariantEncoder(nn.Module):
                  dist_fn_name='cosine_sigmoid',
                  init_margin=1,
                  freq_norm_factor=None,
+                 use_struct_vocab=False,
+                 foldseek_vocab="pynwrqhgdlvtmfsaeikc#",
                  seq_weight_scaler=1,
                  device='cpu',
                  **kwargs):
@@ -50,6 +53,8 @@ class DiseaseVariantEncoder(nn.Module):
 
         self.n_residue_types = n_residue_types
         self.use_desc = use_desc
+        self.use_struct_vocab = use_struct_vocab
+        self.foldseek_vocab_size = len(foldseek_vocab)
         self.device = device
 
         self.seq_emb_dim = self.seq_encoder.config.hidden_size
@@ -64,6 +69,13 @@ class DiseaseVariantEncoder(nn.Module):
         self.proj_head = nn.Linear(self.text_emb_dim, self.hidden_size)
 
         self.patho_output_layer = nn.Linear(self.seq_emb_dim + self.text_emb_dim, 2)  # use concatenated embedding of alt_seq and prot_desc
+        # self.desc_proj_dim = desc_proj_dim
+        # if self.use_struct_vocab:
+        #     self.patho_feat_dim = self.desc_proj_dim + 2 * self.foldseek_vocab_size
+        # else:
+        #     self.patho_feat_dim = self.desc_proj_dim + 2
+        # self.desc_proj_linear = nn.Linear(self.text_emb_dim, self.desc_proj_dim)
+        # self.patho_output_layer = nn.Linear(self.patho_feat_dim, 2)  # use concatenated embedding of alt_seq and prot_desc
         self.n_gnn_layers = n_gnn_layers
         self.gnn_layers = nn.ModuleList()
         if isinstance(num_heads, int):
@@ -95,13 +107,40 @@ class DiseaseVariantEncoder(nn.Module):
         self.contrast_loss_fn = nn.TripletMarginWithDistanceLoss(distance_function=self.dist_fn, margin=init_margin, reduction='none')
         self.nce_loss_fn = InfoNCELoss()    
 
-    def binary_step(self, seq_input_feat, variant_data, desc_input_feat=None):
+    # def binary_step(self, seq_input_feat, variant_data, desc_input_feat=None):
+    #     # seq_embs, mlm_logits, desc_embs = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
+    #     mlm_logits = self.protein_encoder.get_mlm_logits(seq_input_feat)
+    #     var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
+    #     logit_diff = self.log_diff_patho_score(mlm_logits[var_indices], variant_data['ref_aa'], variant_data['alt_aa'])
+
+    #     return mlm_logits, logit_diff
+    def binary_step(self, seq_input_feat, variant_data):
         # seq_embs, mlm_logits, desc_embs = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
         mlm_logits = self.protein_encoder.get_mlm_logits(seq_input_feat)
-        var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
-        logit_diff = self.log_diff_patho_score(mlm_logits[var_indices], variant_data['ref_aa'], variant_data['alt_aa'])
+        # var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
+        # logit_diff = self.log_diff_patho_score(mlm_logits[var_indices], variant_data['ref_aa'], variant_data['alt_aa'])
+        probs = mlm_logits.softmax(dim=-1)
+        logit_diff = 0
+        # for single in mut_info.split(":"):
+        var_idx = torch.tensor(variant_data['var_idx'], device=self.device) - variant_data['offset_idx']
+        batch_idx = torch.arange(len(var_idx), device=self.device)
+        # TODO: revise for struct-vocab
+        if self.use_struct_vocab:  # from SaProt script
+            ori_st = variant_data['ref_aa'].unsqueeze(1)  # starting index
+            mut_st = variant_data['alt_aa'].unsqueeze(1)
+            range_indices = torch.arange(self.foldseek_vocab_size, device=self.device).unsqueeze(0)
+            ori_prob = probs[batch_idx, var_idx+1].gather(1, ori_st + range_indices).sum(1)
+            mut_prob = probs[batch_idx, var_idx+1].gather(1, mut_st + range_indices).sum(1)
+            # ori_prob = probs[batch_idx, var_idx+1, ori_st: ori_st + self.foldseek_vocab_size].sum()
+            # mut_prob = probs[batch_idx, var_idx+1, mut_st: mut_st + self.foldseek_vocab_size].sum()
+        else:
+            ori_prob = probs[batch_idx, var_idx+1, variant_data['ref_aa']]
+            mut_prob = probs[batch_idx, var_idx+1, variant_data['alt_aa']]
+            
+        # logit_diff = torch.log(mut_prob / ori_prob)  # smaller for pathogenic
+        logit_diff = torch.log(ori_prob / mut_prob)  # larger for pathogenic
 
-        return mlm_logits, logit_diff
+        return mlm_logits, logit_diff.unsqueeze(1)        
 
     def gnn_message_passing(self, graph, nfeats, efeats):
         h = nfeats
@@ -115,7 +154,7 @@ class DiseaseVariantEncoder(nn.Module):
         return h      
 
     # def contrastive_step(self, seq_input_feat, variant_data, desc_input_feat):
-    def forward(self, seq_input_feat, variant_data, desc_input_feat):
+    def forward(self, variant_data, desc_input_feat):
         # protein desc embedding for all variants in batch
         # var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
         prot_desc_emb = self.text_encoder(
@@ -130,19 +169,13 @@ class DiseaseVariantEncoder(nn.Module):
         # Pathogenicity prediction
         desc_emb_agg = torch.stack([prot_desc_emb[i, desc_input_feat['attention_mask'][i, :].bool(), :][0] for i in range(prot_desc_emb.size(0))], dim=0)
         # use altnerated sequence for phenotype inference
-        # alt_seq_input_feat = {
-        #     'input_ids': variant_data['var_seq_input_ids'][variant_data['infer_pheno_vec'].bool()],
-        #     'attention_mask': seq_input_feat['attention_mask'][variant_data['patho_var_prot_idx']]
-        # }
-        alt_seq_input_feat = {  # All ALT seq
-            'input_ids': variant_data['var_seq_input_ids'],
-            'attention_mask': seq_input_feat['attention_mask'][variant_data['prot_idx']]
-        }
+        masked_seq_input_feat = variant_data['masked_seq_input_feat']        
+        alt_seq_input_feat = variant_data['var_seq_input_feat']
         alt_seq_embs = self.protein_encoder.embed_protein_seq(alt_seq_input_feat)
         alt_seq_embs = torch.stack([alt_seq_embs[i, alt_seq_input_feat['attention_mask'][i, :].bool(), :][0] for i in range(alt_seq_embs.size(0))], dim=0)
         alt_seq_func_embs = torch.cat([alt_seq_embs, desc_emb_agg[variant_data['prot_idx']]], dim=-1)  # concatenate alt-seq embedding & prot-desc embedding
         # var_patho_logits = self.patho_output_layer(alt_seq_func_embs)
-        _, var_logit_diff = self.binary_step(seq_input_feat, variant_data)
+        _, var_logit_diff = self.binary_step(masked_seq_input_feat, variant_data)
 
         n_pheno_vars = variant_data['infer_pheno_vec'].sum().item()
         if n_pheno_vars == 0:  # Pathogenicity 

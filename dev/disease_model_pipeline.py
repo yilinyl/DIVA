@@ -78,15 +78,17 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5,
                 all_pheno_embs = torch.cat(all_pheno_emb_list, dim=0)
             pheno_vocab_size = all_pheno_embs.size(0)
 
-        seq_feat_dict = load_input_to_device(batch_data['seq_input_feat'], device)
+        # seq_feat_dict = load_input_to_device(batch_data['seq_input_feat'], device)
         desc_feat_dict = load_input_to_device(batch_data['desc_input_feat'], device)
         variant_data = load_input_to_device(batch_data['variant'], device=device, exclude_keys=['var_names'])
+        for key in ['var_seq_input_feat', 'masked_seq_input_feat']:
+            variant_data[key] = load_input_to_device(variant_data[key], device=device)
         batch_labels = batch_data['variant']['label'].unsqueeze(1).to(device)
         optimizer.zero_grad()
         # batch_pheno_feat = batch_data['phenotype']
         # TODO: parse phenotype information
         # seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
-        patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(seq_feat_dict, variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
+        patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
         # patho_loss = model.patho_loss_fn(patho_logits, batch_labels.squeeze(-1))
         # shapes = batch_logits.size()
         # batch_logits = batch_logits.view(shapes[0]*shapes[1])
@@ -159,13 +161,15 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5, use_struct_
 
     with torch.no_grad():
         for batch_idx, batch_data in enumerate(data_loader):
-            seq_feat_dict = load_input_to_device(batch_data['seq_input_feat'], device)
+            # seq_feat_dict = load_input_to_device(batch_data['seq_input_feat'], device)
             desc_feat_dict = load_input_to_device(batch_data['desc_input_feat'], device)
             variant_data = load_input_to_device(batch_data['variant'], device=device, exclude_keys=['var_names'])
+            for key in ['var_seq_input_feat', 'masked_seq_input_feat']:
+                variant_data[key] = load_input_to_device(variant_data[key], device=device)
             batch_labels = batch_data['variant']['label'].unsqueeze(1).to(device)
 
             # seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data, desc_feat_dict)
-            logit_diff, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(seq_feat_dict, variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
+            logit_diff, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
             # patho_loss = model.patho_loss_fn(patho_logits, batch_labels.squeeze(-1))
             
             # patho_loss = model.pathogenicity_loss(logit_diff, batch_labels)
@@ -175,6 +179,7 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5, use_struct_
             
             # batch_patho_scores = torch.softmax(patho_logits, 1)[:, 1]
             batch_patho_scores = torch.sigmoid(logit_diff)
+            # batch_patho_scores = logit_diff
             if batch_patho_scores.ndim > 1:
                 batch_patho_scores = batch_patho_scores.squeeze(-1)
 
@@ -450,19 +455,25 @@ def main():
     text_encoder = BertForMaskedLM.from_pretrained(model_args['text_lm_path'])
 
     train_collator = ProteinVariantDataCollator(train_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
-                                                use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'], half_window_size=data_configs['half_window_size'],
+                                                use_prot_desc=True, truncate_protein=data_configs['truncate_protein'], 
+                                                max_protein_length=data_configs['max_protein_seq_length'], 
+                                                half_window_size=data_configs['half_window_size'],
                                                 context_agg_opt=data_configs['context_agg_option'], use_pheno_desc=data_configs['use_pheno_desc'], 
                                                 pheno_desc_dict=pheno_desc_dict, use_struct_vocab=data_configs['use_struct_vocab'], 
                                                 use_struct_neighbor=data_configs['use_struct_neighbor'], struct_radius_cutoff=data_configs['struct_radius_cutoff'])
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], collate_fn=train_collator, shuffle=True)
     val_collator = ProteinVariantDataCollator(val_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
-                                              use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'], half_window_size=data_configs['half_window_size'],
+                                              use_prot_desc=True, truncate_protein=data_configs['truncate_protein'], 
+                                              max_protein_length=data_configs['max_protein_seq_length'], 
+                                              half_window_size=data_configs['half_window_size'],
                                               context_agg_opt=data_configs['context_agg_option'], use_pheno_desc=data_configs['use_pheno_desc'], 
                                               pheno_desc_dict=pheno_desc_dict, use_struct_vocab=data_configs['use_struct_vocab'], 
                                               use_struct_neighbor=data_configs['use_struct_neighbor'], struct_radius_cutoff=data_configs['struct_radius_cutoff'])
     validation_loader = DataLoader(val_dataset, batch_size=config['batch_size'], collate_fn=val_collator)
     test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
-                                               use_prot_desc=True, max_protein_length=data_configs['max_protein_seq_length'], half_window_size=data_configs['half_window_size'],
+                                               use_prot_desc=True, truncate_protein=data_configs['truncate_protein'], 
+                                               max_protein_length=data_configs['max_protein_seq_length'], 
+                                               half_window_size=data_configs['half_window_size'],
                                                context_agg_opt=data_configs['context_agg_option'], use_pheno_desc=data_configs['use_pheno_desc'], 
                                                pheno_desc_dict=pheno_desc_dict, use_struct_vocab=data_configs['use_struct_vocab'], 
                                                use_struct_neighbor=data_configs['use_struct_neighbor'], struct_radius_cutoff=data_configs['struct_radius_cutoff'])
@@ -515,6 +526,7 @@ def main():
                                     init_margin=model_args['margin'],
                                     freq_norm_factor=model_args['freq_norm_factor'],
                                     seq_weight_scaler=model_args['seq_weight_scaler'],
+                                    use_struct_vocab=data_configs['use_struct_vocab'],
                                     device=device)
     total_param = 0
     total_param_with_grad = 0
