@@ -241,6 +241,7 @@ class ProteinVariantDatset(Dataset):
         use_struct_vocab=False,
         comb_seq_dict=None,  # combined sequence (residue+struct from foldseek)
         access_to_context=False,
+        exclude_prots=None,
         **kwargs
     ):
         super(ProteinVariantDatset, self).__init__()
@@ -294,7 +295,8 @@ class ProteinVariantDatset(Dataset):
             variant_file = split + '.csv'
         
         df_var = pd.read_csv(self.data_root / variant_file).drop_duplicates([pid_col, pos_col, label_col, 'REF_AA', 'ALT_AA']).reset_index(drop=True)
-        
+        if exclude_prots:
+            df_var = df_var[~df_var[pid_col].isin(exclude_prots)].reset_index(drop=True)
         self._load_variant_data(df_var, pid_col, pos_col)
         if self.use_struct_neighbor:
             self.build_var_context_graph()

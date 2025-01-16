@@ -103,8 +103,8 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
             # running_loss += loss_* size
             n_sample += size
             n_pheno_sample += cur_pheno_size
-            batch_patho_scores = torch.sigmoid(logit_diff)
-            # batch_patho_scores = logit_diff
+            # batch_patho_scores = torch.sigmoid(logit_diff)
+            batch_patho_scores = logit_diff
             # batch_patho_scores = torch.softmax(patho_logits, 1)[:, 1]
             if batch_patho_scores.ndim > 1:
                 batch_patho_scores = batch_patho_scores.squeeze(-1)
