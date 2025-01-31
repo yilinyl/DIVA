@@ -40,6 +40,8 @@ class DiseaseVariantEncoder(nn.Module):
                  use_struct_vocab=False,
                  foldseek_vocab="pynwrqhgdlvtmfsaeikc#",
                  seq_weight_scaler=1,
+                 adjust_logits=False,
+                 use_alphamissense=False,
                  device='cpu',
                  **kwargs):
         super(DiseaseVariantEncoder, self).__init__()
@@ -67,6 +69,22 @@ class DiseaseVariantEncoder(nn.Module):
         self.seq_pheno_comb = nn.Linear(self.seq_emb_dim + self.text_emb_dim * 2, self.hidden_size) # concatenated embedding of alt_seq, prot_desc, context_pheno
 
         self.proj_head = nn.Linear(self.text_emb_dim, self.hidden_size)
+        self.use_alphamissense = use_alphamissense
+        self.prompt_hidden_size = self.text_emb_dim // 2
+        self.adjust_logits = adjust_logits
+        if self.use_alphamissense:
+            self.adjust_logits = True
+            
+        if self.adjust_logits:
+            self.func_prompt_l1 = nn.Linear(self.text_emb_dim, self.prompt_hidden_size)
+            self.func_prompt_l2 = nn.Linear(self.prompt_hidden_size, 1)
+            self.func_prompt_mlp = nn.Sequential(self.func_prompt_l1,  # learnable weight from protein function embedding
+                                                nn.ReLU(),
+                                                self.func_prompt_l2)
+            if not self.use_alphamissense:  # scaler initialized ~1
+                nn.init.normal_(self.func_prompt_l2.weight, std=(2 / self.prompt_hidden_size)**0.5)
+                nn.init.ones_(self.func_prompt_l2.bias)
+        self.weight_act = nn.Sigmoid()
 
         self.patho_output_layer = nn.Linear(self.seq_emb_dim + self.text_emb_dim, 2)  # use concatenated embedding of alt_seq and prot_desc
         # self.desc_proj_dim = desc_proj_dim
@@ -177,9 +195,23 @@ class DiseaseVariantEncoder(nn.Module):
         # var_patho_logits = self.patho_output_layer(alt_seq_func_embs)
         _, var_logit_diff = self.binary_step(masked_seq_input_feat, variant_data)
 
+        if not self.use_alphamissense:
+            if self.adjust_logits:
+                prompt_weights = self.func_prompt_mlp(desc_emb_agg[variant_data['prot_idx']])
+            else:
+                prompt_weights = 1
+            weighted_logits = prompt_weights * var_logit_diff
+        else:
+            prompt_weights = self.func_prompt_mlp(desc_emb_agg[variant_data['prot_idx']])
+            prompt_weights = self.weight_act(prompt_weights)  # with activation (sigmoid)
+            afmis_mask = variant_data['afmis_mask']  # True if alphamissense NOT available
+            afmis_logits = torch.logit(variant_data['afmis_score'], eps=1e-6).unsqueeze(1)
+            weighted_logits = prompt_weights * var_logit_diff + (1 - prompt_weights) * afmis_logits
+            weighted_logits[afmis_mask] = var_logit_diff[afmis_mask]
+
         n_pheno_vars = variant_data['infer_pheno_vec'].sum().item()
         if n_pheno_vars == 0:  # Pathogenicity 
-            return var_logit_diff, None, None, None, None
+            return weighted_logits, prompt_weights, None, None, None, None
     
         max_text_length = self.text_encoder.config.max_position_embeddings
         # pheno_input_ids = variant_data['context_pheno_input_ids'].view(n_pheno_vars, -1)
@@ -275,7 +307,7 @@ class DiseaseVariantEncoder(nn.Module):
         else:
             neg_emb_proj = None
 
-        return var_logit_diff, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb
+        return weighted_logits, prompt_weights, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb
 
     
     def get_pheno_emb(self, pheno_input_dict, proj=True, agg_opt='mean'):

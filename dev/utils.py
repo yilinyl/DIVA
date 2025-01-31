@@ -165,15 +165,26 @@ def get_memory_usage():
     return process.memory_info().rss
 
 
-def _save_scores(var_ids, target, pred, name, epoch='', exp_dir='./output', mode='train'):
+def _save_scores(var_ids, target, pred, name, weights=None, 
+                 var_name='prot_var_id', label_name='label', score_name='score',
+                 epoch='', exp_dir='./output', mode='train'):
     if mode == 'train':
         fname = f'{exp_dir}/result/epoch_{epoch}_{name}_score.txt'
     else:
         fname = f'{exp_dir}/pred_{name}_score.txt'
     with open(fname, 'w') as f:
-        f.write('var\ttarget\tscore\n')
-        for a, c, d in zip(var_ids, target, pred):
-            f.write('{}\t{}\t{:f}\n'.format(a, c, d))
+        cols = [var_name, label_name, score_name]
+        if not isinstance(weights, type(None)):
+            cols.append('weight')
+            vals = zip(var_ids, target, pred, weights)
+        else:
+            vals = zip(var_ids, target, pred)
+        f.write('\t'.join(cols) + '\n')
+        for items in vals:
+            if len(items) == 3:
+                f.write('{}\t{}\t{:f}\n'.format(*items))
+            else:
+                f.write('{}\t{}\t{:f}\t{:f}\n'.format(*items))
 
 
 def format_metadata(var_ids, labels):

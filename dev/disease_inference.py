@@ -83,7 +83,7 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
     all_pheno_emb_pred, all_pheno_emb_label, all_pos_pheno_descs, all_pos_pheno_idx = [], [], [], []
     all_patho_vars, all_pheno_emb_neg, all_neg_pheno_descs, all_pheno_neg_scores = [], [], [], []
     all_similarities, all_topk_scores, all_topk_indices = [], [], []
-    # all_pheno_embs = []
+    adjusted_weights = []
 
     with torch.no_grad():
         for batch_idx, batch_data in enumerate(data_loader):
@@ -96,7 +96,7 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
 
             # seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data, desc_feat_dict)
             # patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(seq_feat_dict, variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
-            logit_diff, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
+            logit_diff, batch_weights, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
             size = batch_labels.size()[0]
             cur_pheno_size = batch_labels.sum().item()
 
@@ -112,6 +112,8 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
             all_scores.append(batch_patho_scores.detach().cpu().numpy())
             all_vars.extend(batch_data['variant']['var_names'])
             all_labels.append(batch_labels.squeeze(1).detach().cpu().numpy())
+            if model.adjust_logits:
+                adjusted_weights.append(batch_weights.squeeze(-1).detach().cpu().numpy())
 
             if batch_data['variant']['infer_phenotype']:
                 # if pos_emb_proj is not None:
@@ -143,7 +145,10 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
         # epoch_loss = running_loss / n_sample
         all_labels = np.concatenate(all_labels, 0)
         all_scores = np.concatenate(all_scores, 0)
-        
+        if model.adjust_logits:
+            all_weights = np.concatenate(adjusted_weights, 0)  # learned weights for pathogenicity (scaler if only PLM used)
+        else:
+            all_weights = None
         # all_pheno_neg_scores = np.concatenate(all_pheno_neg_scores, 0)
         if all_pheno_emb_pred:
             all_pheno_emb_pred = np.concatenate(all_pheno_emb_pred, 0)
@@ -171,7 +176,7 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
         else:
             all_pheno_results = dict()
     
-    return all_labels, all_scores, all_vars, all_pheno_results
+    return all_labels, all_scores, all_vars, all_weights, all_pheno_results
 
 
 def load_config(cfg_file, format='yaml'):
@@ -293,6 +298,10 @@ if __name__ == '__main__':
     data_configs['seq_dict'] = prot2seq
     data_configs['protein_info_dict'] = prot2desc
 
+    afmis_root = None
+    if data_configs['use_alphamissense']:
+        afmis_root = Path(data_configs['alphamissense_score_dir'])
+
     # Initialize tokenizer
     protein_tokenizer = AutoTokenizer.from_pretrained(model_args['protein_lm_path'],
         do_lower_case=False
@@ -350,6 +359,8 @@ if __name__ == '__main__':
                                   dist_fn_name=model_args['dist_fn_name'],
                                   init_margin=model_args['margin'],
                                   use_struct_vocab=data_configs['use_struct_vocab'],
+                                  use_alphamissense=data_configs['use_alphamissense'],
+                                  adjust_logits=model_args['adjust_logits'],
                                   device=device)
     checkpt_dict = torch.load(config['model_path'], map_location='cpu')
     model.load_state_dict(checkpt_dict['state_dict'])
@@ -379,19 +390,20 @@ if __name__ == '__main__':
                                             mode='eval',
                                             update_var_cache=False,
                                             comb_seq_dict=prot2comb_seq,
+                                            afmis_root=afmis_root,
                                             access_to_context=False)
         logging.info('{} variants loaded'.format(len(test_dataset)))
         test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
                                                use_prot_desc=True, truncate_protein=data_configs['truncate_protein'], 
                                                max_protein_length=data_configs['max_protein_seq_length'],
-                                               use_struct_vocab=data_configs['use_struct_vocab'], 
+                                               use_struct_vocab=data_configs['use_struct_vocab'], use_alphamissense=data_configs['use_alphamissense'],
                                                use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict)
         test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
         # train_labels, train_scores, train_vars, train_pheno_results = inference(model, device, train_loader, pheno_vocab_emb=all_pheno_embs, topk=100)
         # val_labels, val_scores, val_vars, val_pheno_results = inference(model, device, validation_loader, pheno_vocab_emb=all_pheno_embs, topk=100)
-        test_labels, test_scores, test_vars, test_pheno_results = inference(model, device, test_loader, pheno_vocab_emb=all_pheno_embs, topk=100)
+        test_labels, test_scores, test_vars, test_adj_weights, test_pheno_results = inference(model, device, test_loader, pheno_vocab_emb=all_pheno_embs, topk=100)
 
-        _save_scores(test_vars, test_labels, test_scores, fname, epoch='', exp_dir=str(exp_path), mode='eval')
+        _save_scores(test_vars, test_labels, test_scores, fname, weights=test_adj_weights, epoch='', exp_dir=str(exp_path), mode='eval')
         # np.save(pheno_result_path / 'train_pheno_similarity.npy', train_topk_results['similarities'])
         # np.save(pheno_result_path / 'test_pheno_similarity.npy', test_topk_results['similarities'])
         # np.save(pheno_result_path / 'val_pheno_similarity.npy', val_topk_results['similarities'])

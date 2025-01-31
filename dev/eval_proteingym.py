@@ -92,19 +92,24 @@ if __name__ == '__main__':
         if dms_id not in dms_seq_dict:
             exclude_prots.append(dms_id2uprot[dms_id])
             continue
-        pdb_file = dms_pdb_dict[dms_id]
-        if pdb_file.find('|') != -1:
-            exclude_prots.append(dms_id2uprot[dms_id])
-            continue
-        pid = dms_id2uprot[dms_id]
-        pdb_fpath = os.path.join(data_configs['struct_folder'], pdb_file)
-        tmp_fpath = str(exp_path / 'tmp_struct_seq.tsv')
-        struc_seq = get_struc_seq(data_configs['foldseek_bin'], pdb_fpath, ["A"], plddt_mask=True, plddt_threshold=70, tmp_save_path=tmp_fpath)["A"][1].lower()
-        prot2comb_seq[pid] = "".join([a + b for a, b in zip(dms_seq_dict[dms_id], struc_seq)])
-        os.remove(tmp_fpath)
+        if data_configs['use_struct_vocab']:
+            pdb_file = dms_pdb_dict[dms_id]
+            if pdb_file.find('|') != -1:
+                exclude_prots.append(dms_id2uprot[dms_id])
+                continue
+            pid = dms_id2uprot[dms_id]
+            pdb_fpath = os.path.join(data_configs['struct_folder'], pdb_file)
+            tmp_fpath = str(exp_path / 'tmp_struct_seq.tsv')
+            struc_seq = get_struc_seq(data_configs['foldseek_bin'], pdb_fpath, ["A"], plddt_mask=True, plddt_threshold=70, tmp_save_path=tmp_fpath)["A"][1].lower()
+            prot2comb_seq[pid] = "".join([a + b for a, b in zip(dms_seq_dict[dms_id], struc_seq)])
+            os.remove(tmp_fpath)
     
     data_configs['seq_dict'] = {dms_id2uprot[k]: dms_seq_dict[k] for k in dms_id2uprot.keys()}
     data_configs['protein_info_dict'] = prot2desc
+    
+    afmis_root = None
+    if data_configs['use_alphamissense']:
+        afmis_root = Path(data_configs['alphamissense_score_dir'])
 
     # Initialize tokenizer
     protein_tokenizer = AutoTokenizer.from_pretrained(model_args['protein_lm_path'],
@@ -141,6 +146,8 @@ if __name__ == '__main__':
                                   dist_fn_name=model_args['dist_fn_name'],
                                   init_margin=model_args['margin'],
                                   use_struct_vocab=data_configs['use_struct_vocab'],
+                                  use_alphamissense=data_configs['use_alphamissense'],
+                                  adjust_logits=model_args['adjust_logits'],
                                   device=device)
     checkpt_dict = torch.load(config['model_path'], map_location='cpu')
     model.load_state_dict(checkpt_dict['state_dict'])
@@ -172,16 +179,17 @@ if __name__ == '__main__':
                                         update_var_cache=False,
                                         comb_seq_dict=prot2comb_seq,
                                         exclude_prots=exclude_prots,
+                                        afmis_root=afmis_root,
                                         access_to_context=False)
     logging.info('{} variants loaded'.format(len(test_dataset)))
     test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
                                         use_prot_desc=True, truncate_protein=data_configs['truncate_protein'], 
                                         max_protein_length=data_configs['max_protein_seq_length'],
-                                        use_struct_vocab=data_configs['use_struct_vocab'], 
+                                        use_struct_vocab=data_configs['use_struct_vocab'], use_alphamissense=data_configs['use_alphamissense'],
                                         use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict)
     test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
     
-    test_labels, test_scores, test_vars, test_pheno_results = inference(model, device, test_loader, pheno_vocab_emb=all_pheno_embs, topk=100)
+    test_labels, test_scores, test_vars, test_adj_weights, test_pheno_results = inference(model, device, test_loader, pheno_vocab_emb=all_pheno_embs, topk=100)
 
-    _save_scores(test_vars, test_labels, test_scores, fname, epoch='', exp_dir=str(exp_path), mode='eval')
-
+    _save_scores(test_vars, test_labels, test_scores, fname, weights=test_adj_weights, epoch='', exp_dir=str(exp_path), mode='eval')
+    logging.info('Done!')

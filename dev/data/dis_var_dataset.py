@@ -242,6 +242,8 @@ class ProteinVariantDatset(Dataset):
         comb_seq_dict=None,  # combined sequence (residue+struct from foldseek)
         access_to_context=False,
         exclude_prots=None,
+        use_alphamissense=False,
+        afmis_root=None,
         **kwargs
     ):
         super(ProteinVariantDatset, self).__init__()
@@ -290,6 +292,15 @@ class ProteinVariantDatset(Dataset):
         self.use_struct_vocab = use_struct_vocab
         self.comb_seq_dict = comb_seq_dict
         self.access_to_context = access_to_context
+
+        self.use_alphamissense = use_alphamissense
+        self.afmis_root = afmis_root
+        self.afmis_prots = []
+        if self.use_alphamissense and not self.afmis_root.exists():
+            self.use_alphamissense = False
+        if self.use_alphamissense:
+            for fpath in self.afmis_root.glob('*json'):
+                self.afmis_prots.append(fpath.name.split('_')[0])
 
         if not variant_file:
             variant_file = split + '.csv'
@@ -371,6 +382,13 @@ class ProteinVariantDatset(Dataset):
                 except AssertionError:
                     logging.warning(f'Inconsistent sequence lengths for structure & primary sequence ({uprot})')
                     continue
+            
+            prot_afmis_dict = dict()
+            if self.use_alphamissense:
+                if uprot in self.afmis_prots:
+                    with open(self.afmis_root / f'{uprot}_sub_all.json') as f:
+                        prot_afmis_dict = json.load(f)
+                
             if self.use_struct_neighbor:
                 pdb_graph_exists = (self.pdb_graph_root / f'{uprot}.graphml.gz').exists()
                 af_graph_exists = (self.af_graph_root / f'{uprot}.graphml.gz').exists()
@@ -525,6 +543,9 @@ class ProteinVariantDatset(Dataset):
                                'infer_phenotype': infer_phenotype,
                                'pos_pheno_is_known': pos_pheno_is_known
                                }
+                if self.use_alphamissense:
+                    cur_variant['afmis_score'] = prot_afmis_dict.get(cur_var_name, -1)
+                    cur_variant['afmis_mask'] = int(cur_variant['afmis_score'] == -1)
                 # if self.use_struct_neighbor:
                 #     nx.set_node_attributes(g_prot, values={var_pos_idx: {'pheno_idx': pheno_idx}})
                 #     var_struct_graph = g_prot.edge_subgraph(g_prot.in_edges(var_pos_idx))
@@ -657,6 +678,7 @@ class ProteinVariantDataCollator:
     has_phenotype_label: bool = True
     use_struct_vocab: bool = False
     use_struct_neighbor: bool = False
+    use_alphamissense: bool = False
     struct_radius_cutoff: float = 25
     include_unknown: bool = False
     context_agg_opt: str = 'concat'
@@ -678,7 +700,7 @@ class ProteinVariantDataCollator:
                                            truncate_protein=self.truncate_protein, max_protein_length=self.max_protein_length, max_pheno_desc_length=self.max_pheno_desc_length, 
                                            half_window_size=self.half_window_size, mode=self.mode, has_phenotype_label=self.has_phenotype_label,
                                            use_struct_vocab=self.use_struct_vocab, use_struct_neighbor=self.use_struct_neighbor, struct_radius=self.struct_radius_cutoff,
-                                           include_unknown=self.include_unknown, context_agg_opt=self.context_agg_opt)
+                                           use_alphamissense=self.use_alphamissense, include_unknown=self.include_unknown, context_agg_opt=self.context_agg_opt)
 
         return batch
     
@@ -946,6 +968,7 @@ def protein_variant_collate_fn(
     foldseek_vocab: str = "pynwrqhgdlvtmfsaeikc#",
     use_struct_neighbor: bool = False,
     struct_radius: float = 25,
+    use_alphamissense: bool = False,
     include_unknown: bool = False,
     context_agg_opt: str = 'concat'  # concat: concatenate in-context phenotypes; count: aggregate by count
 ):   
@@ -1239,6 +1262,11 @@ def protein_variant_collate_fn(
                 'struct_pheno_input_ids': struct_pheno_input_ids,
                 'struct_pheno_attention_mask': struct_pheno_attention_mask
             })
+    if use_alphamissense:
+        variant_dict.update({
+            'afmis_score': torch.tensor([elem['afmis_score'] for elem in batch_data_raw]), 
+            'afmis_mask': torch.tensor([elem['afmis_mask'] for elem in batch_data_raw], dtype=bool),  # True if alphamissense NOT available
+        })
     del var_struct_graphs_raw
     variant_dict['label'] = torch.tensor(batch_label)
     variant_dict['infer_pheno_vec'] = torch.tensor(infer_pheno_vec)
@@ -1260,6 +1288,7 @@ def protein_variant_collate_fn(
             'attention_mask': batch_desc_tokenized['attention_mask'],
             'token_type_ids': torch.zeros_like(batch_desc_tokenized['input_ids'], dtype=torch.long)
         },
+        'use_alphamissense': use_alphamissense,
         'variant': variant_dict
     }
 

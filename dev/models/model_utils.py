@@ -28,11 +28,12 @@ def select_hard_negatives(query_embs, ref_embs, positive_indices, topk_escape=50
 
 
 def sample_random_negative(vocab_size, positive_indices, n_neg=1):
-    batch_size = len(positive_indices)
+    batch_size = positive_indices.size(0)
     pheno_idx_all = np.arange(vocab_size)
     neg_idx_list = []
     for i in range(batch_size):
-        pos_idx = positive_indices.detach()[i].item()
+        # pos_idx = positive_indices.detach()[i].item()
+        pos_idx = positive_indices[i].detach().cpu().numpy()
         sample_mask = np.zeros(vocab_size, dtype=bool)
         sample_mask[pos_idx] = True
         
