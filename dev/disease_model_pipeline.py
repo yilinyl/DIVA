@@ -534,6 +534,9 @@ def main():
                                     freq_norm_factor=model_args['freq_norm_factor'],
                                     seq_weight_scaler=model_args['seq_weight_scaler'],
                                     pe_scalor=model_args['pe_scalor'],
+                                    use_struct_vocab=data_configs['use_struct_vocab'],
+                                    use_alphamissense=data_configs['use_alphamissense'],
+                                    adjust_logits=model_args['adjust_logits'],
                                     device=device)
     else:  # concat
         model = DiseaseVariantEncoder(seq_encoder=seq_encoder,
@@ -544,6 +547,7 @@ def main():
                                     pad_label_idx=-100,
                                     dist_fn_name=model_args['dist_fn_name'],
                                     init_margin=model_args['margin'],
+                                    nce_loss_temp=model_args['nce_loss_temp'],
                                     freq_norm_factor=model_args['freq_norm_factor'],
                                     seq_weight_scaler=model_args['seq_weight_scaler'],
                                     use_struct_vocab=data_configs['use_struct_vocab'],

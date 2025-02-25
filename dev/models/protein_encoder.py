@@ -103,7 +103,11 @@ class DiseaseVariantAttnEncoder(nn.Module):
                  dist_fn_name='cosine_sigmoid',
                  init_margin=1,
                  freq_norm_factor=None,
+                 use_struct_vocab=False,
+                 foldseek_vocab="pynwrqhgdlvtmfsaeikc#",
                  seq_weight_scaler=1,
+                 adjust_logits=False,
+                 use_alphamissense=False,
                  pe_scalor=1,
                  device='cpu',
                  **kwargs):
@@ -118,6 +122,8 @@ class DiseaseVariantAttnEncoder(nn.Module):
         self.max_prot_length = self.seq_encoder.config.max_position_embeddings
         self.n_residue_types = n_residue_types
         self.use_desc = use_desc
+        self.use_struct_vocab = use_struct_vocab
+        self.foldseek_vocab_size = len(foldseek_vocab)
         self.device = device
 
         self.seq_emb_dim = self.seq_encoder.config.hidden_size
@@ -137,11 +143,28 @@ class DiseaseVariantAttnEncoder(nn.Module):
 
         self.proj_head = nn.Linear(self.text_emb_dim, self.hidden_size)
 
+        self.use_alphamissense = use_alphamissense
+        self.prompt_hidden_size = self.text_emb_dim // 2
+        self.adjust_logits = adjust_logits
+        if self.use_alphamissense:
+            self.adjust_logits = True
+            
+        if self.adjust_logits:
+            self.func_prompt_l1 = nn.Linear(self.text_emb_dim, self.prompt_hidden_size)
+            self.func_prompt_l2 = nn.Linear(self.prompt_hidden_size, 1)
+            self.func_prompt_mlp = nn.Sequential(self.func_prompt_l1,  # learnable weight from protein function embedding
+                                                nn.ReLU(),
+                                                self.func_prompt_l2)
+            if not self.use_alphamissense:  # scaler initialized ~1
+                nn.init.normal_(self.func_prompt_l2.weight, std=(2 / self.prompt_hidden_size)**0.5)
+                nn.init.ones_(self.func_prompt_l2.bias)
+        self.weight_act = nn.Sigmoid()
+
         self.patho_output_layer = nn.Linear(self.seq_emb_dim + self.text_emb_dim, 2)  # use concatenated embedding of alt_seq and prot_desc
-        self.n_gnn_layers = n_gnn_layers
-        # self.gnn_layers = nn.ModuleList()
-        if isinstance(num_heads, int):
-            num_heads = [num_heads] * n_gnn_layers
+        # self.n_gnn_layers = n_gnn_layers
+        # # self.gnn_layers = nn.ModuleList()
+        # if isinstance(num_heads, int):
+        #     num_heads = [num_heads] * n_gnn_layers
         # num_heads[-1] = 1
         
         self.alpha = nn.Parameter(torch.tensor(-1e-3))
@@ -150,35 +173,60 @@ class DiseaseVariantAttnEncoder(nn.Module):
 
         self.dist_fn = _dist_fn_map[dist_fn_name]
         # self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)
-        # self.patho_loss_fn = nn.BCEWithLogitsLoss()
-        self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)  # for softmax
+        self.patho_loss_fn = nn.BCEWithLogitsLoss()
+        # self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)  # for softmax
         # self.desc_loss_fn = nn.CosineEmbeddingLoss()
         # self.cos_sim_loss_fn = nn.CosineEmbeddingLoss()
         self.contrast_loss_fn = nn.TripletMarginWithDistanceLoss(distance_function=self.dist_fn, margin=init_margin, reduction='none')
         self.nce_loss_fn = InfoNCELoss()
 
 
-    def binary_step(self, seq_input_feat, variant_data, desc_input_feat=None):
-        # seq_embs, mlm_logits, desc_embs = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
+    # def binary_step(self, seq_input_feat, variant_data, desc_input_feat=None):
+    #     # seq_embs, mlm_logits, desc_embs = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
+    #     mlm_logits = self.protein_encoder.get_mlm_logits(seq_input_feat)
+    #     var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
+    #     logit_diff = self.log_diff_patho_score(mlm_logits[var_indices], variant_data['ref_aa'], variant_data['alt_aa'])
+
+    #     return mlm_logits, logit_diff
+    
+    def binary_step(self, seq_input_feat, variant_data):
         mlm_logits = self.protein_encoder.get_mlm_logits(seq_input_feat)
-        var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
-        logit_diff = self.log_diff_patho_score(mlm_logits[var_indices], variant_data['ref_aa'], variant_data['alt_aa'])
+        probs = mlm_logits.softmax(dim=-1)
+        logit_diff = 0
+        # for single in mut_info.split(":"):
+        var_idx = torch.tensor(variant_data['var_idx'], device=self.device) - variant_data['offset_idx']
+        batch_idx = torch.arange(len(var_idx), device=self.device)
+        # TODO: revise for struct-vocab
+        if self.use_struct_vocab:  # from SaProt script
+            ori_st = variant_data['ref_aa'].unsqueeze(1)  # starting index
+            mut_st = variant_data['alt_aa'].unsqueeze(1)
+            range_indices = torch.arange(self.foldseek_vocab_size, device=self.device).unsqueeze(0)
+            ori_prob = probs[batch_idx, var_idx+1].gather(1, ori_st + range_indices).sum(1)
+            mut_prob = probs[batch_idx, var_idx+1].gather(1, mut_st + range_indices).sum(1)
+            # ori_prob = probs[batch_idx, var_idx+1, ori_st: ori_st + self.foldseek_vocab_size].sum()
+            # mut_prob = probs[batch_idx, var_idx+1, mut_st: mut_st + self.foldseek_vocab_size].sum()
+        else:
+            ori_prob = probs[batch_idx, var_idx+1, variant_data['ref_aa']]
+            mut_prob = probs[batch_idx, var_idx+1, variant_data['alt_aa']]
+            
+        # logit_diff = torch.log(mut_prob / ori_prob)  # smaller for pathogenic
+        logit_diff = torch.log(ori_prob / mut_prob)  # larger for pathogenic
 
-        return mlm_logits, logit_diff
+        return mlm_logits, logit_diff.unsqueeze(1)
+    
+    # def gnn_message_passing(self, graph, nfeats, efeats):
+    #     h = nfeats
+    #     for i, gnn_conv in enumerate(self.gnn_layers):
+    #         h = gnn_conv(graph, h, efeats)  # n_nodes, num_heads, hidden_size
+    #         if i < self.n_gnn_layers - 1:
+    #             h = h.flatten(1)
+    #         else:
+    #             h = h.mean(1)
 
-    def gnn_message_passing(self, graph, nfeats, efeats):
-        h = nfeats
-        for i, gnn_conv in enumerate(self.gnn_layers):
-            h = gnn_conv(graph, h, efeats)  # n_nodes, num_heads, hidden_size
-            if i < self.n_gnn_layers - 1:
-                h = h.flatten(1)
-            else:
-                h = h.mean(1)
-
-        return h      
+    #     return h      
 
     # def contrastive_step(self, seq_input_feat, variant_data, desc_input_feat):
-    def forward(self, seq_input_feat, variant_data, desc_input_feat):
+    def forward(self, variant_data, desc_input_feat):
         # protein desc embedding for all variants in batch
         # var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
         prot_desc_emb = self.text_encoder(
@@ -193,26 +241,45 @@ class DiseaseVariantAttnEncoder(nn.Module):
         # Pathogenicity prediction
         desc_emb_agg = torch.stack([prot_desc_emb[i, desc_input_feat['attention_mask'][i, :].bool(), :][0] for i in range(prot_desc_emb.size(0))], dim=0)
         # use altnerated sequence for phenotype inference
+        masked_seq_input_feat = variant_data['masked_seq_input_feat']
         # alt_seq_input_feat = {
         #     'input_ids': variant_data['var_seq_input_ids'][variant_data['infer_pheno_vec'].bool()],
         #     'attention_mask': seq_input_feat['attention_mask'][variant_data['patho_var_prot_idx']]
         # }
-        ref_seq_embs = self.protein_encoder.embed_protein_seq(seq_input_feat)  # n_uniq_protein, esm_dim
-        ref_seq_embs = torch.stack([ref_seq_embs[i, seq_input_feat['attention_mask'][i, :].bool(), :][0] for i in range(ref_seq_embs.size(0))], dim=0)
-        alt_seq_input_feat = {  # All ALT seq
-            'input_ids': variant_data['var_seq_input_ids'],
-            'attention_mask': seq_input_feat['attention_mask'][variant_data['prot_idx']]
-        }
+        ref_seq_embs = self.protein_encoder.embed_protein_seq(masked_seq_input_feat)  # n_uniq_protein, esm_dim
+        ref_seq_embs = torch.stack([ref_seq_embs[i, masked_seq_input_feat['attention_mask'][i, :].bool(), :][0] for i in range(ref_seq_embs.size(0))], dim=0)
+        # alt_seq_input_feat = {  # All ALT seq
+        #     'input_ids': variant_data['var_seq_input_ids'],
+        #     'attention_mask': seq_input_feat['attention_mask'][variant_data['prot_idx']]
+        # }
+        alt_seq_input_feat = variant_data['var_seq_input_feat']
         alt_seq_embs = self.protein_encoder.embed_protein_seq(alt_seq_input_feat)
         alt_seq_embs = torch.stack([alt_seq_embs[i, alt_seq_input_feat['attention_mask'][i, :].bool(), :][0] for i in range(alt_seq_embs.size(0))], dim=0)
         alt_seq_func_embs = torch.cat([alt_seq_embs, desc_emb_agg[variant_data['prot_idx']]], dim=-1)  # concatenate alt-seq embedding & prot-desc embedding
-        patho_embs = torch.cat([ref_seq_embs[variant_data['prot_idx']] + alt_seq_embs, desc_emb_agg[variant_data['prot_idx']]], dim=-1)  # batch_size, seq_emb + text_emb
-        var_patho_logits = self.patho_output_layer(patho_embs)  # TODO: attention based/Siamese network binary prediction?
+        
+        _, var_logit_diff = self.binary_step(masked_seq_input_feat, variant_data)
+
+        if not self.use_alphamissense:
+            if self.adjust_logits:
+                prompt_weights = self.func_prompt_mlp(desc_emb_agg[variant_data['prot_idx']])
+            else:
+                prompt_weights = 1
+            weighted_logits = prompt_weights * var_logit_diff
+        else:
+            prompt_weights = self.func_prompt_mlp(desc_emb_agg[variant_data['prot_idx']])
+            prompt_weights = self.weight_act(prompt_weights)  # with activation (sigmoid)
+            afmis_mask = variant_data['afmis_mask']  # True if alphamissense NOT available
+            afmis_logits = torch.logit(variant_data['afmis_score'], eps=1e-6).unsqueeze(1)
+            weighted_logits = prompt_weights * var_logit_diff + (1 - prompt_weights) * afmis_logits
+            weighted_logits[afmis_mask] = var_logit_diff[afmis_mask]
+
+        # patho_embs = torch.cat([ref_seq_embs[variant_data['prot_idx']] + alt_seq_embs, desc_emb_agg[variant_data['prot_idx']]], dim=-1)  # batch_size, seq_emb + text_emb
+        # var_patho_logits = self.patho_output_layer(patho_embs)  # TODO: attention based/Siamese network binary prediction?
 
         # ----- disease specific prediction ----
         n_pheno_vars = variant_data['infer_pheno_vec'].sum().item()
         if n_pheno_vars == 0:  # Pathogenicity 
-            return var_patho_logits, None, None, None, None
+            return weighted_logits, prompt_weights, None, None, None, None
     
         max_text_length = self.text_encoder.config.max_position_embeddings
         # pheno_input_ids = variant_data['context_pheno_input_ids'].view(n_pheno_vars, -1)
@@ -304,7 +371,7 @@ class DiseaseVariantAttnEncoder(nn.Module):
         else:
             neg_emb_proj = None
 
-        return var_patho_logits, var_seq_pheno_emb_final, pos_emb_proj, neg_emb_proj, struct_pheno_emb
+        return weighted_logits, prompt_weights, var_seq_pheno_emb_final, pos_emb_proj, neg_emb_proj, struct_pheno_emb
 
     
     def get_pheno_emb(self, pheno_input_dict, proj=True, agg_opt='mean'):
