@@ -1,11 +1,12 @@
-exp_dir: /local/storage/yl986/data/dis_var_experiment/
+# config on G2-server
+exp_dir: /home/yl986/scripts/3d_vip/dev/scratch/
 experiment: dis_var_pred_biobridge_full
 # experiment: biobridge_debug
 mode: inference
-device: cuda:1
+device: cuda:0
 batch_size: 2
 pheno_batch_size: 16
-checkpoint_dir: /local/storage/yl986/script_hub/BioBridge/checkpoints/bind2
+checkpoint_dir: /home/yl986/scripts/BioBridge/checkpoints/from_scratch
 # disease_emb_cache: /home/yl986/scripts/3d_vip/dev/scratch/dis_esm480_pmbert_feat/embeddings/phenotype_emb_raw.npy
 disease_emb_cache: disease_pmbert_emb_raw.npy
 # disease_emb_cache: /home/yl986/scripts/BioBridge/data/embeddings/esm2b_unimo_pubmedbert/disease.pkl
@@ -29,9 +30,9 @@ model:
 
 dataset:
   task_name: var_pred
-  data_dir: /local/storage/yl986/data/variant_data/pred/disease_clean1/disease_subset/
-  seq_fasta: ["/local/storage/yl986/data/UniProt/uniprot_sprot.fasta",
-              "/local/storage/yl986/data/UniProt/uniprot_sprot_varsplic.fasta"]
+  data_dir: /home/yl986/data/variant_data/pred/disease_clean1/disease_only/
+  seq_fasta: ["/home/yl986/data/UniProt/uniprot_sprot.fasta",
+              "/home/yl986/data/UniProt/uniprot_sprot_varsplic.fasta"]
   input_file:
     test: 
         # - sample.csv
@@ -39,8 +40,8 @@ dataset:
         - test.csv
         - val.csv
   # disease_table_file: /home/yl986/scripts/BioBridge/data/Processed/disease.csv
-  phenotype_vocab_file: /local/storage/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab.txt
-  phenotype_desc_file: /local/storage/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab_desc.json
+  phenotype_vocab_file: /home/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab.txt
+  phenotype_desc_file: /home/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab_desc.json 
   use_pheno_desc: True
   # variant_cache_file: /home/yl986/data/variant_data/prot_var_cache.json
   pid_col: UniProt

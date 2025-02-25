@@ -1,6 +1,6 @@
 # config on G2-server
 exp_dir: /home/yl986/scripts/3d_vip/dev/scratch/
-experiment: dis_var_pred_biobridge_orig1
+experiment: dis_var_pred_biobridge_newvocab
 # experiment: biobridge_debug
 mode: inference
 device: cuda:0
@@ -31,7 +31,7 @@ model:
 dataset:
   task_name: var_pred
   # data_dir: /home/yl986/data/variant_data/pred/pheno_select/disease_select
-  data_dir: /home/yl986/data/variant_data/pred/pheno_select/disease_subset/
+  data_dir: /home/yl986/data/variant_data/pred/disease_clean1/disease_subset/
   seq_fasta: ["/home/yl986/data/UniProt/uniprot_sprot.fasta",
               "/home/yl986/data/UniProt/uniprot_sprot_varsplic.fasta"]
   input_file:
@@ -41,8 +41,10 @@ dataset:
         - test.csv
         - val.csv
   disease_table_file: /home/yl986/scripts/BioBridge/data/Processed/disease.csv
-  phenotype_vocab_file: /home/yl986/data/variant_data/pred/pheno_select/phenotype_vocab.txt
-  phenotype_desc_file: /home/yl986/data/variant_data/short_name2desc.json  # phenotype name-to-description
+  # phenotype_vocab_file: /home/yl986/data/variant_data/pred/pheno_select/phenotype_vocab.txt
+  # phenotype_desc_file: /home/yl986/data/variant_data/short_name2desc.json  # phenotype name-to-description
+  phenotype_vocab_file: /home/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab.txt
+  phenotype_desc_file: /home/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab_desc.json 
   use_pheno_desc: True
   variant_cache_file: /home/yl986/data/variant_data/prot_var_cache.json
   pid_col: UniProt
