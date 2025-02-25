@@ -39,6 +39,7 @@ class DiseaseVariantEncoder(nn.Module):
                  freq_norm_factor=None,
                  use_struct_vocab=False,
                  foldseek_vocab="pynwrqhgdlvtmfsaeikc#",
+                 nce_loss_temp=0.07,
                  seq_weight_scaler=1,
                  adjust_logits=False,
                  use_alphamissense=False,
@@ -123,7 +124,7 @@ class DiseaseVariantEncoder(nn.Module):
         # self.desc_loss_fn = nn.CosineEmbeddingLoss()
         # self.cos_sim_loss_fn = nn.CosineEmbeddingLoss()
         self.contrast_loss_fn = nn.TripletMarginWithDistanceLoss(distance_function=self.dist_fn, margin=init_margin, reduction='none')
-        self.nce_loss_fn = InfoNCELoss()    
+        self.nce_loss_fn = InfoNCELoss(temperature=nce_loss_temp)    
 
     # def binary_step(self, seq_input_feat, variant_data, desc_input_feat=None):
     #     # seq_embs, mlm_logits, desc_embs = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
