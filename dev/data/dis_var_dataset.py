@@ -305,7 +305,10 @@ class ProteinVariantDatset(Dataset):
         if not variant_file:
             variant_file = split + '.csv'
         
-        df_var = pd.read_csv(self.data_root / variant_file).drop_duplicates([pid_col, pos_col, label_col, 'REF_AA', 'ALT_AA']).reset_index(drop=True)
+        df_var = pd.read_csv(self.data_root / variant_file)
+        if self.label_col not in df_var:
+            df_var[self.label_col] = -1
+        df_var = df_var.drop_duplicates([pid_col, pos_col, label_col, 'REF_AA', 'ALT_AA']).reset_index(drop=True)
         if exclude_prots:
             df_var = df_var[~df_var[pid_col].isin(exclude_prots)].reset_index(drop=True)
         self._load_variant_data(df_var, pid_col, pos_col)

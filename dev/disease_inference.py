@@ -98,7 +98,7 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
             # patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(seq_feat_dict, variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
             logit_diff, batch_weights, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
             size = batch_labels.size()[0]
-            cur_pheno_size = batch_labels.sum().item()
+            cur_pheno_size = (batch_labels != 0).sum().item()
 
             # running_loss += loss_* size
             n_sample += size
@@ -136,10 +136,15 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
                 all_patho_vars.extend(batch_data['variant']['pheno_var_names'])
                 if pos_emb_proj is not None:
                     pheno_score_pos = torch.cosine_similarity(seq_pheno_emb, pos_emb_proj)
+                    pheno_score_neg = torch.cosine_similarity(seq_pheno_emb, neg_emb_proj)
+
                     all_pheno_scores.append(pheno_score_pos.detach().cpu().numpy())
+                    all_pheno_neg_scores.append(pheno_score_neg.detach().cpu().numpy())
                     all_pheno_emb_label.append(pos_emb_proj.detach().cpu().numpy())
+                    all_pheno_emb_neg.append(neg_emb_proj.detach().cpu().numpy())
+                    
                     all_pos_pheno_descs.extend(batch_data['variant']['pos_pheno_name'])
-                    all_pos_pheno_idx.extend(batch_data['variant']['pos_pheno_idx'])
+                    all_pos_pheno_idx.extend(batch_data['variant']['pos_pheno_idx'].detach().cpu().tolist())
                 # all_neg_pheno_descs.extend(batch_data['variant']['neg_pheno_desc'])
 
         # epoch_loss = running_loss / n_sample
@@ -152,7 +157,7 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
         # all_pheno_neg_scores = np.concatenate(all_pheno_neg_scores, 0)
         if all_pheno_emb_pred:
             all_pheno_emb_pred = np.concatenate(all_pheno_emb_pred, 0)
-        # all_pheno_emb_neg = np.concatenate(all_pheno_emb_neg, 0)
+            all_pheno_emb_neg = np.concatenate(all_pheno_emb_neg, 0)
 
             all_similarities = np.concatenate(all_similarities, 0)
             all_topk_scores = np.concatenate(all_topk_scores, 0)
@@ -167,12 +172,15 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
                                 'topk_indices': all_topk_indices}
             if all_pos_pheno_descs:
                 all_pheno_scores = np.concatenate(all_pheno_scores, 0)
+                all_pheno_neg_scores = np.concatenate(all_pheno_neg_scores, 0)
                 all_pheno_emb_label = np.concatenate(all_pheno_emb_label, 0)
                 all_pheno_results.update({
                     'pos_emb': all_pheno_emb_label,
+                    'neg_emb': all_pheno_emb_neg,
                     'pos_score': all_pheno_scores,
+                    'neg_score': all_pheno_neg_scores,
                     'pos_pheno_desc': all_pos_pheno_descs,
-                    'pos_pheno_idx': all_pos_pheno_idx})
+                    'pos_pheno_idx': np.array(all_pos_pheno_idx)})
         else:
             all_pheno_results = dict()
     
@@ -335,6 +343,7 @@ if __name__ == '__main__':
                                             mode='train',
                                             update_var_cache=True,
                                             comb_seq_dict=prot2comb_seq,
+                                            afmis_root=afmis_root,
                                             access_to_context=True)
         # var_db = pd.read_csv(data_root / data_configs['input_file']['train']).query('label == 1').\
         #     drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
@@ -408,6 +417,11 @@ if __name__ == '__main__':
         # np.save(pheno_result_path / 'test_pheno_similarity.npy', test_topk_results['similarities'])
         # np.save(pheno_result_path / 'val_pheno_similarity.npy', val_topk_results['similarities'])
         if not data_configs['binary_inference_only'] and test_pheno_results:
+            # test_topk_acc = compute_topk_acc(test_pheno_results['pos_pheno_idx'], test_pheno_results['similarities'], topk_lst=model_args['topk'], label_lst=list(range(len(phenotype_vocab))))
+
+            # with open(exp_path / f'{fname}_topk_acc.json', 'w') as f_js:
+            #     json.dump(test_topk_acc, f_js, indent=2)
+
             result_dict = {'topk_scores': test_pheno_results['topk_scores'],
                         'topk_indices': test_pheno_results['topk_indices']}
             if 'pos_pheno_idx' in test_pheno_results:

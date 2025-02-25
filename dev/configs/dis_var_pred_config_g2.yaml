@@ -1,88 +1,72 @@
 # config on G2-server
 exp_dir: ./scratch/
-experiment: dis_saprot_hn_pred_dms
-# experiment: debug_pred
+experiment: vus_esm1280ft_pred
+# experiment: debug_vus
 mode: inference
 device: cuda:0
 batch_size: 16
 pheno_batch_size: 16
-# model_path: ./scratch/dis_desc_w005/2024-04-01-10-24-47/checkpoints/bestmodel-ep38.pt
-# model_path: ./scratch/dis_desc_w005/2024-04-01-10-24-47/checkpoints/best_pheno_model.pt
-# model_path: ./scratch/dis_esm1280_fr1_hard100_holdout/2024-12-09-12-28-03/checkpoints/best_patho_model.pt
-model_path: ./scratch/dis_saprot_fr1_hard100/2024-12-18-10-59-51/checkpoints/best_patho_model.pt
-# model_path: ./scratch/dis_esm640_fr2_hard100_holdout/2024-12-06-17-02-08/checkpoints/best_patho_model.pt
+
+# model_path: ./scratch//pr_mix_ep1_esm640_ft_mixneg200/2025-01-31-12-53-55/checkpoints/best_pheno_model.pt
+model_path: ./scratch//pr_mix_esm1280_ep1_ft_mixneg200/2025-02-03-11-53-37/checkpoints/best_pheno_model.pt
 # output_file: ./dms_ontoprot_wt_score.csv
 init_lr: 0.001
 
 model:
   type: esm
-  # protein_lm_path: /local/storage/yl986/script_hub/KeAP/pretrained  # KeAP model
-  # protein_lm_path: zjunlp/OntoProtein
   # protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
   # protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
-  # protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
-  protein_lm_path: westlake-repl/SaProt_650M_PDB  # SaProt 1280
-  # protein_lm_path: facebook/esm1v_t33_650M_UR90S_1  # ESM-1v
-  # protein_lm_path: facebook/esm1b_t33_650M_UR50S  # ESM-1b
-  # protein_lm_path: zjunlp/OntoProtein
+  protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
+  # protein_lm_path: westlake-repl/SaProt_650M_PDB  # SaProt 1280
+  # protein_lm_path: westlake-repl/SaProt_650M_AF2  # SaProt 1280 AF
   text_lm_path: microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext  # PubMedBERT
   # text_lm_path: microsoft/BiomedNLP-KRISSBERT-PubMed-UMLS-EL  # KrissBERT
   # text_lm_path: michiyasunaga/BioLinkBERT-base  # BioLinkBERT-base
   # decoder_config_path: /local/storage/yl986/script_hub/KeAP/initial_decoder_config/config.json
   frozen_bert: True
-  # prot_bert_unfreeze: ['esm.encoder.layer.32']  # for esm-2 1280
-  # prot_bert_unfreeze: ['esm.encoder.layer.29']  # for esm-2 640
-  # prot_bert_unfreeze: []
-  # prot_bert_unfreeze: ['bert.encoder.layer.29']  # for OntoProtein
-  # text_bert_unfreeze: ['bert.encoder.layer.11']
   # w_l: 0.001  # weight applied to pathogenicity loss
   # margin: 0.25  # for cosine
+  topk: [1, 10, 20, 50, 100]
   dist_fn_name: cosine_sigmoid
   margin: 0.25  # margin for contrast loss
+  adjust_logits: True
 
 dataset:
   task_name: var_pred
   data_dir: /home/yl986/data/variant_data/pred/
   seq_fasta: ["/home/yl986/data/UniProt/uniprot_sprot.fasta",
                 "/home/yl986/data/UniProt/uniprot_sprot_varsplic.fasta"]
+  prot_meta_data: ["/home/yl986/data/UniProt/meta/uniprot_sprot_human_meta.txt",
+                   "/home/yl986/data/UniProt/meta/uniprot_trembl_human_meta.txt"]
   input_file:
     # train: inference/vars_in_training.csv  # include all variants seen in training --- to generate load variant cache only
     train: disease_clean1/all_vars_in_training.csv
     test: 
-        # - disease_clean1/train.csv
-        # - disease_clean1/test.csv
-        # - disease_clean1/val.csv
-        # - inference/cancer_hotspot_select.csv
-        - inference/dms_PTEN_processed.csv
-        - inference/dms_BRCA1_processed.csv
-        - inference/dms_MSH2_processed.csv
-        - inference/dms_TP53_processed.csv
-        # - gof_lof_ion_channel.csv
-        # - patho_neutral_ion_channel.csv
-        # - inference/AlphaMissense/af_cancer_hotspot.csv
-        # - inference/AlphaMissense/af_clinvar_pred.csv
-        # - inference/AlphaMissense/af_dev_disorder.csv
-        # - inference/sample.csv
+        # - inference/VUS/vus_sample5k.csv
+        - inference/VUS/vus_disease_select_filtered.csv
   # phenotype_vocab_file: /home/yl986/data/variant_data/pred/pheno_select/phenotype_vocab.txt
   # phenotype_desc_file: /home/yl986/data/variant_data/short_name2desc.json  # phenotype name-to-description
   phenotype_vocab_file: /home/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab.txt
   phenotype_desc_file: /home/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab_desc.json  # phenotype name-to-description
   use_pheno_desc: True
   context_agg_option: concat
-  variant_cache_file: /home/yl986/data/variant_data/prot_var_cache.json  # update if necessary (for disease inference / with different disease aggregation method)
-  # pid_col: UniProt
-  pid_col: uniprot_id  # for DMS
+  variant_cache_file: /home/yl986/data/variant_data/pred/disease_clean1/prot_var_cache.json  # update if necessary (for disease inference / with different disease aggregation method)
+  pid_col: UniProt
+  # pid_col: uniprot_id  # for DMS
   pos_col: Protein_position
-  # label_col: label
-  label_col: target # for DMS
+  label_col: label
   pheno_col: phenotype
   load_variant: True
   use_protein_desc: True
   max_protein_seq_length: 1024
   # max_phenotype_length: null
   use_protein_desc: True
-  use_struct_vocab: True  # enable structure-aware sequence
+  truncate_protein: True
+  use_struct_vocab: False  # enable structure-aware sequence
+  overwrite_struct_seq: False  # rerun foldseek to generate structural seq
+  foldseek_bin: '/home/yl986/scripts/SaProt/bin/foldseek'
   struct_seq_file: '/home/yl986/data/variant_data/pred/prot_combine_seq.json'  # pre-processed structure-aware sequence (SaProt)
-  binary_inference_only: True
-  
+  binary_inference_only: False
+  use_alphamissense: True
+  alphamissense_score_dir: '/home/yl986/data/variant_data/AlphaMissense/substitutions_by_prot'  
 
