@@ -1,6 +1,6 @@
 # config on G2-server
 exp_dir: ./scratch/
-experiment: saprot_af_proteingym
+experiment: mix_esm1280_ft_mixneg_proteingym
 # experiment: debug_dms
 mode: inference
 device: cuda:0
@@ -10,9 +10,14 @@ pheno_batch_size: 16
 # model_path: ./scratch/dis_desc_w005/2024-04-01-10-24-47/checkpoints/best_pheno_model.pt
 # model_path: ./scratch/dis_esm1280_fr1_hard100_holdout/2024-12-09-12-28-03/checkpoints/best_patho_model.pt
 # model_path: ./scratch/dis_saprot_fr_hard100_rev/2025-01-06-16-04-59/checkpoints/best_patho_model.pt
-model_path: ./scratch/dis_saprotAF_fr_hard100_tr/2025-01-15-17-48-11/checkpoints/best_patho_model.pt
+# model_path: ./scratch/dis_saprotAF_fr_hard100_tr/2025-01-15-17-48-11/checkpoints/best_patho_model.pt
+# model_path: ./scratch/pr_dis_saprotaf_hard100/2025-01-17-15-29-56/checkpoints/best_patho_model.pt
+# model_path: ./scratch//pr_mix_saprotaf_hard100/2025-01-21-16-01-08/checkpoints/best_patho_model.pt
 # model_path: ./scratch/dis_saprot_fr1_hard100_rev/2025-01-07-16-54-59/checkpoints/best_patho_model.pt
 # model_path: ./scratch/dis_esm640_fr1_hard100_rev/2025-01-06-16-26-19/checkpoints/best_patho_model.pt
+# model_path: ./scratch/pr_mix_ep2_esm640_ft_hard100/2025-01-29-12-59-39/checkpoints/best_patho_model.pt
+# model_path: ./scratch//pr_mix_ep1_esm640_ft_mixneg200/2025-01-31-12-53-55/checkpoints/best_patho_model.pt
+model_path: ./scratch//pr_mix_esm1280_ep1_ft_mixneg200/2025-02-03-11-53-37/checkpoints/best_patho_model.pt
 # output_file: ./dms_ontoprot_wt_score.csv
 init_lr: 0.001
 
@@ -22,9 +27,9 @@ model:
   # protein_lm_path: zjunlp/OntoProtein
   # protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
   # protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
-  # protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
+  protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
   # protein_lm_path: westlake-repl/SaProt_650M_PDB  # SaProt 1280 PDB
-  protein_lm_path: westlake-repl/SaProt_650M_AF2  # SaProt 1280 AF
+  # protein_lm_path: westlake-repl/SaProt_650M_AF2  # SaProt 1280 AF
   # protein_lm_path: facebook/esm1b_t33_650M_UR50S  # ESM-1b
   # protein_lm_path: zjunlp/OntoProtein
   text_lm_path: microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext  # PubMedBERT
@@ -33,6 +38,7 @@ model:
   frozen_bert: True
   dist_fn_name: cosine_sigmoid
   margin: 0.25  # margin for contrast loss
+  adjust_logits: True
 
 dataset:
   task_name: var_pred
@@ -61,11 +67,12 @@ dataset:
   max_protein_seq_length: 1024
   use_protein_desc: True
   truncate_protein: True
-  use_struct_vocab: True  # enable structure-aware sequence
+  use_struct_vocab: False  # enable structure-aware sequence
   overwrite_struct_seq: True  # rerun foldseek to generate structural seq
   foldseek_bin: '/home/yl986/scripts/SaProt/bin/foldseek'
   struct_folder: '/home/yl986/data/variant_data/ProteinGym/ProteinGym_AF2_structures'
   struct_seq_file: '/home/yl986/data/variant_data/pred/prot_combine_seq.json'  # pre-processed structure-aware sequence (SaProt)
   binary_inference_only: True
-  
+  use_alphamissense: True
+  alphamissense_score_dir: '/home/yl986/data/variant_data/AlphaMissense/substitutions_by_prot'
 
