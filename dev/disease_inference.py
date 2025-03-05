@@ -64,7 +64,7 @@ def embed_phenotypes(model, device, pheno_loader):
         for idx, batch_pheno in enumerate(pheno_loader):
             # pheno_input_dict = load_input_to_device(batch_pheno, device)
             pheno_input_dict = batch_pheno.to(device)
-            pheno_embs = model.get_pheno_emb(pheno_input_dict, proj=True)
+            pheno_embs = model.get_pheno_emb(pheno_input_dict, proj=True, agg_opt='cls')
             all_pheno_embs.append(pheno_embs.detach().cpu().numpy())
     
     all_pheno_embs = np.concatenate(all_pheno_embs, 0)
@@ -135,9 +135,8 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
 
                 all_patho_vars.extend(batch_data['variant']['pheno_var_names'])
                 if pos_emb_proj is not None:
-                    pheno_score_pos = torch.cosine_similarity(seq_pheno_emb, pos_emb_proj)
-                    pheno_score_neg = torch.cosine_similarity(seq_pheno_emb, neg_emb_proj)
-
+                    pheno_score_pos = model.calibrate_dis_score(torch.cosine_similarity(seq_pheno_emb, pos_emb_proj))
+                    pheno_score_neg = model.calibrate_dis_score(torch.cosine_similarity(seq_pheno_emb, neg_emb_proj))
                     all_pheno_scores.append(pheno_score_pos.detach().cpu().numpy())
                     all_pheno_neg_scores.append(pheno_score_neg.detach().cpu().numpy())
                     all_pheno_emb_label.append(pos_emb_proj.detach().cpu().numpy())
@@ -365,6 +364,7 @@ if __name__ == '__main__':
                                   hidden_size=512,
                                   use_desc=True,
                                   pad_label_idx=-100,
+                                  calibration_fn_name=model_args['calibration_fn_name'],
                                   dist_fn_name=model_args['dist_fn_name'],
                                   init_margin=model_args['margin'],
                                   use_struct_vocab=data_configs['use_struct_vocab'],
@@ -426,6 +426,10 @@ if __name__ == '__main__':
                         'topk_indices': test_pheno_results['topk_indices']}
             if 'pos_pheno_idx' in test_pheno_results:
                 result_dict.update({'label': test_pheno_results['pos_pheno_idx']})
+
+            if model_args['calibration_fn_name'] == 'logistic':
+                result_dict['logistic_weight'] = model.calibrate_weight.detach().cpu().numpy().item()
+                result_dict['logistic_bias'] = model.calibrate_bias.detach().cpu().numpy().item()
 
             with open(exp_path / f'{fname}_topk.pkl', 'wb') as f_pkl:
                 pickle.dump(result_dict, f_pkl)
