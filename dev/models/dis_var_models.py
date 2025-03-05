@@ -21,6 +21,8 @@ from .protein_encoder import ProteinEncoder
 _dist_fn_map = {'euclidean': nn.PairwiseDistance(),
                 'cosine_sigmoid': sigmoid_cosine_distance_p}
 
+_calibration_fn_map = {'sigmoid': nn.Sigmoid(),
+                       'none': None}
 class DiseaseVariantEncoder(nn.Module):
 
     def __init__(self,
@@ -35,6 +37,7 @@ class DiseaseVariantEncoder(nn.Module):
                  n_gnn_layers=2,
                  max_vars_per_batch=32,
                  dist_fn_name='cosine_sigmoid',
+                 calibration_fn_name='sigmoid',
                  init_margin=1,
                  freq_norm_factor=None,
                  use_struct_vocab=False,
@@ -88,6 +91,14 @@ class DiseaseVariantEncoder(nn.Module):
         self.weight_act = nn.Sigmoid()
 
         self.patho_output_layer = nn.Linear(self.seq_emb_dim + self.text_emb_dim, 2)  # use concatenated embedding of alt_seq and prot_desc
+        self.calibration_fn_name = calibration_fn_name
+        if self.calibration_fn_name == 'logistic':
+            self.calibrate_weight = nn.Parameter(torch.ones(1))
+            self.calibrate_bias = nn.Parameter(torch.zeros(1))
+            self.calibration_fn = lambda x: torch.sigmoid(x * self.calibrate_weight + self.calibrate_bias)
+        else:
+            self.calibration_fn = _calibration_fn_map[self.calibration_fn_name]
+        
         # self.desc_proj_dim = desc_proj_dim
         # if self.use_struct_vocab:
         #     self.patho_feat_dim = self.desc_proj_dim + 2 * self.foldseek_vocab_size
@@ -124,7 +135,7 @@ class DiseaseVariantEncoder(nn.Module):
         # self.desc_loss_fn = nn.CosineEmbeddingLoss()
         # self.cos_sim_loss_fn = nn.CosineEmbeddingLoss()
         self.contrast_loss_fn = nn.TripletMarginWithDistanceLoss(distance_function=self.dist_fn, margin=init_margin, reduction='none')
-        self.nce_loss_fn = InfoNCELoss(temperature=nce_loss_temp)    
+        self.nce_loss_fn = InfoNCELoss(temperature=nce_loss_temp, score_fn=self.calibration_fn)
 
     # def binary_step(self, seq_input_feat, variant_data, desc_input_feat=None):
     #     # seq_embs, mlm_logits, desc_embs = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
@@ -311,7 +322,12 @@ class DiseaseVariantEncoder(nn.Module):
         return weighted_logits, prompt_weights, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb
 
     
-    def get_pheno_emb(self, pheno_input_dict, proj=True, agg_opt='mean'):
+    def calibrate_dis_score(self, score_raw):
+        if self.calibration_fn_name == 'none':
+            return score_raw
+        return self.calibration_fn(score_raw)
+
+    def get_pheno_emb(self, pheno_input_dict, proj=True, agg_opt='cls'):
         pheno_embs = self.text_encoder(
                 pheno_input_dict['input_ids'],
                 attention_mask=pheno_input_dict['attention_mask'],

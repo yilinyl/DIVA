@@ -1,22 +1,22 @@
 # config on G2-server
 exp_dir: ./scratch/
-experiment: vus_esm1280ft_pred
+experiment: vus_esm640ft_pred
 # experiment: debug_vus
 mode: inference
 device: cuda:0
 batch_size: 16
 pheno_batch_size: 16
 
-# model_path: ./scratch//pr_mix_ep1_esm640_ft_mixneg200/2025-01-31-12-53-55/checkpoints/best_pheno_model.pt
-model_path: ./scratch//pr_mix_esm1280_ep1_ft_mixneg200/2025-02-03-11-53-37/checkpoints/best_pheno_model.pt
+model_path: ./scratch//pr_mix_ep1_esm640_ft_mixneg200/2025-01-31-12-53-55/checkpoints/best_pheno_model.pt
+# model_path: ./scratch/pr_mix_esm640_ep1_ft_logi_mixneg200/2025-02-28-16-49-52/checkpoints/best_pheno_model.pt
 # output_file: ./dms_ontoprot_wt_score.csv
 init_lr: 0.001
 
 model:
   type: esm
   # protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
-  # protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
-  protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
+  protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
+  # protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
   # protein_lm_path: westlake-repl/SaProt_650M_PDB  # SaProt 1280
   # protein_lm_path: westlake-repl/SaProt_650M_AF2  # SaProt 1280 AF
   text_lm_path: microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext  # PubMedBERT
@@ -25,9 +25,11 @@ model:
   # decoder_config_path: /local/storage/yl986/script_hub/KeAP/initial_decoder_config/config.json
   frozen_bert: True
   # w_l: 0.001  # weight applied to pathogenicity loss
+  hidden_size: 512
   # margin: 0.25  # for cosine
   topk: [1, 10, 20, 50, 100]
   dist_fn_name: cosine_sigmoid
+  calibration_fn_name: none  # calibration for disease score
   margin: 0.25  # margin for contrast loss
   adjust_logits: True
 

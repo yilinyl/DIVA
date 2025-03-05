@@ -67,12 +67,14 @@ class InfoNCELoss(nn.Module):
     def __init__(self, 
                  temperature=0.07,
                  reduce=True,
-                 normalize=True):
+                 normalize=True,
+                 score_fn=None):
         super(InfoNCELoss, self).__init__()
         self.temperature = temperature
         assert self.temperature > 0.0
         self.reduce = reduce
         self.normalize = normalize
+        self.score_fn = score_fn
 
     def forward(self, query_embs, ref_embs, positive_indices, negative_indices):
         """
@@ -93,7 +95,10 @@ class InfoNCELoss(nn.Module):
         indices_all = torch.cat([positive_indices.unsqueeze(1), negative_indices], dim=-1)
         
         # positive_embs = ref_embs_norm[positive_indices]  # (batch_size, batch_size)
-        cos_sim_with_temp = torch.matmul(query_embs_norm, ref_embs_norm.t()) / self.temperature  # (batch_size, vocab_size)
+        if isinstance(self.score_fn, type(None)):
+            cos_sim_with_temp = torch.matmul(query_embs_norm, ref_embs_norm.t()) / self.temperature  # (batch_size, vocab_size)
+        else:
+            cos_sim_with_temp = self.score_fn(torch.matmul(query_embs_norm, ref_embs_norm.t())) / self.temperature
         numer = cos_sim_with_temp[row_indices, positive_indices.unsqueeze(1)]  # (batch_size, )  
         denom = torch.logsumexp(cos_sim_with_temp[row_indices, indices_all], dim=-1).unsqueeze(1)
 

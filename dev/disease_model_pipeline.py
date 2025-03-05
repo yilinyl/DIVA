@@ -200,8 +200,8 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5, use_struct_
             adjusted_weights.append(batch_weights.squeeze(-1).detach().cpu().numpy())
 
             if batch_data['variant']['infer_phenotype']:
-                pheno_score_pos_seq = torch.cosine_similarity(seq_pheno_emb, pos_emb_proj)
-                pheno_score_neg_seq = torch.cosine_similarity(seq_pheno_emb, neg_emb_proj)
+                pheno_score_pos_seq = model.calibrate_dis_score(torch.cosine_similarity(seq_pheno_emb, pos_emb_proj))
+                pheno_score_neg_seq = model.calibrate_dis_score(torch.cosine_similarity(seq_pheno_emb, neg_emb_proj))
                 pheno_score_pos = pheno_score_pos_seq.clone()
                 pheno_score_neg = pheno_score_neg_seq.clone()
 
@@ -210,11 +210,11 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5, use_struct_
                 if variant_data['use_struct']:
                     seq_weight = torch.sigmoid(model.alpha.detach()).item() * model.seq_weight_scaler
                     # pheno_score_pos_str = torch.zeros_like(pheno_score_pos_seq, device=pheno_score_pos_seq.device)
-                    pheno_score_pos_str[var_struct_mask] = torch.cosine_similarity(struct_pheno_emb, pos_emb_proj[var_struct_mask])
+                    pheno_score_pos_str[var_struct_mask] = model.calibrate_dis_score(torch.cosine_similarity(struct_pheno_emb, pos_emb_proj[var_struct_mask]))
                     pheno_score_pos[var_struct_mask] = seq_weight * pheno_score_pos_seq[var_struct_mask] + (1 - seq_weight) * pheno_score_pos_str[var_struct_mask]
 
                     # pheno_score_neg_str = torch.zeros_like(pheno_score_neg_seq, device=pheno_score_neg_seq.device)
-                    pheno_score_neg_str[var_struct_mask] = torch.cosine_similarity(struct_pheno_emb, neg_emb_proj[var_struct_mask])
+                    pheno_score_neg_str[var_struct_mask] = model.calibrate_dis_score(torch.cosine_similarity(struct_pheno_emb, neg_emb_proj[var_struct_mask]))
                     pheno_score_neg[var_struct_mask] = seq_weight * pheno_score_neg_seq[var_struct_mask] + (1 - seq_weight) * pheno_score_neg_str[var_struct_mask]
 
                     all_str_pheno_emb_pred.append(struct_pheno_emb.detach().cpu().numpy())
@@ -526,7 +526,7 @@ def main():
         model = DiseaseVariantAttnEncoder(seq_encoder=seq_encoder,
                                     text_encoder=text_encoder,
                                     n_residue_types=protein_tokenizer.vocab_size,
-                                    hidden_size=512,
+                                    hidden_size=model_args['hidden_size'],
                                     use_desc=True,
                                     pad_label_idx=-100,
                                     dist_fn_name=model_args['dist_fn_name'],
@@ -542,10 +542,10 @@ def main():
         model = DiseaseVariantEncoder(seq_encoder=seq_encoder,
                                     text_encoder=text_encoder,
                                     n_residue_types=protein_tokenizer.vocab_size,
-                                    hidden_size=512,
+                                    hidden_size=model_args['hidden_size'],
                                     use_desc=True,
                                     pad_label_idx=-100,
-                                    dist_fn_name=model_args['dist_fn_name'],
+                                    calibration_fn_name=model_args['calibration_fn_name'],
                                     init_margin=model_args['margin'],
                                     nce_loss_temp=model_args['nce_loss_temp'],
                                     freq_norm_factor=model_args['freq_norm_factor'],
@@ -691,6 +691,9 @@ def main():
             best_topk_results['train'] = train_topk_acc
             best_topk_results['test'] = test_topk_acc
             best_topk_results['val'] = val_topk_acc
+            if model_args['calibration_fn_name'] == 'logistic':
+                best_topk_results['logistic_weight'] = model.calibrate_weight.detach().cpu().numpy().item()
+                best_topk_results['logistic_bias'] = model.calibrate_bias.detach().cpu().numpy().item()
 
             with open(result_path / 'best_topk_result.json', 'w') as f_js:
                 json.dump(best_topk_results, f_js, indent=2)
