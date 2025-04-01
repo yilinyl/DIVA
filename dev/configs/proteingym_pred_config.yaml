@@ -1,6 +1,6 @@
 # config on G2-server
 exp_dir: ./scratch/
-experiment: mix_esm1280_ft_mixneg_proteingym
+experiment: esm640_zs_mixneg_proteingym
 # experiment: debug_dms
 mode: inference
 device: cuda:0
@@ -17,7 +17,9 @@ pheno_batch_size: 16
 # model_path: ./scratch/dis_esm640_fr1_hard100_rev/2025-01-06-16-26-19/checkpoints/best_patho_model.pt
 # model_path: ./scratch/pr_mix_ep2_esm640_ft_hard100/2025-01-29-12-59-39/checkpoints/best_patho_model.pt
 # model_path: ./scratch//pr_mix_ep1_esm640_ft_mixneg200/2025-01-31-12-53-55/checkpoints/best_patho_model.pt
-model_path: ./scratch//pr_mix_esm1280_ep1_ft_mixneg200/2025-02-03-11-53-37/checkpoints/best_patho_model.pt
+# model_path: ./scratch//pr_mix_esm1280_ep1_ft_mixneg200/2025-02-03-11-53-37/checkpoints/best_patho_model.pt
+model_path: ./scratch/esm640_zs_randneg100_sample/2025-03-13-15-06-44/checkpoints/best_patho_model.pt
+# model_path: ./scratch//esm1280_zs_randneg100_sample/2025-03-13-15-50-44/checkpoints/best_patho_model.pt
 # output_file: ./dms_ontoprot_wt_score.csv
 init_lr: 0.001
 
@@ -26,8 +28,8 @@ model:
   # protein_lm_path: /local/storage/yl986/script_hub/KeAP/pretrained  # KeAP model
   # protein_lm_path: zjunlp/OntoProtein
   # protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
-  # protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
-  protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
+  protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
+  # protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
   # protein_lm_path: westlake-repl/SaProt_650M_PDB  # SaProt 1280 PDB
   # protein_lm_path: westlake-repl/SaProt_650M_AF2  # SaProt 1280 AF
   # protein_lm_path: facebook/esm1b_t33_650M_UR50S  # ESM-1b
@@ -36,9 +38,10 @@ model:
   # text_lm_path: microsoft/BiomedNLP-KRISSBERT-PubMed-UMLS-EL  # KrissBERT
   # text_lm_path: michiyasunaga/BioLinkBERT-base  # BioLinkBERT-base
   frozen_bert: True
+  calibration_fn_name: none
   dist_fn_name: cosine_sigmoid
   margin: 0.25  # margin for contrast loss
-  adjust_logits: True
+  adjust_logits: False
 
 dataset:
   task_name: var_pred
@@ -73,6 +76,6 @@ dataset:
   struct_folder: '/home/yl986/data/variant_data/ProteinGym/ProteinGym_AF2_structures'
   struct_seq_file: '/home/yl986/data/variant_data/pred/prot_combine_seq.json'  # pre-processed structure-aware sequence (SaProt)
   binary_inference_only: True
-  use_alphamissense: True
+  use_alphamissense: False
   alphamissense_score_dir: '/home/yl986/data/variant_data/AlphaMissense/substitutions_by_prot'
 

@@ -197,7 +197,10 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5, use_struct_
             all_scores.append(batch_patho_scores.detach().cpu().numpy())
             all_vars.extend(batch_data['variant']['var_names'])
             all_labels.append(batch_labels.squeeze(1).detach().cpu().numpy())
-            adjusted_weights.append(batch_weights.squeeze(-1).detach().cpu().numpy())
+            if model.adjust_logits:
+                adjusted_weights.append(batch_weights.squeeze(-1).detach().cpu().numpy())
+            else:
+                adjusted_weights.append(np.ones(batch_labels.size(0)))
 
             if batch_data['variant']['infer_phenotype']:
                 pheno_score_pos_seq = model.calibrate_dis_score(torch.cosine_similarity(seq_pheno_emb, pos_emb_proj))
@@ -710,8 +713,6 @@ def main():
             tb_writer.add_pr_curve('Train/PR-curve', train_labels, train_scores, epoch)
             tb_writer.add_pr_curve('Test/PR-curve', test_labels, test_scores, epoch)
             tb_writer.add_pr_curve('Val/PR-curve', val_labels, val_scores, epoch)
-
-            tb_writer.add_scalar('seq_weight', model.seq_weight_scaler * model.alpha.detach().item(), epoch)
 
             tb_writer.add_scalar('train/loss', train_loss, epoch)
             tb_writer.add_scalar('train/patho_loss', train_patho_loss, epoch)

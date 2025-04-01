@@ -1,6 +1,6 @@
 # config on G2-server
 exp_dir: ./scratch/
-experiment: mix_esm1280_ft_mixneg_pred_af
+experiment: esm640_zs_pred_test
 # experiment: debug_pred
 mode: inference
 device: cuda:0
@@ -17,7 +17,8 @@ pheno_batch_size: 16
 # model_path: ./scratch/dis_esm640_fr1_hard100_rev/2025-01-06-16-26-19/checkpoints/best_patho_model.pt
 # model_path: ./scratch/pr_mix_ep2_esm640_ft_hard100/2025-01-29-12-59-39/checkpoints/best_patho_model.pt
 # model_path: ./scratch//pr_mix_ep1_esm640_ft_mixneg200/2025-01-31-12-53-55/checkpoints/best_patho_model.pt
-model_path: ./scratch//pr_mix_esm1280_ep1_ft_mixneg200/2025-02-03-11-53-37/checkpoints/best_patho_model.pt
+model_path: ./scratch/esm640_zs_randneg100_sample/2025-03-13-15-06-44/checkpoints/best_patho_model.pt
+# model_path: ./scratch//esm1280_zs_randneg100_sample/2025-03-13-15-50-44/checkpoints/best_patho_model.pt
 # output_file: ./dms_ontoprot_wt_score.csv
 init_lr: 0.001
 
@@ -26,8 +27,8 @@ model:
   # protein_lm_path: /local/storage/yl986/script_hub/KeAP/pretrained  # KeAP model
   # protein_lm_path: zjunlp/OntoProtein
   # protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
-  # protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
-  protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
+  protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
+  # protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
   # protein_lm_path: westlake-repl/SaProt_650M_PDB  # SaProt 1280
   # protein_lm_path: westlake-repl/SaProt_650M_AF2  # SaProt 1280 AF
   # protein_lm_path: facebook/esm1v_t33_650M_UR90S_1  # ESM-1v
@@ -45,9 +46,10 @@ model:
   # text_bert_unfreeze: ['bert.encoder.layer.11']
   # w_l: 0.001  # weight applied to pathogenicity loss
   # margin: 0.25  # for cosine
+  calibration_fn_name: none
   dist_fn_name: cosine_sigmoid
   margin: 0.25  # margin for contrast loss
-  adjust_logits: True
+  adjust_logits: False
 
 dataset:
   task_name: var_pred
@@ -61,7 +63,7 @@ dataset:
     train: disease_clean1/all_vars_in_training.csv
     test: 
         # - disease_clean1/train.csv
-        # - disease_clean1/test.csv
+        - disease_clean1/test.csv
         # - disease_clean1/val.csv
         # - inference/cancer_hotspot_select.csv
         # - inference/dms_PTEN_processed.csv
@@ -72,9 +74,9 @@ dataset:
         # - gof_lof_ion_channel.csv
         # - patho_neutral_ion_channel.csv
         # - inference/AlphaMissense/af_cancer_sample.csv
-        - inference/AlphaMissense/af_cancer_hotspot.csv
-        - inference/AlphaMissense/af_clinvar_pred.csv
-        - inference/AlphaMissense/af_dev_disorder.csv
+        # - inference/AlphaMissense/af_cancer_hotspot.csv
+        # - inference/AlphaMissense/af_clinvar_pred.csv
+        # - inference/AlphaMissense/af_dev_disorder.csv
         # - inference/sample.csv
   # phenotype_vocab_file: /home/yl986/data/variant_data/pred/pheno_select/phenotype_vocab.txt
   # phenotype_desc_file: /home/yl986/data/variant_data/short_name2desc.json  # phenotype name-to-description
@@ -100,6 +102,6 @@ dataset:
   foldseek_bin: '/home/yl986/scripts/SaProt/bin/foldseek'
   struct_seq_file: '/home/yl986/data/variant_data/pred/prot_combine_seq.json'  # pre-processed structure-aware sequence (SaProt)
   binary_inference_only: True
-  use_alphamissense: True
+  use_alphamissense: False
   alphamissense_score_dir: '/home/yl986/data/variant_data/AlphaMissense/substitutions_by_prot'  
 

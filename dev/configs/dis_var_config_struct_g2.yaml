@@ -1,6 +1,6 @@
 # config on G2-server with structural context
 exp_dir: ./scratch/
-experiment: pr_mix_esm640_ep1_ftboth_logi_mixneg200
+experiment: pr_mix_esm640_ep1_ft_randneg50
 # experiment: debug
 mode: train
 device: cuda:0
@@ -38,14 +38,14 @@ model:
   # prot_bert_unfreeze: ['esm.encoder.layer.11']  # for esm-2 480
   # prot_bert_unfreeze: []
   # prot_bert_unfreeze: ['bert.encoder.layer.29']  # for OntoProtein
-  text_bert_unfreeze: ['bert.encoder.layer.11']
   # text_bert_unfreeze: ['bert.encoder.layer.11']
-  # text_bert_unfreeze: []
+  # text_bert_unfreeze: ['bert.encoder.layer.11']
+  text_bert_unfreeze: []
   hidden_size: 512
   w_l: 2  # weight applied to pathogenicity loss
   # margin: 0.25  # for cosine
   dist_fn_name: cosine_sigmoid  # unused
-  calibration_fn_name: logistic  # calibration for disease score
+  calibration_fn_name: none  # calibration for disease score
   margin: 0.25  # margin for contrast loss
   nce_loss_temp: 0.07
   freq_norm_factor: 32  # normalization factor for in-context phenotype counts
@@ -56,9 +56,9 @@ model:
   pe_scalor: 0.01
   pheno_emb_update_interval: 50
   use_hardneg: True
-  sample_method: mix
-  n_neg_samples: 200
-  adjust_logits: True
+  sample_method: random
+  n_neg_samples: 50
+  adjust_logits: True  # PLM zero-shot
 
 dataset:
   task_name: var_pred
