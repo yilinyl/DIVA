@@ -49,7 +49,9 @@ def parse_uniprot_dat(file_path):
                 # if 'Name' not in current_entry:
                 name = line[5:].strip().rstrip('.')
                 if name.startswith('RecName:') and re.search('Full=', name):
-                    current_entry['Name'] = name.split('=')[1].rstrip(';')
+                    if 'Name' in current_entry:
+                        continue
+                    current_entry['Name'] = name.split('=')[1].rstrip(';').split('{')[0].strip()
 
                 # else:
                 #     current_entry['Name'] += " " + line[5:].strip().rstrip('.')
@@ -82,7 +84,8 @@ def parse_uniprot_dat(file_path):
                         inside_function = False
 
 if __name__ == '__main__':
-    data_root = Path('/local/storage/yl986/data/UniProt')
+    # data_root = Path('/local/storage/yl986/data/UniProt')
+    data_root = Path('/home/yl986/data/UniProt')
     # input_fpath = data_root / 'uniprot_sprot_human.dat.gz'
     # output_fpath = data_root / 'uniprot_sprot_human_meta.txt'
     input_fpath = data_root / 'uniprot_trembl_human.dat.gz'
