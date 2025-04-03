@@ -1,35 +1,20 @@
 # config on G2-server with structural context
 exp_dir: ./scratch/
-experiment: pr_mix_esm640_ep1_ft_hardneg200_noprotdesc
-# experiment: debug
+experiment: pr_mix_esm640_ep1_ft_cls
+# experiment: debug_cls
 mode: train
 device: cuda:0
 batch_size: 16
 pheno_batch_size: 32
-scoring: wt-marginals  # one of wt-marginals, masked-marginals
-# output_file: ./dms_ontoprot_wt_score.csv
 train_pathogenicity: True
 init_lr: 0.001
-# init_clr: 0.002
-# clr_t0: 10
-# lr_reduce_factor: 0.5
-# lr_schedule_patience: 3
-# clr_reduce_factor: 0.5
-# clr_schedule_patience: 5
 epochs: 20
 
 model:
   type: esm
-  # protein_lm_path: /local/storage/yl986/script_hub/KeAP/pretrained  # KeAP model
-  # protein_lm_path: zjunlp/OntoProtein
   # protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
   protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
   # protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
-  # protein_lm_path: westlake-repl/SaProt_650M_PDB  # SaProt 1280
-  # protein_lm_path: westlake-repl/SaProt_650M_AF2  # SaProt 1280
-  # protein_lm_path: facebook/esm1v_t33_650M_UR90S_1  # ESM-1v
-  # protein_lm_path: facebook/esm1b_t33_650M_UR50S  # ESM-1b
-  # protein_lm_path: zjunlp/OntoProtein
   text_lm_path: microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext  # PubMedBERT
   # decoder_config_path: /local/storage/yl986/script_hub/KeAP/initial_decoder_config/config.json
   frozen_bert: True
@@ -37,13 +22,9 @@ model:
   prot_bert_unfreeze: ['esm.encoder.layer.29']  # for esm-2 640
   # prot_bert_unfreeze: ['esm.encoder.layer.11']  # for esm-2 480
   # prot_bert_unfreeze: []
-  # prot_bert_unfreeze: ['bert.encoder.layer.29']  # for OntoProtein
-  # text_bert_unfreeze: ['bert.encoder.layer.11']
-  # text_bert_unfreeze: ['bert.encoder.layer.11']
   text_bert_unfreeze: []
   hidden_size: 512
   w_l: 2  # weight applied to pathogenicity loss
-  # margin: 0.25  # for cosine
   dist_fn_name: cosine_sigmoid  # unused
   calibration_fn_name: none  # calibration for disease score
   margin: 0.25  # margin for contrast loss
@@ -56,8 +37,8 @@ model:
   pe_scalor: 0.01
   pheno_emb_update_interval: 50
   use_hardneg: True
-  sample_method: hard
-  n_neg_samples: 200
+  sample_method: random
+  n_neg_samples: 50
   adjust_logits: True  # PLM zero-shot
 
 dataset:
@@ -89,10 +70,11 @@ dataset:
   pheno_col: phenotype
   # pheno_col: pheno_clean
   load_variant: True
-  use_protein_desc: False
+  use_protein_desc: True
   max_protein_seq_length: 1024
   half_window_size: 64
   # max_phenotype_length: null
+  use_protein_desc: True
   use_struct_neighbor: False
   struct_radius_cutoff: 25
   truncate_protein: True

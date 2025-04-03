@@ -58,7 +58,7 @@ class DiseaseVariantEncoder(nn.Module):
         self.text_encoder = text_encoder
 
         self.n_residue_types = n_residue_types
-        self.use_desc = use_desc
+        # self.use_desc = use_desc
         self.use_struct_vocab = use_struct_vocab
         self.foldseek_vocab_size = len(foldseek_vocab)
         self.device = device

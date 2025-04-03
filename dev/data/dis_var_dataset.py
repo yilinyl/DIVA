@@ -369,6 +369,7 @@ class ProteinVariantDatset(Dataset):
                     
                 else:
                     seq = self.seq_dict[uprot]
+                    prot_desc = self.text_tokenizer.unk_token
                     if self.use_protein_desc:
                         prot_desc = self.protein_info_dict.get(uprot, self.text_tokenizer.unk_token)
             
@@ -1146,9 +1147,9 @@ def protein_variant_collate_fn(
     masked_seq_tokenized = protein_tokenizer(masked_seq_list, padding=True, return_tensors='pt')
     var_seq_tokenized = protein_tokenizer(var_seq_list, padding=True, return_tensors='pt')
 
-    if use_prot_desc:
-        desc_lst = [protein_data[pid]['prot_desc'] for pid in prot_unique]
-        batch_desc_tokenized = text_tokenizer(desc_lst, padding=True, return_tensors='pt', truncation=True, max_length=max_pheno_desc_length)
+    # if use_prot_desc:
+    desc_lst = [protein_data[pid]['prot_desc'] for pid in prot_unique]  # should be [UNK] if use_prot_desc == False
+    batch_desc_tokenized = text_tokenizer(desc_lst, padding=True, return_tensors='pt', truncation=True, max_length=max_pheno_desc_length)
         # max_desc_length = batch_desc_tokenized['input_ids'].shape[-1]
 
     if sum(infer_pheno_vec) == 0:
