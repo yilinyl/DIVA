@@ -16,11 +16,7 @@ import numpy as np
 import pandas as pd
 
 import torch
-from torch import nn
-import torch.nn.functional as F
-import torch.optim as optim
 from torch.utils.data.dataloader import DataLoader
-from torch.utils.tensorboard import SummaryWriter
 
 from transformers import AutoModel, AutoTokenizer, BertTokenizer, BertModel, BertForMaskedLM, EsmForMaskedLM, AutoModelForMaskedLM
 from transformers import BertConfig, EsmConfig
@@ -32,7 +28,6 @@ from datetime import datetime
 from utils import str2bool, setup_logger, set_seed, load_input_to_device, _save_scores
 from metrics import *
 from dev.preprocess.utils import parse_fasta_info
-from models.protein_encoder import DiseaseVariantAttnEncoder
 from models.dis_var_models import DiseaseVariantEncoder
 
 
@@ -211,7 +206,7 @@ def gpu_setup(device='cpu'):
 
     return device
 
-def save_pheno_results(pheno_result_dict, save_path, name, save_emb=False):
+def save_pheno_results(pheno_result_dict, save_path, name, save_emb=False, save_simi=False):
     if isinstance(save_path, str):
         save_path = Path(save_path)
 
@@ -222,7 +217,8 @@ def save_pheno_results(pheno_result_dict, save_path, name, save_emb=False):
                                         #  'neg_phenotype': pheno_result_dict['neg_pheno_desc'], 
                                         'pos_score': pheno_result_dict['pos_score']})
         df_pheno_results.to_csv(save_path / f'{name}_pheno_score.tsv', sep='\t', index=False)
-    np.save(save_path / f'{name}_sim.npy', pheno_result_dict['similarities'])
+    if save_simi:
+        np.save(save_path / f'{name}_sim.npy', pheno_result_dict['similarities'])
     if save_emb:
         np.save(save_path / f'{name}_pheno_pred_emb.npy', pheno_result_dict['pred_emb'])
         # pd.DataFrame(pheno_result_dict['pos_emb']).to_csv(save_path / f'{split}_pheno_true_emb.tsv', sep='\t', index=False, header=False)
@@ -254,20 +250,10 @@ def env_setup(args, config):
 if __name__ == '__main__':
     args = parse_args()
     config = load_config(args.config, format=args.config_fmt)
-
     config, device = env_setup(args, config)
-
     data_configs = config['dataset']
     model_args = config['model']
-
     exp_path = Path(config['exp_dir'])
-    # result_path = Path(exp_dir) / 'result'
-    # if not result_path.exists():
-    #     result_path.mkdir(parents=True)
-
-    # pheno_result_path = result_path / 'phenotype'
-    # if not pheno_result_path.exists():
-    #     pheno_result_path.mkdir(parents=True)
 
     prot2seq = dict()
     prot2desc = dict()
@@ -319,20 +305,29 @@ if __name__ == '__main__':
     with open(data_configs['phenotype_vocab_file'], 'r') as f:
         phenotype_vocab = f.read().splitlines()
     phenotype_vocab.insert(0, text_tokenizer.unk_token)  # add unknown token
+    logging.info('Disease vocabulary size: {}'.format(len(phenotype_vocab)))
     if data_configs['use_pheno_desc']:
         with open(data_configs['phenotype_desc_file']) as f:
             pheno_desc_dict = json.load(f)
+            logging.info('Disease description file loaded.')
     else:
         pheno_desc_dict = None
+    if data_configs['disease_name_map_file']:  # raw disease names --> cleaned terms
+        with open(data_configs['disease_name_map_file']) as f:
+            dis_name_map_dict = json.load(f)
+        logging.info('Disease name mapping file loaded.')
+    else:
+        dis_name_map_dict = None
 
     pheno_dataset = PhenotypeDataset(phenotype_vocab, pheno_desc_dict, use_desc=data_configs['use_pheno_desc'])
     pheno_collator = TextDataCollator(text_tokenizer, padding=True)
     phenotype_loader = DataLoader(pheno_dataset, batch_size=config['pheno_batch_size'], collate_fn=pheno_collator, shuffle=False)
     # TODO: load variant cache
-    if os.path.exists(data_configs['variant_cache_file']):
+    if not data_configs['update_cache'] and os.path.exists(data_configs['variant_cache_file']):
         with open(data_configs['variant_cache_file']) as f:
             prot_var_cache = json.load(f)
     else:
+        logging.info('Loading known disease variants...')
         ref_dataset = ProteinVariantDatset(**data_configs, 
                                             variant_file=data_configs['input_file']['train'], 
                                             split='train', 
@@ -340,12 +335,15 @@ if __name__ == '__main__':
                                             protein_tokenizer=protein_tokenizer, 
                                             text_tokenizer=text_tokenizer,
                                             mode='train',
+                                            pheno_col=data_configs['pheno_col_train'],
                                             update_var_cache=True,
                                             comb_seq_dict=prot2comb_seq,
+                                            disease_name_map_dict=dis_name_map_dict,
                                             afmis_root=afmis_root,
                                             access_to_context=True)
         # var_db = pd.read_csv(data_root / data_configs['input_file']['train']).query('label == 1').\
         #     drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
+        logging.info('{} context variants loaded for reference ({} with known disease label)'.format(len(ref_dataset), ref_dataset.n_disease_variants))
         prot_var_cache = ref_dataset.get_protein_cache()
 
         with open(data_configs['variant_cache_file'], 'w') as f:
@@ -397,11 +395,13 @@ if __name__ == '__main__':
                                             #  var_db=var_db,
                                             prot_var_cache=prot_var_cache,
                                             mode='eval',
+                                            pheno_col=data_configs['pheno_col_pred'],
                                             update_var_cache=False,
                                             comb_seq_dict=prot2comb_seq,
+                                            disease_name_map_dict=dis_name_map_dict,
                                             afmis_root=afmis_root,
                                             access_to_context=False)
-        logging.info('{} variants loaded'.format(len(test_dataset)))
+        logging.info('{} variants loaded ({} with known disease label)'.format(len(test_dataset), test_dataset.n_disease_variants))
         test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
                                                use_prot_desc=True, truncate_protein=data_configs['truncate_protein'], 
                                                max_protein_length=data_configs['max_protein_seq_length'],

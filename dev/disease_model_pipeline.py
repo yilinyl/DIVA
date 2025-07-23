@@ -416,6 +416,12 @@ def main():
     else:
         pheno_desc_dict = None
 
+    if data_configs['disease_name_map_file']:
+        with open(data_configs['disease_name_map_file']) as f:
+            dis_name_map_dict = json.load(f)
+    else:
+        dis_name_map_dict = None
+
     pheno_dataset = PhenotypeDataset(phenotype_vocab, pheno_desc_dict, use_desc=data_configs['use_pheno_desc'])
     pheno_collator = TextDataCollator(text_tokenizer, padding=True)
     phenotype_loader = DataLoader(pheno_dataset, batch_size=config['pheno_batch_size'], collate_fn=pheno_collator, shuffle=False)
@@ -423,6 +429,7 @@ def main():
                                          variant_file=data_configs['input_file']['train'], 
                                          split='train', 
                                          phenotype_vocab=phenotype_vocab, 
+                                         disease_name_map_dict=dis_name_map_dict,
                                          protein_tokenizer=protein_tokenizer, 
                                          text_tokenizer=text_tokenizer,
                                          pheno_desc_dict=pheno_desc_dict,
@@ -439,6 +446,7 @@ def main():
                                          variant_file=data_configs['input_file']['val'], 
                                          split='val', 
                                          phenotype_vocab=phenotype_vocab, 
+                                         disease_name_map_dict=dis_name_map_dict,
                                          protein_tokenizer=protein_tokenizer, 
                                          text_tokenizer=text_tokenizer,
                                          pheno_desc_dict=pheno_desc_dict,
@@ -460,6 +468,7 @@ def main():
                                          variant_file=data_configs['input_file']['test'], 
                                          split='test', 
                                          phenotype_vocab=phenotype_vocab, 
+                                         disease_name_map_dict=dis_name_map_dict,
                                          protein_tokenizer=protein_tokenizer, 
                                          text_tokenizer=text_tokenizer,
                                          pheno_desc_dict=pheno_desc_dict,

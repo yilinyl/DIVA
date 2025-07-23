@@ -118,8 +118,7 @@ def eval_epoch(model, device, data_loader):
     
     all_vars, all_scores, all_labels, all_pheno_scores = [], [], [], []
     all_pheno_pos_scores_seq, all_pheno_neg_scores_seq = [], []
-    all_pheno_pos_scores_str, all_pheno_neg_scores_str = [], []
-    all_seq_pheno_emb_pred, all_str_pheno_emb_pred, all_struct_mask = [], [], []
+    all_seq_pheno_emb_pred, all_dis_cls_probs = [], []
     all_pheno_emb_label, all_pos_pheno_descs, all_pos_pheno_idx = [], [], []
     all_patho_vars, all_pheno_emb_neg, all_pheno_neg_scores = [], [], []
     all_disease_scores = []
@@ -153,8 +152,9 @@ def eval_epoch(model, device, data_loader):
                 batch_dis_cls_probs = torch.softmax(batch_dis_cls_logits.detach(), 1)
                 pheno_score_pos = batch_dis_cls_probs.gather(1, pos_pheno_idx.unsqueeze(1)).squeeze(1)
                 all_pheno_scores.append(pheno_score_pos.detach().cpu().numpy())
+                # all_dis_cls_probs.append(batch_dis_cls_probs.detach().cpu().numpy())
                 all_seq_pheno_emb_pred.append(seq_pheno_emb.detach().cpu().numpy())
-                all_disease_scores.append(batch_dis_cls_logits.detach().cpu().numpy())
+                all_disease_scores.append(batch_dis_cls_probs.detach().cpu().numpy())
 
                 all_patho_vars.extend(batch_data['variant']['pheno_var_names'])
                 all_pos_pheno_descs.extend(batch_data['variant']['pos_pheno_name'])
@@ -180,7 +180,7 @@ def eval_epoch(model, device, data_loader):
     return all_labels, all_scores, all_vars, all_weights, all_pheno_results
 
 
-def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=False):
+def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=False, save_cls_scores=False):
     if isinstance(save_path, str):
         save_path = Path(save_path)
 
@@ -192,6 +192,9 @@ def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=Fals
     df_pheno_results.to_csv(save_path / f'ep{epoch}_{split}_pheno_score.tsv', sep='\t', index=False)
     if save_emb:
         np.save(save_path / f'ep{epoch}_{split}_pheno_seq_pred_emb.npy', pheno_result_dict['seq_pred_emb'])
+    
+    if save_cls_scores and 'disease_scores' in pheno_result_dict:
+        np.save(save_path / f'ep{epoch}_{split}_dis_cls_probs.npy', pheno_result_dict['disease_scores'])
         
 def main():
     args = parse_args()
@@ -414,6 +417,7 @@ def main():
 
     for epoch in range(config['epochs']):
         save_emb = False
+        save_cls_probs = False
         # logging.info('Epoch %d' % epoch)
         # if tb_writer:
         #     tb_writer.add_scalar("train/epoch", epoch)
@@ -500,6 +504,7 @@ def main():
             
             # best_pheno_loss = val_loss_dict["epoch_pheno_loss"]
             save_emb = True
+            save_cls_probs = True
             torch.save({'args': config, 
                         'state_dict': model.state_dict(), 
                         'optimizer_state_dict': optimizer.state_dict()},
@@ -520,9 +525,9 @@ def main():
             _save_scores(train_vars, train_labels, train_scores, 'train', weights=train_adj_weights, epoch=epoch, exp_dir=exp_dir)
             _save_scores(val_vars, val_labels, val_scores, 'val', weights=val_adj_weights, epoch=epoch, exp_dir=exp_dir)
             _save_scores(test_vars, test_labels, test_scores, 'test', weights=test_adj_weights, epoch=epoch, exp_dir=exp_dir)
-            save_pheno_results(train_pheno_results, pheno_result_path, epoch, split='train', save_emb=save_emb)
-            save_pheno_results(val_pheno_results, pheno_result_path, epoch, split='val', save_emb=save_emb)
-            save_pheno_results(test_pheno_results, pheno_result_path, epoch, split='test', save_emb=save_emb)
+            save_pheno_results(train_pheno_results, pheno_result_path, epoch, split='train', save_emb=save_emb, save_cls_scores=save_cls_probs)
+            save_pheno_results(val_pheno_results, pheno_result_path, epoch, split='val', save_emb=save_emb, save_cls_scores=save_cls_probs)
+            save_pheno_results(test_pheno_results, pheno_result_path, epoch, split='test', save_emb=save_emb, save_cls_scores=save_cls_probs)
 
         if tb_writer:
             tb_writer.add_pr_curve('Train/PR-curve', train_labels, train_scores, epoch)

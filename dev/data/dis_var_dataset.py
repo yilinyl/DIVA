@@ -21,7 +21,6 @@ from transformers import PreTrainedTokenizerBase
 import pandas as pd
 
 from dev.preprocess.utils import fetch_prot_seq
-from dev.utils import get_memory_usage
 
 
 def fetch_variant_on_protein(uprot, prot_var_db, outcome="pathogenic"):
@@ -40,55 +39,6 @@ def fetch_variant_on_protein(uprot, prot_var_db, outcome="pathogenic"):
             prot_vars.update(prot_var_db[uprot][key])  # variants of all outcomes
     
     return prot_vars
-
-
-class ProteinDataset(Dataset):
-
-    def __init__(self,
-                 protein_data,
-                 protein_tokenizer,
-                 text_tokenizer,
-                 max_protein_seq_length=None,
-                 max_phenotype_length=None):
-        
-        super(ProteinDataset, self).__init__()
-        self.data = protein_data
-        self.protein_tokenizer = protein_tokenizer
-        self.text_tokenizer = text_tokenizer
-        self.max_protein_seq_length = max_protein_seq_length
-        self.max_phenotype_length = max_phenotype_length
-    
-
-    def prep_seq_input(self, prot_seq):
-        aa_list = list(prot_seq)
-        if self.max_protein_seq_length is not None:
-            aa_list = aa_list[:self.max_protein_seq_length]
-
-        seq_lm_input = dict()
-        prot_input_ids = self.protein_tokenizer.encode(aa_list, max_length=self.max_protein_seq_length, is_split_into_words=True)
-        seq_lm_input['input_ids'] = prot_input_ids
-        seq_lm_input['attention_mask'] = (seq_lm_input['input_ids'] != self.protein_tokenizer.pad_token_id).long()
-        seq_lm_input['token_type_ids'] = torch.zeros_like(seq_lm_input['input_ids'], dtype=torch.long)
-
-        return seq_lm_input
-
-    def __getitem__(self, index):
-        cur_protein = self.data[index]
-        aa_list = list(cur_protein['seq'])
-        if self.max_protein_seq_length is not None:
-            aa_list = aa_list[:self.max_protein_seq_length]
-
-        prot_input_ids = self.protein_tokenizer.encode(aa_list, 
-                                                       max_length=self.max_protein_seq_length, 
-                                                       is_split_into_words=True, padding='max_length')
-        desc_input_ids = self.text_tokenizer.encode(cur_protein['desc'], max_length=self.max_phenotype_length, padding='max_length')
-
-        return {'id': cur_protein['id'],
-                'seq_input_ids': prot_input_ids,
-                'desc_input_ids': desc_input_ids}
-
-    def __len__(self):
-        return len(self.data)
 
 
 class ProteinVariantSeqDataset(Dataset):
@@ -219,6 +169,7 @@ class ProteinVariantDatset(Dataset):
         max_phenotype_length: int = 1000,
         # unknown_label = -100,
         phenotype_vocab: List = None,  # phenotype vocabulary
+        disease_name_map_dict: Dict = None,  # map raw disease name to cleaned name in vocabulary
         use_pheno_desc: bool = False,
         pheno_desc_dict: Dict[str, str] = None,
         # pheno_embs: List = None,  # pre-computed phenotype embeddings
@@ -254,6 +205,7 @@ class ProteinVariantDatset(Dataset):
         
         self.protein_variants = dict()  # dictionary of protein
         self.variant_data = []  # list of variant dict
+        self.disease_known = []
         self.use_protein_desc = use_protein_desc
         self.protein_ids = []
         self.prot_seq = []
@@ -261,6 +213,7 @@ class ProteinVariantDatset(Dataset):
         self.pos_offset = pos_offset  # 1 for 1-based position
         self.aa_change = []
         self.pheno_descs = phenotype_vocab
+        self.disease_name_map_dict = disease_name_map_dict
         self.pheno_idx_all = np.arange(len(phenotype_vocab))
         self.protein_tokenizer = protein_tokenizer
         self.text_tokenizer = text_tokenizer
@@ -308,6 +261,8 @@ class ProteinVariantDatset(Dataset):
         df_var = pd.read_csv(self.data_root / variant_file)
         if self.label_col not in df_var:
             df_var[self.label_col] = -1
+        if self.pheno_col not in df_var:
+            logging.warning(f'Disease label {self.pheno_col} not found in input data!')
         df_var = df_var.drop_duplicates([pid_col, pos_col, label_col, 'REF_AA', 'ALT_AA']).reset_index(drop=True)
         if exclude_prots:
             df_var = df_var[~df_var[pid_col].isin(exclude_prots)].reset_index(drop=True)
@@ -462,7 +417,8 @@ class ProteinVariantDatset(Dataset):
                         pheno_cur = record[self.pheno_col]
                     else:  # no phenotype information (presumably in test/inference only)
                         pheno_cur = np.nan
-                    
+                    if self.disease_name_map_dict:
+                        pheno_cur = self.disease_name_map_dict.get(pheno_cur, np.nan)  # unknown if disease name cannot be mapped to cleaned name in vocabulary
                     if self.mode == 'train':
                         if isinstance(pheno_cur, str) and record[self.label_col] == 1:  # pathogenic AND phenotype information available (in train & eval)
                             try:
@@ -556,6 +512,7 @@ class ProteinVariantDatset(Dataset):
                 #     nx.set_node_attributes(var_struct_graph, {var_pos_idx: {'pheno_idx': self.text_tokenizer.mask_token_id}})
                 #     cur_variant['var_struct_graph'] = dgl.from_networkx(var_struct_graph, node_attrs=['pheno_idx'], edge_attrs=['distance'])
                 self.variant_data.append(cur_variant)
+                self.disease_known.append(pos_pheno_is_known)
                 cur_indice += 1
             # seq_input_ids = self.encode_protein_seq(seq)
             cur_protein = {'seq': seq,
@@ -636,6 +593,10 @@ class ProteinVariantDatset(Dataset):
     def n_protein(self):
         assert len(self.protein_ids) == len(self.protein_variants)
         return len(self.protein_ids)
+    
+    @property
+    def n_disease_variants(self):
+        return sum(self.disease_known)
     
     def get_protein_list(self):
         return self.protein_ids
@@ -1495,91 +1456,3 @@ class TextDataCollator:
     def __call__(self, batch):
         batch_tokenized = self.tokenizer(batch, padding=self.padding, truncation=self.truncation, return_tensors='pt', max_length=self.max_length)
         return batch_tokenized
-
-@dataclass
-class DataCollatorForLanguageModeling:
-    """
-    Data collator used for language model. Inputs are dynamically padded to the maximum length
-    of a batch if they are not all of the same length.
-    The class is rewrited from 'Transformers.data.data_collator.DataCollatorForLanguageModeling'.
-        
-    Agrs:
-        tokenizer: the tokenizer used for encoding sequence.
-        mlm: Whether or not to use masked language modeling. If set to 'False', the labels are the same as the
-            inputs with the padding tokens ignored (by setting them to -100). Otherwise, the labels are -100 for
-            non-masked tokens and the value to predict for the masked token.
-        mlm_probability: the probablity of masking tokens in a sequence.
-        are_protein_length_same: If the length of proteins in a batch is different, protein sequence will
-                                 are dynamically padded to the maximum length in a batch.
-    """
-
-    tokenizer: PreTrainedTokenizerBase
-    mlm: bool = False
-    mlm_probability: float = 0.15
-    same_length: bool = False
-
-    def __post_init__(self):
-        if self.mlm and self.tokenizer.mask_token is None:
-            raise ValueError(
-                "This tokenizer does not have a mask token which is necessary for masked language modeling. "
-                "You should pass `mlm=False` to train on causal language modeling instead."
-            )
-    
-    def __call__(
-        self,
-        examples: List[Dict],
-    ) -> Dict[str, torch.Tensor]:
-        batch = {'input_ids': protein_seq_collate_fn(examples, self.tokenizer, self.same_length)}
-        special_tokens_mask = batch.pop('special_tokens_mask', None)  # always None
-
-        if self.mlm:
-            batch['input_ids'], batch['labels'] = self.mask_tokens(
-                batch['input_ids'], special_tokens_mask=special_tokens_mask
-            )
-        else:
-            labels = batch['input_ids'].clone()
-            if self.tokenizer.pad_token_id is not None:
-                labels[labels == self.tokenizer.pad_token_id] = -100
-            batch['labels'] = labels
-
-        batch['attention_mask'] = (batch['input_ids'] != self.tokenizer.pad_token_id).long()
-        batch['token_type_ids'] = torch.zeros_like(batch['input_ids'], dtype=torch.long)
-        return batch
-    
-
-    def mask_tokens(
-        self,
-        inputs: torch.Tensor,
-        special_tokens_mask: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Prepare masked tokens inputs/labels for masked language modeling:
-        default: 80% MASK, 10%  random, 10% original
-        """
-        labels = inputs.clone()
-        probability_matrix = torch.full(labels.size(), fill_value=self.mlm_probability)
-        # if `special_tokens_mask` is None, generate it by `labels`
-        if special_tokens_mask is None:
-            special_tokens_mask = [
-                self.tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in labels.tolist()
-            ]
-            special_tokens_mask = torch.tensor(special_tokens_mask, dtype=torch.bool)
-        else:
-            special_tokens_mask = special_tokens_mask.bool()
-
-        probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
-        masked_indices = torch.bernoulli(probability_matrix).bool()
-        # only compute loss on masked tokens.
-        labels[~masked_indices] = -100
-
-        # 80% of the time, replace masked input tokens with tokenizer.mask_token
-        indices_replaced = torch.bernoulli(torch.full(labels.shape, fill_value=0.8)).bool() & masked_indices
-        inputs[indices_replaced] = self.tokenizer.convert_tokens_to_ids(self.tokenizer.mask_token)
-
-        # 10% of the time, replace masked input tokens with random word
-        indices_random = torch.bernoulli(torch.full(labels.shape, fill_value=0.5)).bool() & masked_indices & ~indices_replaced
-        random_words = torch.randint(len(self.tokenizer), labels.shape, dtype=torch.long)
-        inputs[indices_random] = random_words[indices_random]
-
-        return inputs, labels
-
