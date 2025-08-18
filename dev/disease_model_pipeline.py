@@ -21,7 +21,7 @@ import torch.optim as optim
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
-from transformers import AutoModel, AutoTokenizer, BertTokenizer, BertModel, BertForMaskedLM, EsmForMaskedLM, AutoModelForMaskedLM
+from transformers import AutoModel, AutoTokenizer, BertTokenizer, BertForMaskedLM, AutoModelForMaskedLM
 
 from data.dis_var_dataset import ProteinVariantDatset, ProteinVariantDataCollator, PhenotypeDataset, TextDataCollator
 import logging
@@ -30,7 +30,6 @@ from utils import str2bool, env_setup, load_input_to_device, _save_scores, load_
 from metrics import *
 from dev.preprocess.utils import parse_fasta_info
 from models.model_utils import sample_random_negative, select_hard_negatives, embed_phenotypes
-from models.protein_encoder import DiseaseVariantAttnEncoder
 from models.dis_var_models import DiseaseVariantEncoder
 # torch.set_default_dtype(torch.float32)
 
@@ -114,20 +113,13 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5,
                 neg_pheno_idx = sample_random_negative(pheno_vocab_size, pos_pheno_idx, n_neg=n_neg_samples)
         if opt_patho:
             if batch_data['variant']['infer_phenotype']:
-                # pos_pheno_idx = variant_data['pos_pheno_idx']
-                # if use_hardneg:
                 contrast_loss = model.info_nce_loss(seq_pheno_emb, all_pheno_embs, pos_pheno_idx, neg_pheno_idx)
-                    # neg_pheno_idx = select_hard_negatives(seq_pheno_emb, all_pheno_embs, pos_pheno_idx)
-                # else:
-                #     contrast_loss = model.contrast_nce_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj)
-                    # seq_contrast_loss, struct_contrast_loss, contrast_loss = model.contrast_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb, struct_mask=variant_data['has_struct_context'])
+
                 loss = contrast_loss + patho_loss * w_l
             else:
                 loss = patho_loss
         else:
-            # assert batch_data['variant']['infer_phenotype']
-            # pos_pheno_idx = variant_data['pos_pheno_idx']
-            # if use_hardneg:
+            
             contrast_loss = model.info_nce_loss(seq_pheno_emb, all_pheno_embs, pos_pheno_idx, neg_pheno_idx)
             # else:
             #     contrast_loss = model.contrast_nce_loss(seq_pheno_emb, pos_emb_proj, neg_emb_proj)
@@ -534,38 +526,23 @@ def main():
     # print(unfreeze_params)
     seq_encoder = seq_encoder.to(device)
     text_encoder = text_encoder.to(device)
-    if data_configs['context_agg_option'] == 'stack':
-        model = DiseaseVariantAttnEncoder(seq_encoder=seq_encoder,
-                                    text_encoder=text_encoder,
-                                    n_residue_types=protein_tokenizer.vocab_size,
-                                    hidden_size=model_args['hidden_size'],
-                                    use_desc=True,
-                                    pad_label_idx=-100,
-                                    dist_fn_name=model_args['dist_fn_name'],
-                                    init_margin=model_args['margin'],
-                                    freq_norm_factor=model_args['freq_norm_factor'],
-                                    seq_weight_scaler=model_args['seq_weight_scaler'],
-                                    pe_scalor=model_args['pe_scalor'],
-                                    use_struct_vocab=data_configs['use_struct_vocab'],
-                                    use_alphamissense=data_configs['use_alphamissense'],
-                                    adjust_logits=model_args['adjust_logits'],
-                                    device=device)
-    else:  # concat
-        model = DiseaseVariantEncoder(seq_encoder=seq_encoder,
-                                    text_encoder=text_encoder,
-                                    n_residue_types=protein_tokenizer.vocab_size,
-                                    hidden_size=model_args['hidden_size'],
-                                    use_desc=True,
-                                    pad_label_idx=-100,
-                                    calibration_fn_name=model_args['calibration_fn_name'],
-                                    init_margin=model_args['margin'],
-                                    nce_loss_temp=model_args['nce_loss_temp'],
-                                    freq_norm_factor=model_args['freq_norm_factor'],
-                                    seq_weight_scaler=model_args['seq_weight_scaler'],
-                                    use_struct_vocab=data_configs['use_struct_vocab'],
-                                    use_alphamissense=data_configs['use_alphamissense'],
-                                    adjust_logits=model_args['adjust_logits'],
-                                    device=device)
+    
+    # concat
+    model = DiseaseVariantEncoder(seq_encoder=seq_encoder,
+                                text_encoder=text_encoder,
+                                n_residue_types=protein_tokenizer.vocab_size,
+                                hidden_size=model_args['hidden_size'],
+                                use_desc=True,
+                                pad_label_idx=-100,
+                                calibration_fn_name=model_args['calibration_fn_name'],
+                                init_margin=model_args['margin'],
+                                nce_loss_temp=model_args['nce_loss_temp'],
+                                freq_norm_factor=model_args['freq_norm_factor'],
+                                seq_weight_scaler=model_args['seq_weight_scaler'],
+                                use_struct_vocab=data_configs['use_struct_vocab'],
+                                use_alphamissense=data_configs['use_alphamissense'],
+                                adjust_logits=model_args['adjust_logits'],
+                                device=device)
     total_param = 0
     total_param_with_grad = 0
     for p in model.parameters():
@@ -602,7 +579,7 @@ def main():
         # logging.info('Epoch %d' % epoch)
         # if tb_writer:
         #     tb_writer.add_scalar("train/epoch", epoch)
-        if epoch == model_args['num_warmup_epochs']:
+        if epoch == model_args['num_warmup_epochs'] and model_args['text_bert_unfreeze']:
             logging.info(f'Unfreeze selected text encoder parameters after epoch {epoch}')
             for name, parameters in text_encoder.named_parameters():
                 for tags in model_args['text_bert_unfreeze']:
@@ -610,6 +587,7 @@ def main():
                         parameters.requires_grad = True
                         unfreeze_params.append(name)
                         break
+            total_param = 0
             total_param_with_grad = 0
             for p in model.parameters():
                 if p.requires_grad:
