@@ -1,7 +1,7 @@
 # config on G2-server with structural context
 exp_dir: ./scratch/
-experiment: pr_mix_esm640_ep1_ft_hardneg200_noprotdesc
-# experiment: debug
+experiment: pr_mix_esm640_ep1_ft_hardneg200_maxlen5k
+# experiment: debug_newvocab
 mode: train
 device: cuda:0
 batch_size: 16
@@ -10,12 +10,7 @@ scoring: wt-marginals  # one of wt-marginals, masked-marginals
 # output_file: ./dms_ontoprot_wt_score.csv
 train_pathogenicity: True
 init_lr: 0.001
-# init_clr: 0.002
-# clr_t0: 10
-# lr_reduce_factor: 0.5
-# lr_schedule_patience: 3
-# clr_reduce_factor: 0.5
-# clr_schedule_patience: 5
+
 epochs: 20
 
 model:
@@ -51,7 +46,7 @@ model:
   freq_norm_factor: 32  # normalization factor for in-context phenotype counts
   max_pathogenicity_epochs: 1  # number of epochs to train pathogencity objective
   num_warmup_epochs: 0
-  topk: [1, 10, 20, 50, 100]
+  topk: [1, 5, 10, 20, 50, 100]
   seq_weight_scaler: 1
   pe_scalor: 0.01
   pheno_emb_update_interval: 50
@@ -70,7 +65,7 @@ dataset:
               "/home/yl986/data/UniProt/uniprot_sprot_varsplic.fasta"]
   prot_meta_data: ["/home/yl986/data/UniProt/meta/uniprot_sprot_human_meta.txt",
                    "/home/yl986/data/UniProt/meta/uniprot_trembl_human_meta.txt"]
-  data_dir: /home/yl986/data/variant_data/pred/disease_clean1/
+  data_dir: /home/yl986/data/variant_data/pred/disease_clean1/extend5k/
   # data_dir: /home/yl986/data/variant_data/pred/pheno_select/struct/sample
   input_file:
     train: train.csv
@@ -80,6 +75,10 @@ dataset:
   # phenotype_desc_file: /home/yl986/data/variant_data/short_name2desc.json  # phenotype name-to-description
   phenotype_vocab_file: /home/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab.txt
   phenotype_desc_file: /home/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab_desc.json  # phenotype name-to-description
+  disease_name_map_file: ''
+  # phenotype_vocab_file: /home/yl986/data/variant_data/pred/disease_clean2/var_dis_vocab.txt
+  # phenotype_desc_file: /home/yl986/data/variant_data/pred/disease_clean2/var_dis_vocab_desc.json  # phenotype name-to-description
+  # disease_name_map_file: /home/yl986/data/variant_data/pred/disease_clean2/disease_name_map.json
   use_pheno_desc: True
   context_agg_option: concat
   # pheno_emb_cache_file:
@@ -89,7 +88,8 @@ dataset:
   pheno_col: phenotype
   # pheno_col: pheno_clean
   load_variant: True
-  use_protein_desc: False
+  use_protein_desc: True
+  # max_protein_seq_length: 1022  # for ESM 480
   max_protein_seq_length: 1024
   half_window_size: 64
   # max_phenotype_length: null

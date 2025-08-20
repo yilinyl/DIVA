@@ -1,13 +1,15 @@
 # config on G2-server
 exp_dir: ./scratch/
-experiment: vus_esm640ft_pred
-# experiment: debug_vus
+experiment: var_all_esm640ft_hard200_maxlen5k
+# experiment: debug_vus1
 mode: inference
 device: cuda:0
 batch_size: 16
 pheno_batch_size: 16
 
-model_path: ./scratch//pr_mix_ep1_esm640_ft_mixneg200/2025-01-31-12-53-55/checkpoints/best_pheno_model.pt
+# model_path: ./scratch//pr_mix_ep1_esm640_ft_mixneg200/2025-01-31-12-53-55/checkpoints/best_pheno_model.pt
+# model_path: ./scratch/pr_mix_esm640_ep1_ft_hardneg200/2025-03-12-12-23-08/checkpoints/best_pheno_model.pt
+model_path: ./scratch/pr_mix_esm640_ep1_ft_hardneg200_maxlen5k/2025-07-07-09-51-45/checkpoints/best_pheno_model.pt
 # model_path: ./scratch/pr_mix_esm640_ep1_ft_logi_mixneg200/2025-02-28-16-49-52/checkpoints/best_pheno_model.pt
 # output_file: ./dms_ontoprot_wt_score.csv
 init_lr: 0.001
@@ -17,17 +19,12 @@ model:
   # protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
   protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
   # protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
-  # protein_lm_path: westlake-repl/SaProt_650M_PDB  # SaProt 1280
-  # protein_lm_path: westlake-repl/SaProt_650M_AF2  # SaProt 1280 AF
   text_lm_path: microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext  # PubMedBERT
-  # text_lm_path: microsoft/BiomedNLP-KRISSBERT-PubMed-UMLS-EL  # KrissBERT
-  # text_lm_path: michiyasunaga/BioLinkBERT-base  # BioLinkBERT-base
-  # decoder_config_path: /local/storage/yl986/script_hub/KeAP/initial_decoder_config/config.json
   frozen_bert: True
   # w_l: 0.001  # weight applied to pathogenicity loss
   hidden_size: 512
   # margin: 0.25  # for cosine
-  topk: [1, 10, 20, 50, 100]
+  topk: [1, 5, 10, 20, 50, 100]
   dist_fn_name: cosine_sigmoid
   calibration_fn_name: none  # calibration for disease score
   margin: 0.25  # margin for contrast loss
@@ -42,22 +39,36 @@ dataset:
                    "/home/yl986/data/UniProt/meta/uniprot_trembl_human_meta.txt"]
   input_file:
     # train: inference/vars_in_training.csv  # include all variants seen in training --- to generate load variant cache only
-    train: disease_clean1/all_vars_in_training.csv
+    # train: disease_clean1/all_vars_in_training.csv
+    train: inference/VUS/var_ref_all_max10k.csv
     test: 
-        # - inference/VUS/vus_sample5k.csv
-        - inference/VUS/vus_disease_select_filtered.csv
+        # - inference/VUS/vus_disease_mondo_sample_2505.csv
+        # - inference/VUS/vus_disease_mondo_le5k_2505.csv
+        # - inference/VUS/vus_pred_sample1.csv
+        # - inference/VUS/vus_pred_all_max10k.csv
+        - inference/var_pred_all_max10k.csv  # all benign & pathogenic variants (exclude gnomad)
+        # - inference/VUS/vus_disease_select_filtered.csv
   # phenotype_vocab_file: /home/yl986/data/variant_data/pred/pheno_select/phenotype_vocab.txt
   # phenotype_desc_file: /home/yl986/data/variant_data/short_name2desc.json  # phenotype name-to-description
-  phenotype_vocab_file: /home/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab.txt
-  phenotype_desc_file: /home/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab_desc.json  # phenotype name-to-description
+  # phenotype_vocab_file: /home/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab.txt
+  # phenotype_desc_file: /home/yl986/data/variant_data/pred/disease_clean1/var_dis_vocab_desc.json  # phenotype name-to-description
+  # phenotype_vocab_file: /home/yl986/data/variant_data/pred/disease_clean2/var_dis_vocab.txt
+  # phenotype_desc_file: /home/yl986/data/variant_data/pred/disease_clean2/var_dis_vocab_desc.json  # phenotype name-to-description
+  # disease_name_map_file: /home/yl986/data/variant_data/pred/disease_clean2/disease_name_map.json
+  phenotype_vocab_file: /home/yl986/data/variant_data/pred/inference/VUS/vocab/pred_dis_vocab_clean.txt
+  phenotype_desc_file: /home/yl986/data/variant_data/pred/inference/VUS/vocab/pred_dis_vocab_clean2desc.json
+  disease_name_map_file: /home/yl986/data/variant_data/pred/inference/VUS/vocab/pred_dis_vocab_name_map.json
   use_pheno_desc: True
   context_agg_option: concat
-  variant_cache_file: /home/yl986/data/variant_data/pred/disease_clean1/prot_var_cache.json  # update if necessary (for disease inference / with different disease aggregation method)
+  update_cache: True
+  variant_cache_file: /home/yl986/data/variant_data/pred/disease_clean1/prot_var_cache1.json  # update if necessary (for disease inference / with different disease aggregation method)
   pid_col: UniProt
   # pid_col: uniprot_id  # for DMS
   pos_col: Protein_position
   label_col: label
-  pheno_col: phenotype
+  # pheno_col: phenotype
+  pheno_col_train: phenotype
+  pheno_col_pred: disease_name
   load_variant: True
   use_protein_desc: True
   max_protein_seq_length: 1024
