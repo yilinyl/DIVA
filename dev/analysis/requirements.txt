@@ -1,0 +1,4 @@
+goatools==1.4.12
+ontobio==2.9.10
+owlready2==0.47
+fire==0.7.0
