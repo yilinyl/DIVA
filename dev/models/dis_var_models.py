@@ -1,19 +1,13 @@
-import os
-import json
 from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import math
 import dataclasses
 from dataclasses import dataclass
-import tqdm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn import MultiheadAttention
-from transformers import BertModel, BertTokenizer
 from transformers import PreTrainedTokenizerBase, PreTrainedModel
 import pandas as pd
-from dgl.nn.pytorch import GATConv
 
 from .loss import clipped_sigmoid_cross_entropy, InfoNCELoss, sigmoid_cosine_distance_p
 from .protein_encoder import ProteinEncoder
@@ -33,8 +27,7 @@ class DiseaseVariantEncoder(nn.Module):
                  desc_proj_dim=128,
                  use_desc=True,
                  pad_label_idx=-100,
-                 num_heads=4,
-                 n_gnn_layers=2,
+                #  num_heads=4,
                  max_vars_per_batch=32,
                  dist_fn_name='cosine_sigmoid',
                  calibration_fn_name='sigmoid',
@@ -98,52 +91,16 @@ class DiseaseVariantEncoder(nn.Module):
             self.calibration_fn = lambda x: torch.sigmoid(x * self.calibrate_weight + self.calibrate_bias)
         else:
             self.calibration_fn = _calibration_fn_map[self.calibration_fn_name]
-        
-        # self.desc_proj_dim = desc_proj_dim
-        # if self.use_struct_vocab:
-        #     self.patho_feat_dim = self.desc_proj_dim + 2 * self.foldseek_vocab_size
-        # else:
-        #     self.patho_feat_dim = self.desc_proj_dim + 2
-        # self.desc_proj_linear = nn.Linear(self.text_emb_dim, self.desc_proj_dim)
-        # self.patho_output_layer = nn.Linear(self.patho_feat_dim, 2)  # use concatenated embedding of alt_seq and prot_desc
-        self.n_gnn_layers = n_gnn_layers
-        self.gnn_layers = nn.ModuleList()
-        if isinstance(num_heads, int):
-            num_heads = [num_heads] * n_gnn_layers
-        # num_heads[-1] = 1
-        gnn_in_dim = self.text_emb_dim
-        gnn_out_dim = self.hidden_size
-        for l in range(n_gnn_layers):
-            if l < n_gnn_layers - 1:
-                act_fn = F.elu
-            else:
-                act_fn = None
-            self.gnn_layers.append(GATConv(gnn_in_dim, 
-                                           gnn_out_dim, 
-                                           num_heads[l],
-                                           activation=act_fn))
-            gnn_in_dim = gnn_out_dim * num_heads[l]
-        
+        self.gnn_layers = nn.ModuleList()    
         self.alpha = nn.Parameter(torch.tensor(-1e-3))
         self.seq_weight_scaler = seq_weight_scaler
-        self.struct_pheno_comb = nn.Linear(self.seq_emb_dim + gnn_out_dim + self.text_emb_dim, self.hidden_size) # concatenated embedding of alt_seq, prot_desc, struct_context_pheno
 
         self.dist_fn = _dist_fn_map[dist_fn_name]
         # self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)
         self.patho_loss_fn = nn.BCEWithLogitsLoss()
-        # self.patho_loss_fn = nn.CrossEntropyLoss(ignore_index=pad_label_idx)  # for softmax
-        # self.desc_loss_fn = nn.CosineEmbeddingLoss()
-        # self.cos_sim_loss_fn = nn.CosineEmbeddingLoss()
         self.contrast_loss_fn = nn.TripletMarginWithDistanceLoss(distance_function=self.dist_fn, margin=init_margin, reduction='none')
         self.nce_loss_fn = InfoNCELoss(temperature=nce_loss_temp, score_fn=self.calibration_fn)
 
-    # def binary_step(self, seq_input_feat, variant_data, desc_input_feat=None):
-    #     # seq_embs, mlm_logits, desc_embs = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
-    #     mlm_logits = self.protein_encoder.get_mlm_logits(seq_input_feat)
-    #     var_indices = (variant_data['prot_idx'], variant_data['var_idx'])
-    #     logit_diff = self.log_diff_patho_score(mlm_logits[var_indices], variant_data['ref_aa'], variant_data['alt_aa'])
-
-    #     return mlm_logits, logit_diff
     def binary_step(self, seq_input_feat, variant_data):
         # seq_embs, mlm_logits, desc_embs = self.protein_encoder(seq_input_feat, desc_input_feat)  # mlm_logits: (batch_size, max_seq_length, vocab_size=33)
         mlm_logits = self.protein_encoder.get_mlm_logits(seq_input_feat)
@@ -154,34 +111,13 @@ class DiseaseVariantEncoder(nn.Module):
         # for single in mut_info.split(":"):
         var_idx = torch.tensor(variant_data['var_idx'], device=self.device) - variant_data['offset_idx']
         batch_idx = torch.arange(len(var_idx), device=self.device)
-        # TODO: revise for struct-vocab
-        if self.use_struct_vocab:  # from SaProt script
-            ori_st = variant_data['ref_aa'].unsqueeze(1)  # starting index
-            mut_st = variant_data['alt_aa'].unsqueeze(1)
-            range_indices = torch.arange(self.foldseek_vocab_size, device=self.device).unsqueeze(0)
-            ori_prob = probs[batch_idx, var_idx+1].gather(1, ori_st + range_indices).sum(1)
-            mut_prob = probs[batch_idx, var_idx+1].gather(1, mut_st + range_indices).sum(1)
-            # ori_prob = probs[batch_idx, var_idx+1, ori_st: ori_st + self.foldseek_vocab_size].sum()
-            # mut_prob = probs[batch_idx, var_idx+1, mut_st: mut_st + self.foldseek_vocab_size].sum()
-        else:
-            ori_prob = probs[batch_idx, var_idx+1, variant_data['ref_aa']]
-            mut_prob = probs[batch_idx, var_idx+1, variant_data['alt_aa']]
+        ori_prob = probs[batch_idx, var_idx+1, variant_data['ref_aa']]
+        mut_prob = probs[batch_idx, var_idx+1, variant_data['alt_aa']]
             
         # logit_diff = torch.log(mut_prob / ori_prob)  # smaller for pathogenic
         logit_diff = torch.log(ori_prob / mut_prob)  # larger for pathogenic
 
-        return mlm_logits, logit_diff.unsqueeze(1)        
-
-    def gnn_message_passing(self, graph, nfeats, efeats):
-        h = nfeats
-        for i, gnn_conv in enumerate(self.gnn_layers):
-            h = gnn_conv(graph, h, efeats)  # n_nodes, num_heads, hidden_size
-            if i < self.n_gnn_layers - 1:
-                h = h.flatten(1)
-            else:
-                h = h.mean(1)
-
-        return h      
+        return mlm_logits, logit_diff.unsqueeze(1)
 
     # def contrastive_step(self, seq_input_feat, variant_data, desc_input_feat):
     def forward(self, variant_data, desc_input_feat):
@@ -280,33 +216,7 @@ class DiseaseVariantEncoder(nn.Module):
         # seq_pheno_emb_raw = torch.cat([seq_var_embs, variant_pheno_emb], dim=-1)  # n_var, (seq_emb_dim + pheno_emb_dim)
         seq_pheno_emb_raw = torch.cat([alt_seq_func_embs[variant_data['infer_pheno_vec'].bool()], seq_context_pheno_emb_raw], dim=-1)   # n_var, (seq_emb_dim + desc_emb_dim + pheno_emb_dim)
         seq_pheno_emb = self.seq_pheno_comb(seq_pheno_emb_raw)  # n_var, hidden_size
-
-        # structural context
         struct_pheno_emb = None
-        # combined_pheno_emb = seq_pheno_emb
-        if variant_data['use_struct']:
-            struct_pheno_input_ids = variant_data['struct_pheno_input_ids']
-            struct_pheno_attention_mask = variant_data['struct_pheno_attention_mask']
-            struct_context_pheno_emb_raw = self.text_encoder(
-                struct_pheno_input_ids,
-                attention_mask=struct_pheno_attention_mask,
-                token_type_ids=torch.zeros(struct_pheno_input_ids.size(), dtype=torch.long, device=self.device),
-                output_attentions=False,
-                output_hidden_states=True,
-                return_dict=None
-            ).hidden_states[-1]
-            struct_context_pheno_emb_agg = torch.stack([struct_context_pheno_emb_raw[i, struct_pheno_attention_mask[i, :].bool(), :][0] for i in range(struct_context_pheno_emb_raw.size(0))], dim=0)
-
-            g_struct = variant_data['var_struct_graph']
-            g_struct.ndata['pheno_emb'] = struct_context_pheno_emb_agg[g_struct.ndata['indice']]
-            g_struct.ndata['pheno_emb'] = self.gnn_message_passing(g_struct, g_struct.ndata['pheno_emb'], g_struct.edata['distance'])
-            # combein with protein sequence embedding & functional embedding
-            struct_context_pheno_emb = g_struct.ndata['pheno_emb'][g_struct.ndata['mask'].bool()]
-            struct_pheno_emb = torch.cat([alt_seq_func_embs[variant_data['infer_pheno_vec'].bool()][variant_data['has_struct_context']], struct_context_pheno_emb], dim=-1)
-            struct_pheno_emb = self.struct_pheno_comb(struct_pheno_emb)
-            # struct_mask = variant_data['has_struct_context']
-            # combined_pheno_emb[struct_mask] = self.alpha * combined_pheno_emb[struct_mask] + (1 - self.alpha) * struct_pheno_emb
-
         if compute_pos:
             pos_pheno_embs = torch.stack([pos_pheno_embs[i, variant_data['pos_pheno_attention_mask'][i, :].bool()][0] for i in range(n_pheno_vars)], dim=0)
             pos_emb_proj = self.proj_head(pos_pheno_embs)
@@ -373,7 +283,6 @@ class DiseaseVariantEncoder(nn.Module):
 
         return loss.mean()
 
-    # TODO: ref_aa, alt_aa, label format, how to convert into mask / 1-hot matrix 
     def log_diff_patho_score(self, logits, ref_aa, alt_aa):
         # modified from AlphaMissense
         ref_score = torch.einsum('ij, ij->i', logits, F.one_hot(ref_aa, num_classes=self.n_residue_types).float())

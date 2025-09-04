@@ -20,7 +20,6 @@ from torch.utils.data.dataloader import DataLoader
 
 from transformers import AutoModel, AutoTokenizer, BertTokenizer, BertModel, BertForMaskedLM, EsmForMaskedLM, AutoModelForMaskedLM
 from transformers import BertConfig, EsmConfig
-from transformers.models.bert.modeling_bert import BertOnlyMLMHead
 
 from data.dis_var_dataset import ProteinVariantDatset, ProteinVariantDataCollator, PhenotypeDataset, TextDataCollator
 import logging
@@ -89,8 +88,6 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
                 variant_data[key] = load_input_to_device(variant_data[key], device=device)
             batch_labels = batch_data['variant']['label'].unsqueeze(1).to(device)
 
-            # seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data, desc_feat_dict)
-            # patho_logits, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(seq_feat_dict, variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
             logit_diff, batch_weights, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
             size = batch_labels.size()[0]
             cur_pheno_size = (batch_labels != 0).sum().item()
@@ -111,19 +108,12 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
                 adjusted_weights.append(batch_weights.squeeze(-1).detach().cpu().numpy())
 
             if batch_data['variant']['infer_phenotype']:
-                # if pos_emb_proj is not None:
-                #     pheno_score_pos = torch.cosine_similarity(seq_pheno_emb, pos_emb_proj)
-                #     all_pheno_scores.append(pheno_score_pos.detach().cpu().numpy())
-                #     all_pheno_emb_label.append(pos_emb_proj.detach().cpu().numpy())
-                # pheno_score_neg = torch.cosine_similarity(seq_pheno_emb, neg_emb_proj)
                 cos_sim_all = torch.cosine_similarity(seq_pheno_emb.unsqueeze(1), pheno_vocab_emb.unsqueeze(0), dim=-1)
                 topk_scores, topk_indices = torch.topk(cos_sim_all, k=topk, dim=1)
                 # all_pheno_neg_scores.append(pheno_score_neg.detach().cpu().numpy())
 
                 all_pheno_emb_pred.append(seq_pheno_emb.detach().cpu().numpy())
                 
-                # all_pheno_emb_neg.append(neg_emb_proj.detach().cpu().numpy())
-
                 all_topk_scores.append(topk_scores.detach().cpu().numpy())
                 all_topk_indices.append(topk_indices.detach().cpu().numpy())
                 all_similarities.append(cos_sim_all.detach().cpu().numpy())
@@ -221,8 +211,6 @@ def save_pheno_results(pheno_result_dict, save_path, name, save_emb=False, save_
         np.save(save_path / f'{name}_sim.npy', pheno_result_dict['similarities'])
     if save_emb:
         np.save(save_path / f'{name}_pheno_pred_emb.npy', pheno_result_dict['pred_emb'])
-        # pd.DataFrame(pheno_result_dict['pos_emb']).to_csv(save_path / f'{split}_pheno_true_emb.tsv', sep='\t', index=False, header=False)
-        # pd.DataFrame(pheno_result_dict['neg_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_neg_emb.tsv', sep='\t', index=False, header=False)
     
     
 def env_setup(args, config):
@@ -322,7 +310,6 @@ if __name__ == '__main__':
     pheno_dataset = PhenotypeDataset(phenotype_vocab, pheno_desc_dict, use_desc=data_configs['use_pheno_desc'])
     pheno_collator = TextDataCollator(text_tokenizer, padding=True)
     phenotype_loader = DataLoader(pheno_dataset, batch_size=config['pheno_batch_size'], collate_fn=pheno_collator, shuffle=False)
-    # TODO: load variant cache
     if not data_configs['update_cache'] and os.path.exists(data_configs['variant_cache_file']):
         with open(data_configs['variant_cache_file']) as f:
             prot_var_cache = json.load(f)
@@ -370,7 +357,7 @@ if __name__ == '__main__':
                                   adjust_logits=model_args['adjust_logits'],
                                   device=device)
     checkpt_dict = torch.load(config['model_path'], map_location='cpu')
-    model.load_state_dict(checkpt_dict['state_dict'])
+    model.load_state_dict(checkpt_dict['state_dict'], strict=False)
 
     for name, parameters in model.named_parameters():
         parameters.requires_grad = False
@@ -413,11 +400,7 @@ if __name__ == '__main__':
         test_labels, test_scores, test_vars, test_adj_weights, test_pheno_results = inference(model, device, test_loader, pheno_vocab_emb=all_pheno_embs, topk=100)
 
         _save_scores(test_vars, test_labels, test_scores, fname, weights=test_adj_weights, epoch='', exp_dir=str(exp_path), mode='eval')
-        # np.save(pheno_result_path / 'train_pheno_similarity.npy', train_topk_results['similarities'])
-        # np.save(pheno_result_path / 'test_pheno_similarity.npy', test_topk_results['similarities'])
-        # np.save(pheno_result_path / 'val_pheno_similarity.npy', val_topk_results['similarities'])
         if not data_configs['binary_inference_only'] and test_pheno_results:
-            # test_topk_acc = compute_topk_acc(test_pheno_results['pos_pheno_idx'], test_pheno_results['similarities'], topk_lst=model_args['topk'], label_lst=list(range(len(phenotype_vocab))))
 
             # with open(exp_path / f'{fname}_topk_acc.json', 'w') as f_js:
             #     json.dump(test_topk_acc, f_js, indent=2)

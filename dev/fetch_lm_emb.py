@@ -2,13 +2,12 @@ import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-import dgl
 import numpy as np
 import torch
 import logging
 from tqdm import *
 from preprocess.utils import *
-from data.data_utils import *
+# from data.data_utils import *
 from utils import gpu_setup
 
 torch.set_default_dtype(torch.float64)

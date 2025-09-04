@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 import json
 import copy
@@ -7,16 +6,11 @@ import dataclasses
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
-import tqdm
 import random
-import networkx as nx
 import logging
 import torch
-import torch.nn as nn
 from torch.utils.data import Dataset
-import dgl
 
-from transformers import BertModel, BertTokenizer
 from transformers import PreTrainedTokenizerBase
 import pandas as pd
 
@@ -42,6 +36,9 @@ def fetch_variant_on_protein(uprot, prot_var_db, outcome="pathogenic"):
 
 
 class ProteinVariantSeqDataset(Dataset):
+    """
+     Variant dataset with seq-only features
+    """
     def __init__(
         self,
         data_dir: str,
@@ -142,7 +139,7 @@ class ProteinVariantSeqDataset(Dataset):
 
 class ProteinVariantDatset(Dataset):
     """
-    Dataset for Protein variants.
+    Dataset for protein variants with sequence & disease-knowledge features
 
     Args:
         data_dir: the directory for input files
@@ -267,10 +264,9 @@ class ProteinVariantDatset(Dataset):
         if exclude_prots:
             df_var = df_var[~df_var[pid_col].isin(exclude_prots)].reset_index(drop=True)
         self._load_variant_data(df_var, pid_col, pos_col)
-        if self.use_struct_neighbor:
-            self.build_var_context_graph()
+        # if self.use_struct_neighbor:
+        #     self.build_var_context_graph()
     
-
     def _load_variant_data(self, df_var, pid_col='UniProt', pos_col='Protein_position'):
 
         # assert self.var_input_file != None
@@ -347,31 +343,6 @@ class ProteinVariantDatset(Dataset):
                 if uprot in self.afmis_prots:
                     with open(self.afmis_root / f'{uprot}_sub_all.json') as f:
                         prot_afmis_dict = json.load(f)
-                
-            if self.use_struct_neighbor:
-                pdb_graph_exists = (self.pdb_graph_root / f'{uprot}.graphml.gz').exists()
-                af_graph_exists = (self.af_graph_root / f'{uprot}.graphml.gz').exists()
-                if pdb_graph_exists:
-                    g_pdb = nx.read_graphml(self.pdb_graph_root / f'{uprot}.graphml.gz')
-                else:
-                    g_pdb = nx.Graph()
-                if af_graph_exists:
-                    g_af = nx.read_graphml(self.af_graph_root / f'{uprot}.graphml.gz')
-                else:
-                    g_af = nx.Graph()
-                g_prot = nx.compose(g_af, g_pdb)  # structure graph for protein (edge feature: distance)
-                node_id_map = {nid: int(nid.split('_')[1]) - 1 for nid in g_prot.nodes()}
-                g_prot = nx.relabel_nodes(g_prot, node_id_map)  # node ID: "uprot_resid" --> resid (int, start from 0)
-                if g_prot.number_of_nodes() < len(seq):  # add missing nodes
-                    missing_res = set(range(len(seq))) - set(g_prot.nodes())
-                    g_prot.add_nodes_from(missing_res)
-                try:
-                    assert len(seq) == g_prot.number_of_nodes()
-                except AssertionError:
-                    logging.warning(f'Inconsistent lengths for structure & primary sequence ({uprot})')
-                    continue
-                g_prot_csr = nx.to_scipy_sparse_array(g_prot, weight='distance')
-                # g_prot = g_prot.to_directed()
 
             df_prot = df_var[df_var[pid_col] == uprot]
             if self.patho_only:
@@ -531,10 +502,8 @@ class ProteinVariantDatset(Dataset):
             if self.use_struct_vocab:
                 cur_protein['comb_seq'] = comb_seq
             
-            if self.use_struct_neighbor:
-                # nx.set_node_attributes(g_prot, values=dict(zip(range(len(seq)), pos_pheno_idx)), name='pheno_idx')
-                # nx.set_node_attributes(g_prot, values=dict(zip(range(len(seq)), pos_pheno_desc)), name='pheno_descs')
-                cur_protein['struct_graph'] = g_prot_csr
+            # if self.use_struct_neighbor:
+            #     cur_protein['struct_graph'] = g_prot_csr
 
             self.protein_variants[uprot] = cur_protein
             if self.update_var_cache:
@@ -546,28 +515,8 @@ class ProteinVariantDatset(Dataset):
                                               }
                 # self.prot_var_cache.update(self.protein_variants)
     
-    def build_var_context_graph(self):
-        logging.info('Extract structural context...')
-        for i, cur_variant in enumerate(self.variant_data):
-            if not cur_variant['infer_phenotype']:
-                continue
-            uprot = cur_variant['uprot']
-            var_idx = cur_variant['var_idx']
-            protein_info = self.protein_variants[uprot]
-            prot_context_var_idx = protein_info['context_var_idx']
-            struct_g = nx.from_scipy_sparse_array(protein_info['struct_graph'], edge_attribute='distance')
-            var_graph_edges, context_nodes = extract_context_graph(var_idx, prot_context_var_idx, struct_g, dist_cutoff=self.max_struct_dist)
-            cur_variant['var_graph_edges'] = var_graph_edges
-            cur_variant['num_struct_neighbors'] = len(context_nodes)
-            self.num_struct_neighbors.append(len(context_nodes))
-            # struct_g.clear()
-            del struct_g
-            # self.num_struct_neighbors.append(var_context_graph.number_of_nodes() - 1)
-            # cur_variant['var_struct_graph'] = var_context_graph
-
     def average_struct_neighbors(self):
         return np.mean(self.num_struct_neighbors)
-
 
     def encode_protein_seq(self, seq):
         aa_list = list(seq)
@@ -611,18 +560,7 @@ class ProteinVariantDatset(Dataset):
 @dataclass
 class ProteinVariantDataCollator:
     """
-    Data collator used for language model. Inputs are dynamically padded to the maximum length
-    of a batch if they are not all of the same length.
-    The class is rewrited from 'Transformers.data.data_collator.DataCollatorForLanguageModeling'.
-        
-    Agrs:
-        tokenizer: the tokenizer used for encoding sequence.
-        mlm: Whether or not to use masked language modeling. If set to 'False', the labels are the same as the
-            inputs with the padding tokens ignored (by setting them to -100). Otherwise, the labels are -100 for
-            non-masked tokens and the value to predict for the masked token.
-        mlm_probability: the probablity of masking tokens in a sequence.
-        are_protein_length_same: If the length of proteins in a batch is different, protein sequence will
-                                 are dynamically padded to the maximum length in a batch.
+    Data collator for protein variant data
     """
     protein_data: Dict
     protein_tokenizer: PreTrainedTokenizerBase
@@ -644,7 +582,6 @@ class ProteinVariantDataCollator:
     use_struct_vocab: bool = False
     use_struct_neighbor: bool = False
     use_alphamissense: bool = False
-    struct_radius_cutoff: float = 25
     include_unknown: bool = False
     context_agg_opt: str = 'concat'
 
@@ -664,79 +601,10 @@ class ProteinVariantDataCollator:
                                            use_pheno_desc=self.use_pheno_desc, pheno_desc_dict=self.pheno_desc_dict, 
                                            truncate_protein=self.truncate_protein, max_protein_length=self.max_protein_length, max_pheno_desc_length=self.max_pheno_desc_length, 
                                            half_window_size=self.half_window_size, mode=self.mode, has_phenotype_label=self.has_phenotype_label,
-                                           use_struct_vocab=self.use_struct_vocab, use_struct_neighbor=self.use_struct_neighbor, struct_radius=self.struct_radius_cutoff,
+                                           use_struct_vocab=self.use_struct_vocab, use_struct_neighbor=self.use_struct_neighbor, 
                                            use_alphamissense=self.use_alphamissense, include_unknown=self.include_unknown, context_agg_opt=self.context_agg_opt)
 
         return batch
-    
-
-    def mask_variants(
-        self,
-        inputs: torch.Tensor,
-        tokenizer: PreTrainedTokenizerBase,
-        variant_mask: Optional[torch.Tensor] = None,  # True for variant positions
-        vocab_size: Optional[int] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        labels = inputs.clone()
-        if not vocab_size:
-            vocab_size = tokenizer.vocab_size
-        
-        variant_mask = variant_mask.bool()
-        n_variants = variant_mask.sum().item()
-
-        # only compute loss on masked tokens.
-        labels[variant_mask] = self.text_tokenizer.mask_token_id
-        # 80% of the time, replace masked input tokens with tokenizer.mask_token
-        indices_replaced = torch.bernoulli(torch.full(labels.shape, fill_value=0.8)).bool() & variant_mask
-        inputs[indices_replaced] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
-
-        # 10% of the time, replace masked input tokens with random word
-        indices_random = torch.bernoulli(torch.full(labels.shape, fill_value=0.5)).bool() & variant_mask & ~indices_replaced
-        random_words = torch.randint(vocab_size, labels.shape, dtype=torch.long)
-        inputs[indices_random] = random_words[indices_random]
-
-        return inputs, labels, variant_mask, indices_replaced, indices_random
-    
-    def mask_tokens(
-        self,
-        inputs: torch.Tensor,
-        tokenizer: PreTrainedTokenizerBase,
-        special_tokens_mask: Optional[torch.Tensor] = None,
-        vocab_size: Optional[int] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Prepare masked tokens inputs/labels for masked language modeling:
-        default: 80% MASK, 10%  random, 10% original
-        """
-        labels = inputs.clone()
-        if not vocab_size:
-            vocab_size = tokenizer.vocab_size
-        probability_matrix = torch.full(labels.size(), fill_value=self.mlm_probability)
-        # if `special_tokens_mask` is None, generate it by `labels`
-        if special_tokens_mask is None:
-            special_tokens_mask = [
-                tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in labels.tolist()
-            ]
-            special_tokens_mask = torch.tensor(special_tokens_mask, dtype=torch.bool)
-        else:
-            special_tokens_mask = special_tokens_mask.bool()
-
-        # tokens are zero-out for masking if it has special_tokens_mask == True
-        probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
-        masked_indices = torch.bernoulli(probability_matrix).bool()
-        # only compute loss on masked tokens.
-        labels[~masked_indices] = self.text_tokenizer.mask_token_id
-
-        # 80% of the time, replace masked input tokens with tokenizer.mask_token
-        indices_replaced = torch.bernoulli(torch.full(labels.shape, fill_value=0.8)).bool() & masked_indices
-        inputs[indices_replaced] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
-
-        # 10% of the time, replace masked input tokens with random word
-        indices_random = torch.bernoulli(torch.full(labels.shape, fill_value=0.5)).bool() & masked_indices & ~indices_replaced
-        random_words = torch.randint(vocab_size, labels.shape, dtype=torch.long)
-        inputs[indices_random] = random_words[indices_random]
-
-        return inputs, labels, masked_indices, indices_replaced, indices_random
 
 
 @dataclass
@@ -932,7 +800,6 @@ def protein_variant_collate_fn(
     use_struct_vocab: bool = False,
     foldseek_vocab: str = "pynwrqhgdlvtmfsaeikc#",
     use_struct_neighbor: bool = False,
-    struct_radius: float = 25,
     use_alphamissense: bool = False,
     include_unknown: bool = False,
     context_agg_opt: str = 'concat'  # concat: concatenate in-context phenotypes; count: aggregate by count
@@ -948,14 +815,6 @@ def protein_variant_collate_fn(
     prot_lengths = [len(seq) for seq in seq_lst]
     if use_struct_vocab:
         seq_lst = [protein_data[pid]['comb_seq'] for pid in prot_unique]
-    # max_seq_length = max(prot_lengths)
-    # if not max_protein_length:
-    #     max_protein_length = protein_tokenizer.model_max_length
-    # else:
-    #     max_protein_length = min(max_protein_length, protein_tokenizer.model_max_length)
-
-    # batch_seq_tokenized = protein_tokenizer(seq_lst, padding=True, truncation=True, return_tensors='pt', max_length=max_protein_length)
-
     patho_var_prot_idx = []  # index of protein in the batch for pathogenic variants
     prot_idx_all = []
     var_idx_all = []
@@ -978,11 +837,8 @@ def protein_variant_collate_fn(
     masked_seq_list = []
     var_seq_list = []
     has_struct_context_all = []
-    var_struct_graphs_raw = []
-    struct_context_pheno_uniq = set()
-
-    # batch_seq_input_lst = batch_seq_tokenized['input_ids'].tolist()
-    # phenos_in_frame_input_ids = [] # List[torch.Tensor] --> length=n_variants
+    # var_struct_graphs_raw = []
+    # struct_context_pheno_uniq = set()
     pheno_var_indice = 0
 
     for b, elem in enumerate(batch_data_raw):
@@ -1055,25 +911,6 @@ def protein_variant_collate_fn(
             # neg_pheno_label_all.append(neg_pheno_descs)
             # phenos_in_frame_cur_full = [prot_desc] + phenos_in_frame_cur
             # context_info_joined = text_tokenizer.sep_token.join([prot_desc] + phenos_in_frame_cur)  # joined into single string
-            if use_struct_neighbor and ('struct_graph' in protein_info_cur):
-                # TODO: check empty graph case
-                # var_context_graph = extract_context_graph(var_idx, prot_context_var_idx, protein_info_cur['struct_graph'], 
-                #                                           use_pheno_desc=use_pheno_desc, pheno_desc_dict=pheno_desc_dict, 
-                #                                           mask_token_id=text_tokenizer.mask_token_id, mask_token=text_tokenizer.mask_token, dist_cutoff=struct_radius)
-                # var_context_graph = elem['var_struct_graph']
-                var_graph_edges = elem['var_graph_edges']
-                var_context_graph = nx.DiGraph()
-                if elem['num_struct_neighbors']:
-                    var_context_graph.add_weighted_edges_from(var_graph_edges, weight='distance')
-                    prot_pheno_dict = {'pheno_descs': dict(zip(range(protein_info_cur['seq_length']), protein_info_cur['var_pheno_descs'])),
-                                       'pheno_idx': dict(zip(range(protein_info_cur['seq_length']), protein_info_cur['var_pheno_idx']))}
-                    var_context_graph = update_node_attrs(var_idx, var_context_graph, prot_pheno_dict, 
-                                                          use_pheno_desc=use_pheno_desc, pheno_desc_dict=pheno_desc_dict, 
-                                                          mask_token_id=text_tokenizer.mask_token_id, mask_token=text_tokenizer.mask_token)
-                    struct_context_pheno_uniq.update(nx.get_node_attributes(var_context_graph, 'pheno_descs').values())
-                    var_struct_graphs_raw.append(var_context_graph)
-                    has_struct_context = True
-                    # var_struct_graphs.append(dgl.from_networkx(var_context_graph, node_attrs=['pheno_idx'], edge_attrs=['distance']))
             has_struct_context_all.append(has_struct_context)
 
             if context_agg_opt == 'concat':
@@ -1090,8 +927,6 @@ def protein_variant_collate_fn(
             # context_pheno_dict['indice'].extend([pheno_var_indice] * len(phenos_in_frame_cur))
             context_pheno_dict['size'].append(len(context_pheno_var_idx_cur))  # number of contextual disease variants
             context_pheno_dict['position_idx'].extend(context_pheno_var_idx_cur)  # position index of each disease variant
-            # phenos_in_frame_all.append([prot_desc] + phenos_in_frame_cur)
-            # pheno_var_indice += 1
 
             if mode == 'train':
                 neg_pheno_idx, neg_pheno_name = sample_negative(pheno_vocab, pos_pheno_name)
@@ -1102,16 +937,12 @@ def protein_variant_collate_fn(
                 neg_pheno_desc_all.append(neg_pheno_desc)
                 neg_pheno_idx_all.append(neg_pheno_idx)
 
-        # phenos_all.extend([prot_desc] + phenos_in_frame_cur)
-            # max_pheno_length = max(max_pheno_length, phenos_input_ids_cur.shape[-1])
-            # phenos_in_frame_input_ids.append(phenos_input_ids_cur)
     masked_seq_tokenized = protein_tokenizer(masked_seq_list, padding=True, return_tensors='pt')
     var_seq_tokenized = protein_tokenizer(var_seq_list, padding=True, return_tensors='pt')
 
     # if use_prot_desc:
     desc_lst = [protein_data[pid]['prot_desc'] for pid in prot_unique]  # should be [UNK] if use_prot_desc == False
     batch_desc_tokenized = text_tokenizer(desc_lst, padding=True, return_tensors='pt', truncation=True, max_length=max_pheno_desc_length)
-        # max_desc_length = batch_desc_tokenized['input_ids'].shape[-1]
 
     if sum(infer_pheno_vec) == 0:
         variant_dict = {
@@ -1206,33 +1037,12 @@ def protein_variant_collate_fn(
                 'neg_pheno_input_ids': neg_pheno_tokenized['input_ids'],
                 'neg_pheno_attention_mask': neg_pheno_tokenized['attention_mask']})
         
-        if use_struct_neighbor and any(has_struct_context_all):
-            struct_context_pheno_uniq = list(struct_context_pheno_uniq)
-            var_struct_graphs = []
-            for var_graph in var_struct_graphs_raw:
-                node2pheno_idx = dict()
-                for node, nfeats in var_graph.nodes(data=True):
-                    node2pheno_idx[node] = struct_context_pheno_uniq.index(nfeats['pheno_descs'])
-                nx.set_node_attributes(var_graph, node2pheno_idx, name='indice')
-                var_struct_graphs.append(dgl.from_networkx(var_graph, node_attrs=['pheno_idx', 'indice', 'mask'], edge_attrs=['distance']))
-            struct_pheno_tokenized = text_tokenizer(list(struct_context_pheno_uniq), padding=True, return_tensors='pt', truncation=True, max_length=max_pheno_desc_length)
-            struct_pheno_input_ids = struct_pheno_tokenized['input_ids']
-            struct_pheno_attention_mask = (struct_pheno_input_ids != text_tokenizer.pad_token_id).long()
-
-            batch_struct_graph = dgl.batch(var_struct_graphs)
-            batch_struct_graph.edata['distance'] = batch_struct_graph.edata['distance'].float()
-            
-            variant_dict.update({
-                'var_struct_graph': batch_struct_graph,
-                'struct_pheno_input_ids': struct_pheno_input_ids,
-                'struct_pheno_attention_mask': struct_pheno_attention_mask
-            })
     if use_alphamissense:
         variant_dict.update({
             'afmis_score': torch.tensor([elem['afmis_score'] for elem in batch_data_raw]), 
             'afmis_mask': torch.tensor([elem['afmis_mask'] for elem in batch_data_raw], dtype=bool),  # True if alphamissense NOT available
         })
-    del var_struct_graphs_raw
+    # del var_struct_graphs_raw
     variant_dict['label'] = torch.tensor(batch_label)
     variant_dict['infer_pheno_vec'] = torch.tensor(infer_pheno_vec)
     
@@ -1240,14 +1050,7 @@ def protein_variant_collate_fn(
         # 'id': batch_prot_ids,
         'seq_length': prot_lengths, 
         'window_size': 2 * half_window_size,
-        # 'variant_mask': batch_var_mask,  # true for variant (batch_size, max_length)
-        # 'pathogenic_mask': batch_patho_mask,  # true for pathogenic (batch_size, max_length)
         'label': batch_label,  # 1: pathogenic, 0: benign, -100: non-variant spots
-        # 'seq_input_feat': {  # reference sequence
-        #     'input_ids': batch_seq_tokenized['input_ids'],  # batch_size x max_length
-        #     'attention_mask': batch_seq_tokenized['attention_mask'],  # 1 if token should be attended to
-        #     'token_type_ids': torch.zeros_like(batch_seq_tokenized['input_ids'], dtype=torch.long)
-        # },
         'desc_input_feat': {
             'input_ids': batch_desc_tokenized['input_ids'],
             'attention_mask': batch_desc_tokenized['attention_mask'],
@@ -1272,146 +1075,9 @@ def sample_negative(pheno_vocab, pos_pheno_desc):
     return neg_sample_idx, neg_pheno_desc
 
 
-def extract_context_graph(var_idx, 
-                          prot_context_var_idx, 
-                          g_prot, 
-                          dist_cutoff=25):
-    
-    edge_dist_list = []
-    context_nodes = []
-    if nx.is_empty(g_prot):
-        return edge_dist_list, context_nodes
-    if var_idx not in g_prot:
-        return edge_dist_list, context_nodes
-    
-    dist_to_target = nx.single_source_dijkstra_path_length(g_prot, var_idx, cutoff=dist_cutoff, weight='distance')
-    edge_dist_list.append((var_idx, var_idx, 1e-5))  # add self-loop for context nodes
-    for context_idx in prot_context_var_idx:
-        if context_idx == var_idx:
-            continue
-        # if context_idx not in g_prot:
-        #     continue
-        # dist = nx.dijkstra_path_length(g_prot, var_idx, context_idx, weight='distance')
-        # if dist <= dist_cutoff:
-        #     edge_dist_list.append((context_idx, var_idx, dist))
-        #     edge_dist_list.append((context_idx, context_idx, 1e-5))  # add self-loop for context nodes
-        #     context_nodes.append(context_idx)
-        if context_idx in dist_to_target:
-            edge_dist_list.append((context_idx, var_idx, dist_to_target[context_idx]))
-            edge_dist_list.append((context_idx, context_idx, 1e-5))  # add self-loop for context nodes
-            context_nodes.append(context_idx)
-
-    return edge_dist_list, context_nodes
-    # var_context_graph.add_weighted_edges_from(edge_dist_list, weight='distance')
-    
-    # return var_context_graph
-    # update_dict = dict()
-    # # nodes = set(prot_context_var_idx + [var_idx])
-    # nodes = var_context_graph.nodes()
-    # for nid in nodes:
-    #     ndata_dict = g_prot.nodes[nid]
-    #     update_dict[nid] = copy.deepcopy(ndata_dict)
-    #     update_dict[nid]['mask'] = 0 if nid != var_idx else 1
-    #     if use_pheno_desc and pheno_desc_dict is not None:
-    #         update_dict[nid]['pheno_descs'] = '{name} {desc}'.format(name=ndata_dict['pheno_descs'], desc=pheno_desc_dict.get(ndata_dict['pheno_descs'], '')).strip()
-    # nx.set_node_attributes(var_context_graph, update_dict)
-    # nx.set_node_attributes(var_context_graph, values={var_idx: {'pheno_idx': mask_token_id, 'pheno_descs': mask_token}})
-    
-    # struct_context_pheno_uniq.update(nx.get_node_attributes(var_context_graph, 'pheno_descs').values())
-    # return var_context_graph
-
-def update_node_attrs(var_idx, var_graph, prot_pheno_dict, use_pheno_desc=False, pheno_desc_dict=None, mask_token_id=0, mask_token='[MASK]'):
-    # update_dict = copy.deepcopy(prot_pheno_dict)
-    update_dict = {k: {} for k in prot_pheno_dict.keys()}
-    update_dict['mask'] = dict()
-    # nodes = set(prot_context_var_idx + [var_idx])
-    nodes = var_graph.nodes()
-    for nid in nodes:
-        # ndata_dict = prot_graph.nodes[nid]
-        # ndata_dict = prot_pheno_dict['pheno_desc'][nid]
-        # update_dict[nid] = copy.deepcopy(ndata_dict)
-        pheno_name = prot_pheno_dict['pheno_descs'][nid]
-        update_dict['pheno_descs'][nid] = pheno_name
-        update_dict['pheno_idx'][nid] = prot_pheno_dict['pheno_idx'][nid]
-        update_dict['mask'][nid] = 0 if nid != var_idx else 1
-        if use_pheno_desc and pheno_desc_dict is not None:
-            update_dict['pheno_descs'][nid] = '{name} {desc}'.format(name=pheno_name, desc=pheno_desc_dict.get(pheno_name, '')).strip()
-    for attr_name, attr_dict in update_dict.items():
-        nx.set_node_attributes(var_graph, attr_dict, name=attr_name)
-    # nx.set_node_attributes(var_graph, update_dict)
-    nx.set_node_attributes(var_graph, values={var_idx: {'pheno_idx': mask_token_id, 'pheno_descs': mask_token}})
-    # struct_context_pheno_uniq.update(nx.get_node_attributes(var_context_graph, 'pheno_descs').values())
-    return var_graph
-
-
-def pad_phenotype_input(raw_input_ids: List[List[int]],  
-                        # var_idx_list, 
-                        max_text_length, 
-                        seq_length,
-                        padding_side='right', 
-                        fill_val=0):
-    
-    # assert len(var_idx_list) == len(raw_input_ids)
-
-    x_pad = torch.full((seq_length, max_text_length), fill_value=fill_val, dtype=torch.long)
-    for i, cur_input in enumerate(raw_input_ids):
-        cur_length = len(cur_input)
-        if padding_side == 'right':
-            x_pad[i, :cur_length] = torch.tensor(cur_input)
-        else:
-            x_pad[i, -cur_length:] = torch.tensor(cur_input)
-            
-    return x_pad
-
-
-def prep_padded_input(x: List[torch.Tensor], max_length, padding_side='right', init_value=0):
-    batch_size = len(x)
-    x_pad = torch.full((batch_size, max_length), fill_value=init_value)
-    for i, x_cur in enumerate(x):
-        cur_length = x_cur.size(0)
-        if cur_length <= max_length:
-            if padding_side == 'right':
-                x_pad[i, :cur_length] = x_cur
-            else:
-                x_pad[i, -cur_length:] = x_cur
-        elif cur_length > max_length:
-            x_pad[i] = x_cur[:max_length]
-    
-    return x_pad
-
-
-def merge_struct_graphs(g_pdb, g_af):
-    if nx.is_empty(g_pdb):
-        return g_af
-    if nx.is_empty(g_af):
-        return g_pdb
-    
-    g_prot = nx.Graph()
-    # Add nodes
-    # for node, data in g_pdb.nodes(data=True):
-    #     g_prot.add_node(node, **data)
-    # for node, data in g_af.nodes(data=True):
-    #     if node in g_prot:
-    #         g_prot.nodes[node].update(data)
-    #     else:
-    #         g_prot.add_node(node, **data)
-    g_prot.add_nodes_from(g_pdb.nodes(data=True))
-    g_prot.add_edges_from(g_pdb.edges(data=True))
-
-    # for u, v, data in g_pdb.edges(data=True):
-    #     g_prot.add_edge(u, v, **data)
-
-    # Add edges from the second graph, merging distances
-    for u, v, data in g_af.edges(data=True):
-        if not g_prot.has_edge(u, v):
-            g_prot.add_edge(u, v, **data)
-    
-    return g_prot
-
-
 class PhenotypeDataset(Dataset):
     """
-    Dataset for Protein sequence.
+    Dataset for disease vocabulary.
 
     Args:
         data_dir: the diractory need contain pre-train datasets.
