@@ -1,16 +1,23 @@
-# DIVA: Disease-specific variant pathogenicity prediction with multimodal biomedical language models
+# DIVA: Disease-specific variant pathogenicity prediction using multimodal biomedical language models
 
-TODO: add method overview
+We released our predictions at [https://diva.yulab.org/](https://diva.yulab.org/)
 
-Please cite
-
-```
-Add bibtex citation here
-```
 
 ## Dependencies
 
-TODO: add dependencies
+```
+biopython==1.79
+numpy==1.24.4
+pandas==1.4.4
+PyYAML==6.0
+requests==2.32.5
+scikit_learn==1.3.2
+scipy==1.6.3
+torch==1.9.0
+torch==1.13.1+cu117
+transformers==4.28.1
+```
+See `requirements.txt`
 
 ## AlphaMissense data
 
@@ -21,8 +28,15 @@ TODO: add dependencies
 
 ### Model training
 
-### Trained models
+```
+python -u disease_model_pipeline.py --config ./configs/dis_var_config.yaml --tensorboard True
+```
 
-We provide our pretrained model at XXX. 
 
 ### Inference
+
+```
+python -u disease_inference.py --config ./configs/dis_var_pred_config.yaml
+```
+
+## Reference
