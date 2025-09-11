@@ -58,7 +58,6 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5,
     n_sample = 0
     n_pheno_sample = 0
     for batch_idx, batch_data in enumerate(data_loader):
-        # TODO: check batch_data structure
         if not opt_patho and not batch_data['variant']['infer_phenotype']:
             continue
         if batch_data['use_alphamissense']:
@@ -127,9 +126,6 @@ def train_epoch(model, optimizer, device, data_loader, diagnostic=None, w_l=0.5,
         n_sample += size
         n_pheno_sample += cur_pheno_size
 
-        if diagnostic and batch_idx == 5:
-            diagnostic.print_diagnostics()
-            break
     epoch_patho_loss = running_patho_loss / n_sample
     epoch_pheno_loss = running_pheno_loss / n_pheno_sample
     epoch_loss = w_l * epoch_patho_loss + epoch_pheno_loss
@@ -143,11 +139,10 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
     
     all_vars, all_scores, all_labels, all_pheno_scores = [], [], [], []
     all_pheno_pos_scores_seq, all_pheno_neg_scores_seq = [], []
-    # all_pheno_pos_scores_str, all_pheno_neg_scores_str = [], []
-    all_seq_pheno_emb_pred, all_str_pheno_emb_pred, all_struct_mask = [], [], []
+    all_seq_pheno_emb_pred = []
     all_pheno_emb_label, all_pos_pheno_descs, all_pos_pheno_idx = [], [], []
     all_patho_vars, all_pheno_emb_neg, all_pheno_neg_scores = [], [], []
-    all_similarities, seq_similarities, str_similarities = [], [], []
+    all_similarities = []
     adjusted_weights = []
 
     with torch.no_grad():
@@ -160,13 +155,8 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
             batch_labels = batch_data['variant']['label'].unsqueeze(1).to(device)
 
             # seq_pheno_emb, pos_emb_proj, neg_emb_proj, mlm_logits, logit_diff = model(seq_feat_dict, variant_data, desc_feat_dict)
-            logit_diff, batch_weights, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
+            logit_diff, batch_weights, seq_pheno_emb, pos_emb_proj, neg_emb_proj, _ = model(variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
             
-            if batch_data['variant']['infer_phenotype']:
-                var_struct_mask = variant_data['has_struct_context']
-            
-            # batch_patho_scores = torch.softmax(patho_logits, 1)[:, 1]
-            # batch_patho_scores = torch.sigmoid(logit_diff)
             batch_patho_scores = logit_diff
             if batch_patho_scores.ndim > 1:
                 batch_patho_scores = batch_patho_scores.squeeze(-1)
@@ -184,8 +174,6 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
                 pheno_score_neg_seq = model.calibrate_dis_score(torch.cosine_similarity(seq_pheno_emb, neg_emb_proj))
                 pheno_score_pos = pheno_score_pos_seq.clone()
                 pheno_score_neg = pheno_score_neg_seq.clone()
-
-                all_struct_mask.extend(var_struct_mask)
 
                 all_pheno_scores.append(pheno_score_pos.detach().cpu().numpy())
                 all_pheno_neg_scores.append(pheno_score_neg.detach().cpu().numpy())
@@ -230,14 +218,10 @@ def eval_epoch(model, device, data_loader, pheno_vocab_emb, w_l=0.5):
                          'neg_score': all_pheno_neg_scores,
                          'similarities': np.concatenate(all_similarities, 0)}
     
-    # if eval_topk:
-    #     topk_results = {'similarities': np.concatenate(all_similarities, 0),
-    #                     'topk_scores': np.concatenate(all_topk_scores, 0),
-    #                     'topk_indices': np.concatenate(all_topk_indices, 0)}
     return all_labels, all_scores, all_vars, all_weights, all_pheno_results
 
 
-def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=False, compute_tsne=False, use_struct=False):
+def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=False, compute_tsne=False):
     if isinstance(save_path, str):
         save_path = Path(save_path)
 
@@ -247,10 +231,7 @@ def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=Fals
                                     #  'neg_phenotype': pheno_result_dict['neg_pheno_desc'], 
                                      'pos_score': pheno_result_dict['pos_score'],
                                      'neg_score': pheno_result_dict['neg_score']})
-    # if use_struct:
-    #     for key in ['pos_score_seq', 'neg_score_seq', 'pos_score_str', 'neg_score_str', 'use_struct_neighbor']:
-    #         df_pheno_results[key] = pheno_result_dict[key]
-
+    
     if compute_tsne:
         pred_emb_tsne = compute_tsne(pheno_result_dict['seq_pred_emb'])
         df_pheno_results = pd.concat([df_pheno_results, pd.DataFrame(pred_emb_tsne)], axis=1).rename(columns={0: 'tsne1', 1: 'tsne2'})
@@ -259,10 +240,6 @@ def save_pheno_results(pheno_result_dict, save_path, epoch, split, save_emb=Fals
     if save_emb:
         # pd.DataFrame(pheno_result_dict['pred_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_pred_emb.tsv', sep='\t', index=False, header=False)
         np.save(save_path / f'ep{epoch}_{split}_pheno_seq_pred_emb.npy', pheno_result_dict['seq_pred_emb'])
-        # if use_struct:
-        #     np.save(save_path / f'ep{epoch}_{split}_pheno_str_pred_emb.npy', pheno_result_dict['str_pred_emb'])
-        # pd.DataFrame(pheno_result_dict['neg_emb']).to_csv(save_path / f'ep{epoch}_{split}_pheno_neg_emb.tsv', sep='\t', index=False, header=False)
-
 
 def main():
     args = parse_args()
@@ -318,18 +295,6 @@ def main():
         if prot.find('-') >= 0:
             prot2desc[prot] = ' '.join([desc, prot2desc.get(prot.split('-')[0], '')]).strip()
 
-    prot2comb_seq = None
-    if data_configs['use_struct_vocab']:
-        if os.path.exists(data_configs['struct_seq_file']):
-            with open(data_configs['struct_seq_file']) as f_js:
-                prot2comb_seq = json.load(f_js)
-        else:
-            data_configs['use_struct_vocab'] = False
-
-    if data_configs['use_struct_neighbor']:
-        if not os.path.exists(data_configs['pdb_graph_dir']) and not os.path.exists(data_configs['af_graph_dir']):
-            data_configs['use_struct_neighbor'] = False
-
     data_configs['seq_dict'] = prot2seq
     data_configs['protein_info_dict'] = prot2desc
     
@@ -371,14 +336,9 @@ def main():
                                          protein_tokenizer=protein_tokenizer, 
                                          text_tokenizer=text_tokenizer,
                                          pheno_desc_dict=pheno_desc_dict,
-                                        #  use_struct_neighbor=data_configs['use_struct_neighbor'],
-                                         comb_seq_dict=prot2comb_seq,
                                          afmis_root=afmis_root,
                                          access_to_context=True)
-    # if data_configs['use_struct_neighbor']:
-    #     logging.info('Average structural neighbors per variant in training: {:.2f}'.format(train_dataset.average_struct_neighbors()))
-    # var_db = pd.read_csv(data_root / data_configs['input_file']['train']).query('label == 1').\
-    #     drop_duplicates([data_configs['pid_col'], data_configs['pos_col'], data_configs['pheno_col']])
+    
     prot_var_cache = train_dataset.get_protein_cache()
     val_dataset = ProteinVariantDatset(**data_configs, 
                                          variant_file=data_configs['input_file']['val'], 
@@ -390,14 +350,9 @@ def main():
                                          pheno_desc_dict=pheno_desc_dict,
                                         #  var_db=var_db,
                                          prot_var_cache=prot_var_cache,
-                                        #  use_struct_neighbor=data_configs['use_struct_neighbor'],
-                                         comb_seq_dict=prot2comb_seq,
                                          afmis_root=afmis_root,
                                          access_to_context=False)  # context variants in validation set not visible to each other
     
-    # if data_configs['use_struct_neighbor']:
-    #     logging.info('Average structural neighbors per variant in validation: {:.2f}'.format(val_dataset.average_struct_neighbors()))
-
     prot_var_cache = val_dataset.get_protein_cache()
     
     test_dataset = ProteinVariantDatset(**data_configs, 
@@ -410,13 +365,9 @@ def main():
                                          pheno_desc_dict=pheno_desc_dict,
                                         #  var_db=var_db,
                                          prot_var_cache=prot_var_cache,
-                                        #  use_struct_neighbor=data_configs['use_struct_neighbor'],
-                                         comb_seq_dict=prot2comb_seq,
                                          afmis_root=afmis_root,
                                          access_to_context=False)
-    if data_configs['use_struct_neighbor']:
-        logging.info('Average structural neighbors per variant in test set: {:.2f}'.format(test_dataset.average_struct_neighbors()))
-
+    
     # Initilize pretrained encoders:
     # seq_encoder = EsmForMaskedLM.from_pretrained(model_args['protein_lm_path'])
     seq_encoder = AutoModelForMaskedLM.from_pretrained(model_args['protein_lm_path'])
@@ -427,21 +378,21 @@ def main():
                                                 max_protein_length=data_configs['max_protein_seq_length'], 
                                                 half_window_size=data_configs['half_window_size'],
                                                 context_agg_opt=data_configs['context_agg_option'], use_pheno_desc=data_configs['use_pheno_desc'], 
-                                                pheno_desc_dict=pheno_desc_dict, use_struct_vocab=data_configs['use_struct_vocab'], use_alphamissense=data_configs['use_alphamissense'])
+                                                pheno_desc_dict=pheno_desc_dict, use_alphamissense=data_configs['use_alphamissense'])
     train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], collate_fn=train_collator, shuffle=True)
     val_collator = ProteinVariantDataCollator(val_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
                                               use_prot_desc=True, truncate_protein=data_configs['truncate_protein'], 
                                               max_protein_length=data_configs['max_protein_seq_length'], 
                                               half_window_size=data_configs['half_window_size'],
                                               context_agg_opt=data_configs['context_agg_option'], use_pheno_desc=data_configs['use_pheno_desc'], 
-                                              pheno_desc_dict=pheno_desc_dict, use_struct_vocab=data_configs['use_struct_vocab'], use_alphamissense=data_configs['use_alphamissense'])
+                                              pheno_desc_dict=pheno_desc_dict, use_alphamissense=data_configs['use_alphamissense'])
     validation_loader = DataLoader(val_dataset, batch_size=config['batch_size'], collate_fn=val_collator)
     test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
                                                use_prot_desc=True, truncate_protein=data_configs['truncate_protein'], 
                                                max_protein_length=data_configs['max_protein_seq_length'], 
                                                half_window_size=data_configs['half_window_size'],
                                                context_agg_opt=data_configs['context_agg_option'], use_pheno_desc=data_configs['use_pheno_desc'], 
-                                               pheno_desc_dict=pheno_desc_dict, use_struct_vocab=data_configs['use_struct_vocab'], use_alphamissense=data_configs['use_alphamissense'])
+                                               pheno_desc_dict=pheno_desc_dict, use_alphamissense=data_configs['use_alphamissense'])
     test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
 
     unfreeze_params = []
@@ -479,8 +430,7 @@ def main():
                                 init_margin=model_args['margin'],
                                 nce_loss_temp=model_args['nce_loss_temp'],
                                 freq_norm_factor=model_args['freq_norm_factor'],
-                                seq_weight_scaler=model_args['seq_weight_scaler'],
-                                use_struct_vocab=data_configs['use_struct_vocab'],
+                                # seq_weight_scaler=model_args['seq_weight_scaler'],
                                 use_alphamissense=data_configs['use_alphamissense'],
                                 adjust_logits=model_args['adjust_logits'],
                                 device=device)

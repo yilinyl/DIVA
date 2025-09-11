@@ -257,21 +257,6 @@ class DiseaseVariantEncoder(nn.Module):
             pheno_embs = self.proj_head(pheno_embs)
                     
         return pheno_embs
-
-    def contrast_loss(self, seq_var_emb, pos_emb, neg_emb, struct_var_emb=None, struct_mask=None):
-        seq_contrast_loss = self.contrast_loss_fn(seq_var_emb, pos_emb, neg_emb)
-        if isinstance(struct_var_emb, type(None)):
-            return seq_contrast_loss.mean(), None, seq_contrast_loss.mean()
-        struct_contrast_loss = self.contrast_loss_fn(struct_var_emb, pos_emb[struct_mask], neg_emb[struct_mask])
-        combine_contrast_loss = seq_contrast_loss.clone()
-        seq_weight = torch.sigmoid(self.alpha) * self.seq_weight_scaler
-        # combine_contrast_loss[struct_mask] = torch.sigmoid(self.alpha) * combine_contrast_loss[struct_mask] + (1 - torch.sigmoid(self.alpha)) * struct_contrast_loss
-        combine_contrast_loss[struct_mask] = seq_weight * combine_contrast_loss[struct_mask] + (1 - seq_weight) * struct_contrast_loss
-
-        return seq_contrast_loss.mean(), struct_contrast_loss.mean(), combine_contrast_loss.mean()
-
-        # return self.cos_sim_loss_fn(var_emb, pos_emb, targets[0]) + \
-        #     self.cos_sim_loss_fn(var_emb, neg_emb, targets[1])
     
     def contrast_nce_loss(self, var_emb, pos_emb, neg_emb, temperature=0.07):
         sim_pos = torch.cosine_similarity(var_emb, pos_emb) / temperature

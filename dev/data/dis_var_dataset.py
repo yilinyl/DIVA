@@ -182,11 +182,6 @@ class ProteinVariantDatset(Dataset):
         mode='train',  # choose from {'train', 'eval'}
         binary_inference_only=False,  # infer pathogenic vs benign only
         update_var_cache=True,  # if True, current variant (disease) will be visible to other variants (set to False at inference)
-        use_struct_neighbor=False,
-        max_struct_dist=20,
-        af_graph_dir='',
-        pdb_graph_dir='',
-        use_struct_vocab=False,
         comb_seq_dict=None,  # combined sequence (residue+struct from foldseek)
         access_to_context=False,
         exclude_prots=None,
@@ -233,13 +228,6 @@ class ProteinVariantDatset(Dataset):
         self.binary_inference_only = binary_inference_only
         self.update_var_cache = update_var_cache
         self.has_phenotype_label = False
-        self.use_struct_neighbor = use_struct_neighbor
-        self.max_struct_dist = max_struct_dist
-        if self.use_struct_neighbor:
-            self.af_graph_root = Path(af_graph_dir)
-            self.pdb_graph_root = Path(pdb_graph_dir)
-        self.num_struct_neighbors = []
-        self.use_struct_vocab = use_struct_vocab
         self.comb_seq_dict = comb_seq_dict
         self.access_to_context = access_to_context
 
@@ -323,20 +311,6 @@ class ProteinVariantDatset(Dataset):
                     prot_desc = self.text_tokenizer.unk_token
                     if self.use_protein_desc:
                         prot_desc = self.protein_info_dict.get(uprot, self.text_tokenizer.unk_token)
-            
-            if self.use_struct_vocab and self.comb_seq_dict:
-                try:
-                    comb_seq = self.comb_seq_dict[uprot]
-                except KeyError:
-                    # logging.warning(f'No structure-aware sequence for {uprot}')
-                    comb_seq = ''.join([f'{s}#' for s in seq])  # unknown structure
-                    self.comb_seq_dict[uprot] = comb_seq
-                struct_seq = comb_seq[1::2]
-                try:
-                    assert len(seq) == len(struct_seq)
-                except AssertionError:
-                    logging.warning(f'Inconsistent sequence lengths for structure & primary sequence ({uprot})')
-                    continue
             
             prot_afmis_dict = dict()
             if self.use_alphamissense:
@@ -446,9 +420,6 @@ class ProteinVariantDatset(Dataset):
                 ref_aa_cur = record['REF_AA']
                 alt_aa_cur = record['ALT_AA']
 
-                if self.use_struct_vocab:
-                    ref_aa_cur = record['REF_AA'] + struct_seq[var_pos_idx]
-                    alt_aa_cur = record['ALT_AA'] + '#'  # mask structure for variant
                 ref_aa.append(ref_aa_cur)
                 alt_aa.append(alt_aa_cur)
                 cur_var_name = '{}_{}_{}/{}'.format(uprot, record[pos_col], record['REF_AA'], record['ALT_AA'])
@@ -477,11 +448,7 @@ class ProteinVariantDatset(Dataset):
                 if self.use_alphamissense:
                     cur_variant['afmis_score'] = prot_afmis_dict.get(cur_var_name, -1)
                     cur_variant['afmis_mask'] = int(cur_variant['afmis_score'] == -1)
-                # if self.use_struct_neighbor:
-                #     nx.set_node_attributes(g_prot, values={var_pos_idx: {'pheno_idx': pheno_idx}})
-                #     var_struct_graph = g_prot.edge_subgraph(g_prot.in_edges(var_pos_idx))
-                #     nx.set_node_attributes(var_struct_graph, {var_pos_idx: {'pheno_idx': self.text_tokenizer.mask_token_id}})
-                #     cur_variant['var_struct_graph'] = dgl.from_networkx(var_struct_graph, node_attrs=['pheno_idx'], edge_attrs=['distance'])
+                
                 self.variant_data.append(cur_variant)
                 self.disease_known.append(pos_pheno_is_known)
                 cur_indice += 1
@@ -499,12 +466,6 @@ class ProteinVariantDatset(Dataset):
             else:
                 cur_protein['context_var_idx'] = cache_context_var_idx
 
-            if self.use_struct_vocab:
-                cur_protein['comb_seq'] = comb_seq
-            
-            # if self.use_struct_neighbor:
-            #     cur_protein['struct_graph'] = g_prot_csr
-
             self.protein_variants[uprot] = cur_protein
             if self.update_var_cache:
                 self.prot_var_cache[uprot] = {'seq': seq,
@@ -515,8 +476,8 @@ class ProteinVariantDatset(Dataset):
                                               }
                 # self.prot_var_cache.update(self.protein_variants)
     
-    def average_struct_neighbors(self):
-        return np.mean(self.num_struct_neighbors)
+    # def average_struct_neighbors(self):
+    #     return np.mean(self.num_struct_neighbors)
 
     def encode_protein_seq(self, seq):
         aa_list = list(seq)
@@ -579,8 +540,6 @@ class ProteinVariantDataCollator:
     max_pheno_desc_length: int = 512
     mode: str = 'train'
     has_phenotype_label: bool = True
-    use_struct_vocab: bool = False
-    use_struct_neighbor: bool = False
     use_alphamissense: bool = False
     include_unknown: bool = False
     context_agg_opt: str = 'concat'
@@ -601,7 +560,6 @@ class ProteinVariantDataCollator:
                                            use_pheno_desc=self.use_pheno_desc, pheno_desc_dict=self.pheno_desc_dict, 
                                            truncate_protein=self.truncate_protein, max_protein_length=self.max_protein_length, max_pheno_desc_length=self.max_pheno_desc_length, 
                                            half_window_size=self.half_window_size, mode=self.mode, has_phenotype_label=self.has_phenotype_label,
-                                           use_struct_vocab=self.use_struct_vocab, use_struct_neighbor=self.use_struct_neighbor, 
                                            use_alphamissense=self.use_alphamissense, include_unknown=self.include_unknown, context_agg_opt=self.context_agg_opt)
 
         return batch
@@ -797,9 +755,7 @@ def protein_variant_collate_fn(
     mode: str = 'train',  # {'train', 'eval'}
     pheno_desc_dict: Dict[str, str] = None,
     has_phenotype_label: bool = True,
-    use_struct_vocab: bool = False,
     foldseek_vocab: str = "pynwrqhgdlvtmfsaeikc#",
-    use_struct_neighbor: bool = False,
     use_alphamissense: bool = False,
     include_unknown: bool = False,
     context_agg_opt: str = 'concat'  # concat: concatenate in-context phenotypes; count: aggregate by count
@@ -813,8 +769,6 @@ def protein_variant_collate_fn(
     # protein sequence
     seq_lst = [protein_data[pid]['seq'] for pid in prot_unique]
     prot_lengths = [len(seq) for seq in seq_lst]
-    if use_struct_vocab:
-        seq_lst = [protein_data[pid]['comb_seq'] for pid in prot_unique]
     patho_var_prot_idx = []  # index of protein in the batch for pathogenic variants
     prot_idx_all = []
     var_idx_all = []
@@ -855,12 +809,9 @@ def protein_variant_collate_fn(
         else:
             pos_pheno_descs = elem['pos_pheno_desc']
         # neg_pheno_descs = elem['neg_pheno_desc']
-        if use_struct_vocab:
-            ref_aa_idx.append(protein_tokenizer.convert_tokens_to_ids(elem['ref_aa'][0] + foldseek_vocab[0]))  # start index (will sum over all possible struct)
-            alt_aa_idx.append(protein_tokenizer.convert_tokens_to_ids(elem['alt_aa'][0] + foldseek_vocab[0]))
-        else:
-            ref_aa_idx.append(protein_tokenizer.convert_tokens_to_ids(elem['ref_aa']))
-            alt_aa_idx.append(protein_tokenizer.convert_tokens_to_ids(elem['alt_aa']))
+        
+        ref_aa_idx.append(protein_tokenizer.convert_tokens_to_ids(elem['ref_aa']))
+        alt_aa_idx.append(protein_tokenizer.convert_tokens_to_ids(elem['alt_aa']))
 
         var_names_all.append(elem['id'])
         var_idx = elem['var_idx']
@@ -877,10 +828,7 @@ def protein_variant_collate_fn(
         if truncate_protein:
             start, end = get_optimal_window(var_idx+1, cur_length, max_protein_length)
         offset_all.append(start)
-        if use_struct_vocab:
-            masked_seq_tokens[var_idx] = '#' + elem['ref_aa'][-1]  # mask AA type, keep original struct token
-        else:
-            masked_seq_tokens[var_idx] = protein_tokenizer.mask_token
+        masked_seq_tokens[var_idx] = protein_tokenizer.mask_token
         alt_seq_tokens = masked_seq_tokens[:var_idx] + [elem['alt_aa']] + masked_seq_tokens[var_idx+1: ]
         masked_seq_cur = ''.join(masked_seq_tokens[start:end])
         var_seq_cur = ''.join(alt_seq_tokens[start:end])
@@ -958,8 +906,7 @@ def protein_variant_collate_fn(
             # 'n_variants': [len(elem['alt_aa']) for elem in batch_data_raw],
             'pos_pheno_is_known': torch.tensor(pos_pheno_known_vec),
             'prot_idx': prot_idx_all,
-            'use_struct': use_struct_neighbor and any(has_struct_context_all),
-            'has_struct_context': has_struct_context_all,
+            
             'var_seq_input_feat': {
                 'input_ids': var_seq_tokenized['input_ids'],  # batch_size x max_length
                 'attention_mask': var_seq_tokenized['attention_mask'],  # 1 if token should be attended to
@@ -995,8 +942,6 @@ def protein_variant_collate_fn(
             'patho_var_prot_idx': patho_var_prot_idx,
             'pos_pheno_avail': pos_pheno_known_vec,
             'prot_idx': prot_idx_all,
-            'use_struct': use_struct_neighbor and any(has_struct_context_all),
-            'has_struct_context': has_struct_context_all,
             'var_seq_input_feat': {
                 'input_ids': var_seq_tokenized['input_ids'],  # batch_size x max_length
                 'attention_mask': var_seq_tokenized['attention_mask'],  # 1 if token should be attended to
