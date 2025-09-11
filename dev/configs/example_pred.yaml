@@ -1,0 +1,58 @@
+# Example for running prediction
+exp_dir: ./scratch/
+experiment: pred_example
+mode: inference
+device: cuda:0
+batch_size: 16
+pheno_batch_size: 16
+
+model_path: ../checkpoints/best_model.pt
+init_lr: 0.001
+
+model:
+  type: esm
+  # protein_lm_path: facebook/esm2_t12_35M_UR50D  # ESM2 480
+  protein_lm_path: facebook/esm2_t30_150M_UR50D  # ESM2 640
+  # protein_lm_path: facebook/esm2_t33_650M_UR50D  # ESM2 1280
+  text_lm_path: microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext  # PubMedBERT
+  frozen_bert: True
+  # w_l: 0.001  # weight applied to pathogenicity loss
+  hidden_size: 512
+  # margin: 0.25  # for cosine
+  topk: [1, 5, 10, 20, 50, 100]
+  dist_fn_name: cosine_sigmoid
+  calibration_fn_name: none  # calibration for disease score
+  margin: 0.25  # margin for contrast loss
+  adjust_logits: True
+
+dataset:
+  task_name: var_pred
+  data_dir: ../example_data
+  seq_fasta: ["../example_data/example.fasta"]
+  prot_meta_data: ["../example_data/protein_desc.txt"]
+  input_file:
+    train: example_context_vars.csv
+    test: 
+        - example_vars.csv  
+  phenotype_vocab_file: ../example_data/example_disease_vocab.txt
+  phenotype_desc_file: ../example_data/example_disease_desc.json
+  disease_name_map_file: ''
+  use_pheno_desc: True
+  context_agg_option: concat
+  update_cache: True
+  variant_cache_file: ../example_data/var_cache.json
+  pid_col: UniProt
+  pos_col: Protein_position
+  label_col: label
+  pheno_col_train: phenotype
+  pheno_col_pred: phenotype
+  load_variant: True
+  use_protein_desc: True
+  max_protein_seq_length: 1024
+  # max_phenotype_length: null
+  use_protein_desc: True
+  truncate_protein: True
+  binary_inference_only: False
+  use_alphamissense: True
+  alphamissense_score_dir: '/home/yl986/data/variant_data/AlphaMissense/substitutions_by_prot'  
+

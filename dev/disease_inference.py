@@ -88,7 +88,7 @@ def inference(model, device, data_loader, pheno_vocab_emb, topk=None):
                 variant_data[key] = load_input_to_device(variant_data[key], device=device)
             batch_labels = batch_data['variant']['label'].unsqueeze(1).to(device)
 
-            logit_diff, batch_weights, seq_pheno_emb, pos_emb_proj, neg_emb_proj, struct_pheno_emb = model(variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
+            logit_diff, batch_weights, seq_pheno_emb, pos_emb_proj, neg_emb_proj, _ = model(variant_data, desc_feat_dict)  # seq_pheno_emb: (pheno_vars_in_batch, hidden_size)
             size = batch_labels.size()[0]
             cur_pheno_size = (batch_labels != 0).sum().item()
 
@@ -269,13 +269,6 @@ if __name__ == '__main__':
             prot2desc[prot] = ' '.join([desc, prot2desc.get(prot.split('-')[0], '')]).strip()
 
     prot2comb_seq = None
-    if data_configs['use_struct_vocab']:
-        if os.path.exists(data_configs['struct_seq_file']):
-            with open(data_configs['struct_seq_file']) as f_js:
-                prot2comb_seq = json.load(f_js)
-        else:
-            data_configs['use_struct_vocab'] = False
-
     data_configs['seq_dict'] = prot2seq
     data_configs['protein_info_dict'] = prot2desc
 
@@ -352,7 +345,6 @@ if __name__ == '__main__':
                                   calibration_fn_name=model_args['calibration_fn_name'],
                                   dist_fn_name=model_args['dist_fn_name'],
                                   init_margin=model_args['margin'],
-                                  use_struct_vocab=data_configs['use_struct_vocab'],
                                   use_alphamissense=data_configs['use_alphamissense'],
                                   adjust_logits=model_args['adjust_logits'],
                                   device=device)
@@ -392,7 +384,7 @@ if __name__ == '__main__':
         test_collator = ProteinVariantDataCollator(test_dataset.get_protein_data(), protein_tokenizer, text_tokenizer, phenotype_vocab=phenotype_vocab, 
                                                use_prot_desc=True, truncate_protein=data_configs['truncate_protein'], 
                                                max_protein_length=data_configs['max_protein_seq_length'],
-                                               use_struct_vocab=data_configs['use_struct_vocab'], use_alphamissense=data_configs['use_alphamissense'],
+                                               use_alphamissense=data_configs['use_alphamissense'],
                                                use_pheno_desc=data_configs['use_pheno_desc'], pheno_desc_dict=pheno_desc_dict)
         test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], collate_fn=test_collator)
         # train_labels, train_scores, train_vars, train_pheno_results = inference(model, device, train_loader, pheno_vocab_emb=all_pheno_embs, topk=100)

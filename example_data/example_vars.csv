@@ -1,0 +1,101 @@
+CHR,POS,Gene,REF_N,ALT_N,REF_AA,ALT_AA,UniProt,Protein_position,prot_var_id,Pathogenicity,phenotype,prot_length,label
+9,21970955,CDKN2A,C,A,G,V,P42771,135,P42771_135_G/V,VUS,familial melanoma,156,-1
+16,2074296,TSC2,A,G,I,V,P49815,818,P49815_818_I/V,VUS,tuberous sclerosis 2,1807,-1
+16,2079060,TSC2,A,T,S,C,P49815,999,P49815_999_S/C,VUS,tuberous sclerosis 2,1807,-1
+16,2086296,TSC2,C,T,P,L,P49815,1589,P49815_1589_P/L,VUS,tuberous sclerosis 2,1807,-1
+17,80112603,GAA,C,T,R,C,P10253,594,P10253_594_R/C,VUS,"glycogen storage disease, type ii",952,-1
+1,169541821,F5,T,C,D,G,P12259,1090,P12259_1090_D/G,VUS,factor v deficiency,2224,-1
+1,169541225,F5,A,G,F,L,P12259,1289,P12259_1289_F/L,VUS,budd-chiari syndrome,2224,-1
+1,53210261,CPT2,C,T,P,L,P23786,196,P23786_196_P/L,VUS,carnitine palmitoyltransferase ii deficiency,658,-1
+11,2445117,KCNQ1,C,T,P,S,P51787,7,P51787_7_P/S,VUS,congenital long qt syndrome,676,-1
+11,2588838,KCNQ1,C,G,D,E,P51787,459,P51787_459_D/E,VUS,long qt syndrome,676,-1
+13,51934835,ATP7B,C,T,R,Q,P35670,1440,P35670_1440_R/Q,VUS,wilson disease,1465,-1
+14,23433609,MYH7,C,T,D,N,P12883,42,P12883_42_D/N,VUS,cardiomyopathy,1935,-1
+14,23431838,MYH7,T,G,T,P,P12883,188,P12883_188_T/P,VUS,hypertrophic cardiomyopathy,1935,-1
+14,23431766,MYH7,C,T,G,S,P12883,212,P12883_212_G/S,VUS,hypertrophic cardiomyopathy,1935,-1
+14,23424771,MYH7,C,T,A,T,P12883,893,P12883_893_A/T,VUS,cardiomyopathy,1935,-1
+14,23422276,MYH7,C,T,R,Q,P12883,1050,P12883_1050_R/Q,VUS,cardiomyopathy,1935,-1
+14,23415168,MYH7,G,A,R,W,P12883,1796,P12883_1796_R/W,VUS,hypertrophic cardiomyopathy,1935,-1
+14,73186853,PSEN1,G,A,V,I,P49768,161,P49768_161_V/I,VUS,"acne inversa, familial, 3",467,-1
+15,65077792,KBTBD13,G,C,R,P,C9JR72,326,C9JR72_326_R/P,VUS,nemaline myopathy 6,458,-1
+15,72348082,HEXA,C,A,D,Y,P06865,347,P06865_347_D/Y,VUS,tay-sachs disease,529,-1
+15,48644727,FBN1,C,T,V,M,P35555,15,P35555_15_V/M,VUS,marfan syndrome,2871,-1
+15,48596366,FBN1,C,T,S,N,P35555,152,P35555_152_S/N,VUS,familial thoracic aortic aneurysm and aortic dissection,2871,-1
+15,48515401,FBN1,C,A,R,L,P35555,485,P35555_485_R/L,VUS,familial thoracic aortic aneurysm and aortic dissection,2871,-1
+15,48490040,FBN1,C,G,E,Q,P35555,965,P35555_965_E/Q,VUS,familial thoracic aortic aneurysm and aortic dissection,2871,-1
+15,48488211,FBN1,A,C,L,R,P35555,1080,P35555_1080_L/R,VUS,familial thoracic aortic aneurysm and aortic dissection,2871,-1
+15,48487428,FBN1,T,C,E,G,P35555,1116,P35555_1116_E/G,VUS,marfan syndrome,2871,-1
+15,48483871,FBN1,C,T,R,K,P35555,1262,P35555_1262_R/K,VUS,familial thoracic aortic aneurysm and aortic dissection,2871,-1
+15,48472574,FBN1,C,T,S,N,P35555,1438,P35555_1438_S/N,VUS,marfan syndrome,2871,-1
+15,48437817,FBN1,C,G,K,N,P35555,2088,P35555_2088_K/N,VUS,mass syndrome,2871,-1
+15,48288468,SLC12A1,G,C,R,T,Q13621,942,Q13621_942_R/T,VUS,bartter disease type 1,1099,-1
+15,71812430,NR2E3,G,C,E,D,Q9Y5X4,222,Q9Y5X4_222_E/D,VUS,enhanced s-cone syndrome,410,-1
+16,3243419,MEFV,C,G,V,L,O15553,690,O15553_690_V/L,VUS,familial mediterranean fever,781,-1
+16,2048694,TSC2,A,G,N,D,P49815,27,P49815_27_N/D,VUS,tuberous sclerosis 2,1807,-1
+16,2054399,TSC2,C,T,T,I,P49815,147,P49815_147_T/I,VUS,tuberous sclerosis 2,1807,-1
+16,2056704,TSC2,C,G,P,A,P49815,237,P49815_237_P/A,VUS,tuberous sclerosis 2,1807,-1
+16,2057174,TSC2,G,T,D,Y,P49815,282,P49815_282_D/Y,VUS,tuberous sclerosis 2,1807,-1
+16,2060756,TSC2,G,C,Q,H,P49815,354,P49815_354_Q/H,VUS,tuberous sclerosis 2,1807,-1
+16,2061971,TSC2,A,G,Y,C,P49815,407,P49815_407_Y/C,VUS,tuberous sclerosis 2,1807,-1
+16,2064389,TSC2,A,G,T,A,P49815,521,P49815_521_T/A,VUS,tuberous sclerosis 2,1807,-1
+16,2065529,TSC2,G,T,R,L,P49815,537,P49815_537_R/L,VUS,tuberous sclerosis 2,1807,-1
+16,2071529,TSC2,T,C,L,P,P49815,620,P49815_620_L/P,VUS,tuberous sclerosis 2,1807,-1
+16,2074249,TSC2,G,C,S,T,P49815,802,P49815_802_S/T,VUS,tuberous sclerosis 2,1807,-1
+16,2074289,TSC2,G,T,M,I,P49815,815,P49815_815_M/I,VUS,tuberous sclerosis 2,1807,-1
+16,2075886,TSC2,C,A,P,H,P49815,878,P49815_878_P/H,VUS,tuberous sclerosis 2,1807,-1
+16,2076093,TSC2,G,A,A,T,P49815,889,P49815_889_A/T,VUS,tuberous sclerosis 2,1807,-1
+16,2079091,TSC2,C,T,A,V,P49815,1009,P49815_1009_A/V,VUS,tuberous sclerosis 2,1807,-1
+16,2080197,TSC2,G,T,V,L,P49815,1144,P49815_1144_V/L,VUS,tuberous sclerosis 2,1807,-1
+16,2080282,TSC2,G,A,G,D,P49815,1172,P49815_1172_G/D,VUS,tuberous sclerosis 2,1807,-1
+16,2081724,TSC2,C,G,T,R,P49815,1247,P49815_1247_T/R,VUS,tuberous sclerosis 2,1807,-1
+16,2083709,TSC2,A,G,M,V,P49815,1300,P49815_1300_M/V,VUS,hereditary cancer-predisposing syndrome,1807,-1
+16,2088237,TSC2,A,G,Q,R,P49815,1724,P49815_1724_Q/R,VUS,tuberous sclerosis 2,1807,-1
+16,2088267,TSC2,A,T,D,V,P49815,1734,P49815_1734_D/V,VUS,tuberous sclerosis 2,1807,-1
+17,7676395,TP53,T,A,E,V,P04637,28,P04637_28_E/V,VUS,hereditary cancer-predisposing syndrome,393,-1
+17,7676158,TP53,G,C,P,A,P04637,71,P04637_71_P/A,VUS,li-fraumeni syndrome,393,-1
+17,7676121,TP53,G,T,A,E,P04637,83,P04637_83_A/E,VUS,hereditary cancer-predisposing syndrome,393,-1
+17,7676106,TP53,G,A,A,V,P04637,88,P04637_88_A/V,VUS,li-fraumeni syndrome,393,-1
+17,7676052,TP53,C,A,S,I,P04637,106,P04637_106_S/I,VUS,hereditary cancer-predisposing syndrome,393,-1
+17,7675217,TP53,T,A,K,M,P04637,132,P04637_132_K/M,VUS,carcinoma of esophagus,393,-1
+17,7675218,TP53,T,G,K,Q,P04637,132,P04637_132_K/Q,VUS,squamous cell lung carcinoma,393,-1
+17,7675191,TP53,A,G,C,R,P04637,141,P04637_141_C/R,VUS,acute myeloid leukemia,393,-1
+17,7675076,TP53,T,A,H,L,P04637,179,P04637_179_H/L,VUS,gallbladder carcinoma,393,-1
+17,7674947,TP53,A,T,I,N,P04637,195,P04637_195_I/N,VUS,multiple myeloma,393,-1
+17,7674884,TP53,A,C,V,G,P04637,216,P04637_216_V/G,VUS,squamous cell lung carcinoma,393,-1
+17,7674242,TP53,A,C,S,A,P04637,241,P04637_241_S/A,VUS,transitional cell carcinoma of the bladder,393,-1
+17,7673749,TP53,T,C,K,E,P04637,291,P04637_291_K/E,VUS,li-fraumeni syndrome,393,-1
+17,7670655,TP53,C,A,D,Y,P04637,352,P04637_352_D/Y,VUS,hereditary cancer-predisposing syndrome,393,-1
+17,80105884,GAA,G,A,G,S,P10253,228,P10253_228_G/S,VUS,"glycogen storage disease, type ii",952,-1
+17,80107661,GAA,C,T,P,L,P10253,266,P10253_266_P/L,VUS,"glycogen storage disease, type ii",952,-1
+17,80107865,GAA,C,A,H,Q,P10253,308,P10253_308_H/Q,VUS,"glycogen storage disease, type ii",952,-1
+17,80108766,GAA,C,T,R,W,P10253,422,P10253_422_R/W,VUS,"glycogen storage disease, type ii",952,-1
+17,80111019,GAA,G,A,V,M,P10253,544,P10253_544_V/M,VUS,"glycogen storage disease, type ii",952,-1
+17,42337486,STAT3,A,G,I,T,P40763,249,P40763_249_I/T,VUS,hyper-ige recurrent infection syndrome 1,770,-1
+19,11113675,LDLR,T,C,V,A,P01130,500,P01130_500_V/A,VUS,"hypercholesterolemia, familial, 1",860,-1
+2,165313679,SCN2A,C,A,T,K,Q99250,365,Q99250_365_T/K,VUS,intellectual disability,2005,-1
+2,165344645,SCN2A,A,C,T,P,Q99250,885,Q99250_885_T/P,VUS,"seizures, benign familial infantile, 3",2005,-1
+3,33072696,GLB1,C,T,M,I,P16278,31,P16278_31_M/I,VUS,gm1 gangliosidosis type 3,677,-1
+3,33053504,GLB1,G,T,P,H,P16278,260,P16278_260_P/H,VUS,"mucopolysaccharidosis, mps-iv-b",677,-1
+3,33051976,GLB1,A,G,L,P,P16278,274,P16278_274_L/P,VUS,"mucopolysaccharidosis, mps-iv-b",677,-1
+3,33046136,GLB1,C,T,R,Q,P16278,351,P16278_351_R/Q,VUS,"mucopolysaccharidosis, mps-iv-b",677,-1
+3,33024295,GLB1,G,A,P,S,P16278,367,P16278_367_P/S,VUS,infantile gm1 gangliosidosis,677,-1
+3,33021576,GLB1,T,C,Q,R,P16278,408,P16278_408_Q/R,VUS,gm1 gangliosidosis,677,-1
+3,38633202,SCN5A,A,G,S,P,Q14524,36,Q14524_36_S/P,VUS,brugada syndrome,2016,-1
+3,38597925,SCN5A,C,T,R,H,Q14524,689,Q14524_689_R/H,VUS,long qt syndrome,2016,-1
+3,38581235,SCN5A,C,G,R,P,Q14524,975,Q14524_975_R/P,VUS,brugada syndrome,2016,-1
+3,38550688,SCN5A,G,A,T,I,Q14524,1894,Q14524_1894_T/I,VUS,cardiac arrhythmia,2016,-1
+5,36986289,NIPBL,A,G,K,E,Q6KC79,1037,Q6KC79_1037_K/E,VUS,cornelia de lange syndrome 1,2804,-1
+5,37020499,NIPBL,C,A,T,K,Q6KC79,1684,Q6KC79_1684_T/K,VUS,cornelia de lange syndrome 1,2804,-1
+5,37045468,NIPBL,A,T,Q,H,Q6KC79,2123,Q6KC79_2123_Q/H,VUS,cornelia de lange syndrome 1,2804,-1
+6,57207630,RAB23,C,T,R,Q,Q9ULC3,80,Q9ULC3_80_R/Q,VUS,rab23-related carpenter syndrome,237,-1
+7,143316281,CLCN1,G,C,Q,H,P35523,23,P35523_23_Q/H,VUS,"congenital myotonia, autosomal dominant form",988,-1
+7,143321848,CLCN1,G,T,E,D,P35523,232,P35523_232_E/D,VUS,"congenital myotonia, autosomal recessive form",988,-1
+7,143332495,CLCN1,G,A,A,T,P35523,415,P35523_415_A/T,VUS,"congenital myotonia, autosomal dominant form",988,-1
+7,143339610,CLCN1,A,G,Y,C,P35523,524,P35523_524_Y/C,VUS,"congenital myotonia, autosomal recessive form",988,-1
+8,60781061,CHD7,C,T,P,L,Q9P2D1,576,Q9P2D1_576_P/L,VUS,charge association,2997,-1
+9,36246342,GNE,A,G,L,P,Q9Y223,102,Q9Y223_102_L/P,VUS,gne myopathy,722,-1
+X,154896160,F8,A,G,Y,H,P00451,2116,P00451_2116_Y/H,VUS,hereditary factor viii deficiency disease,2351,-1
+X,154535953,G6PD,C,T,S,N,P11413,84,P11413_84_S/N,VUS,"anemia, nonspherocytic hemolytic, due to g6pd deficiency",515,-1
+X,77683776,ATRX,T,C,K,E,P46100,494,P46100_494_K/E,VUS,x-linked intellectual disability-hypotonic face syndrome,2492,-1
+X,77683038,ATRX,C,G,E,Q,P46100,740,P46100_740_E/Q,VUS,alpha thalassemia-x-linked intellectual disability syndrome,2492,-1
+X,49251350,FOXP3,G,C,P,R,Q9BZS1,427,Q9BZS1_427_P/R,VUS,insulin-dependent diabetes mellitus secretory diarrhea syndrome,431,-1

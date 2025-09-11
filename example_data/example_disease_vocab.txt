@@ -1,0 +1,272 @@
+abdominal aortic aneurysm
+abnormal bleeding
+abnormality of the endocrine system
+abnormality of the nervous system
+acne inversa, familial, 3
+acromicric dysplasia
+activated protein c resistance
+acute encephalitis with refractory, repetitive partial seizures
+acute myeloid leukemia
+adenocarcinoma
+adolescent idiopathic scoliosis
+adrenocortical carcinoma
+adrenocortical carcinoma, pediatric
+alpha thalassemia-x-linked intellectual disability syndrome
+alzheimer disease
+alzheimer disease 3
+alzheimer disease 4
+alzheimer disease with spasticity, parkinsonism & white matter lesion
+alzheimer disease, familial, 3, with spastic paraparesis and apraxia
+anemia, nonspherocytic hemolytic, due to g6pd deficiency
+aortic aneurysm
+aortic aneurysm, thoracic
+aplastic anaemia
+arrhythmia
+arrhythmogenic right ventricular dysplasia
+arrhythmogenic right ventricular dysplasia/cardiomyopathy
+astrocytoma
+atrial fibrillation
+atrioventricular block
+atrioventricular conduction block
+atrx syndrome
+autism spectrum disorder
+autoimmune disease
+autoimmune lymphoproliferative syndrome
+autoinflammatory disease
+b-cell chronic lymphocytic leukemia
+bartter disease type 1
+bartter syndrome
+bartter syndrome, type i
+batten-turner congenital myopathy
+bicuspid aortic valve
+bleeding disorder
+bone osteosarcoma
+brachydactyly
+breast adenocarcinoma
+breast cancer
+breast neoplasm
+brugada syndrome
+brugada syndrome 1
+budd-chiari syndrome
+cancer
+carcinoma
+carcinoma of esophagus
+cardiac arrhythmia
+cardiac conduction disease
+cardiac conduction disorder
+cardiomyopathy
+cardiomyopathy, dilated
+cardiomyopathy, hypertrophic
+cardiomyopathy, left ventricular noncompaction
+cardiomyopathy, restrictive
+carnitine palmitoyl transferase ii deficiency, myopathic form
+carnitine palmitoyl transferase ii deficiency, neonatal form
+carnitine palmitoyl transferase ii deficiency, severe infantile form
+carnitine palmitoyltransferase 2 deficiency
+carnitine palmitoyltransferase ii deficiency
+carpenter syndrome
+cerebral palsy
+charge association
+charge syndrome
+choroid plexus carcinoma, childhood
+coffin-siris syndrome
+colorectal cancer
+complex neurodevelopmental disorder
+cone-rod dystrophy
+congenital heart disease
+congenital hemolytic anemia
+congenital long qt syndrome
+congenital myopathy with fiber type disproportion
+congenital myotonia, autosomal dominant form
+congenital myotonia, autosomal recessive form
+cornelia de lange syndrome
+cornelia de lange syndrome 1
+developmental and epileptic encephalopathy, 11
+diabetes
+diabetes mellitus type 1
+dilated cardiomyopathy 1e
+dilated cardiomyopathy 1s
+dravet syndrome
+dystonia
+early-onset autosomal dominant alzheimer disease
+ebstein anomaly
+ectopia lentis
+ectopia lentis 1, isolated, autosomal dominant
+ehlers-danlos syndrome
+enhanced s-cone syndrome
+epilepsy
+epilepsy of infancy with migrating focal seizures
+epilepsy, syndromic
+epileptic encephalopathy
+epileptic encephalopathy, early infantile
+episodic ataxia
+evans syndrome
+factor v deficiency
+factor viii deficiency
+familial adenomatous polyposis
+familial cancer of breast
+familial cardiomyopathy
+familial hypercholesterolemia
+familial mediterranean fever
+familial melanoma
+familial thoracic aortic aneurysm and aortic dissection
+focal epilepsy
+frontotemporal dementia
+g6pd deficiency
+gallbladder carcinoma
+gangliosidosis gm1
+gangliosidosis gm1, infantile
+gangliosidosis gm1, juvenile
+gastric adenocarcinoma
+gastric cancer
+geleophysic dysplasia
+geleophysic dysplasia 2
+glioblastoma
+glioma
+glucose-6-phosphate dehydrogenase deficiency
+glycogen storage disease 2
+glycogen storage disease, type ii
+gm1 gangliosidosis
+gm1 gangliosidosis type 2
+gm1 gangliosidosis type 3
+gne myopathy
+goldmann-favre syndrome
+haemophilia a
+hearing impairment
+hearing loss
+hemiplegia/hemiparesis
+hepatocellular carcinoma
+hepatocerebral degeneration
+hereditary cancer-predisposing syndrome
+hereditary factor ix deficiency disease
+hereditary factor viii deficiency disease
+hyper-ige recurrent infection syndrome 1
+hyper-ige syndrome
+hypercholesterolaemia
+hypercholesterolemia, familial, 1
+hypertrophic cardiomyopathy
+hypertrophic cardiomyopathy 1
+hypogonadotropic hypogonadism
+hypogonadotropic hypogonadism 5 with or without anosmia
+immunodeficiency, common variable
+inborn genetic diseases
+inclusion body myopathy 2
+infantile gm1 gangliosidosis
+infantile spasms
+inflammatory bowel disease
+insulin-dependent diabetes mellitus secretory diarrhea syndrome
+intellectual disability
+intellectual disability, x-linked
+ipex syndrome
+irritable bowel syndrome
+jervell and lange-nielsen syndrome
+jervell and lange-nielsen syndrome 1
+kallmann syndrome
+laing distal myopathy
+language impairment
+left ventricular dysfunction
+left ventricular noncompaction
+left ventricular noncompaction 5
+li-fraumeni syndrome
+li-fraumeni-like syndrome
+long qt syndrome
+long qt syndrome 1
+long qt syndrome 1/2, digenic
+long qt syndrome 3
+lung adenocarcinoma
+malignant migrating partial seizures of infancy
+marfan syndrome
+marfan syndrome, neonatal
+mass syndrome
+mediterranean fever, familial
+medulloblastoma
+melanoma
+melanoma, cutaneous malignant, susceptibility to, 2
+melanoma-pancreatic cancer syndrome
+mental deterioration
+mesothelioma
+microcephaly
+mitral valve prolapse
+mucopolysaccharidosis, mps-iv-b
+multiple congenital anomalies
+multiple myeloma
+muscular dystrophy, limb girdle
+muscular dystrophy, limb-girdle
+myelodysplastic/myeloproliferative disease
+myh7-related skeletal myopathy
+myocardial infarction
+myopathy
+myopathy, distal
+myopathy, distal 1
+myopathy, distal, with rimmed vacuoles
+myotonia congenita
+myotonia levior
+nemaline myopathy 6
+neonatal hypotonia
+neonatal marfan syndrome
+neonatal seizures
+neoplasm of brain
+neoplasm of ovary
+neoplasm of the large intestine
+nephrolithiasis
+neuroblastoma
+neurodevelopmental disorder
+nonaka myopathy
+ohtahara syndrome
+osteosarcoma
+ovarian cancer
+ovarian carcinoma
+pancreatic adenocarcinoma
+pancreatic ductal adenocarcinoma
+pancytopenia
+parkinson disease
+peho syndrome
+perrault syndrome 1
+pfapa syndrome
+pick disease
+platelet disorder
+posterior cortical atrophy
+primary dilated cardiomyopathy
+primary familial hypertrophic cardiomyopathy
+prostate adenocarcinoma
+pulmonary arterial hypertension
+pulmonary artery dilatation
+rab23-related carpenter syndrome
+renal cancer
+restrictive cardiomyopathy
+retinal dystrophy
+retinitis pigmentosa
+retinitis pigmentosa 37
+rhabdomyosarcoma
+romano-ward syndrome
+sarcoma
+seizures, benign familial infantile, 3
+short qt syndrome
+shprintzen-goldberg syndrome
+sialuria
+smith-fineman-myers syndrome
+spastic ataxia
+squamous cell carcinoma of the head and neck
+squamous cell lung carcinoma
+stat3 deficiency
+stat3 gain of function
+stat3-related early-onset multisystem autoimmune disease
+stiff skin syndrome
+sudden infant death syndrome
+tay-sachs disease
+tay-sachs disease, b1 variant
+thoracic aortic aneurysm
+thoracic aortic aneurysm or dissection
+thrombocytopenia
+thrombosis
+thyroid tumour
+torsades de pointes
+transitional cell carcinoma of the bladder
+tuberous sclerosis
+tuberous sclerosis 2
+tuberous sclerosis complex
+tuberous sclerosis syndrome
+weill-marchesani syndrome
+west syndrome
+wilson disease
+x-linked intellectual disability-hypotonic face syndrome

@@ -1,4 +1,4 @@
-# DIVA: Disease-specific variant pathogenicity prediction using multimodal biomedical language models
+# :sparkles: DIVA: Disease-specific variant pathogenicity prediction using multimodal biomedical language models
 
 We released our predictions at [https://diva.yulab.org/](https://diva.yulab.org/)
 
@@ -19,17 +19,37 @@ transformers==4.28.1
 ```
 See `requirements.txt`
 
-## AlphaMissense data
+## Prepare input data
+Example inputs are provided in `example_data/`
+
+### Prepare variant inputs
+
+* Context variants (required for inference): known disease variants that provide local disease contextual knowledge
+* Variants of interest for prediction
+
+### Prepare input feature for protein
+* Sequence file (FASTA)
+* Function annotation file
+
+### Prepare disease vocabulary
+* Vocabulary file
+* Disease annotation file
+* (Optional) Disease name mapping file
+
+### AlphaMissense data (optional)
 
 * Download AlphaMissense predictions (`AlphaMissense_aa_substitutions.tsv.gz`) from [here](https://console.cloud.google.com/storage/browser/dm_alphamissense)
 * Process with `preprocess/prep_alphamissense.py`
+* *Set `use_alphamissense=False` in CONFIG if choosing not to use AlphaMissense prediction scores*
 
 ## Running DIVA
+
+The following scripts are intended to be run from the `dev/` directory.
 
 ### Model training
 
 ```
-python -u disease_model_pipeline.py --config ./configs/dis_var_config.yaml --tensorboard True
+python -u disease_model_pipeline.py --config ./configs/dis_var_train_config.yaml --tensorboard True
 ```
 
 
@@ -37,6 +57,12 @@ python -u disease_model_pipeline.py --config ./configs/dis_var_config.yaml --ten
 
 ```
 python -u disease_inference.py --config ./configs/dis_var_pred_config.yaml
+```
+
+### Inference example
+
+```
+python -u disease_inference.py --config ./configs/example_pred.yaml
 ```
 
 ## Reference
