@@ -66,3 +66,4 @@ python -u disease_inference.py --config ./configs/example_pred.yaml
 ```
 
 ## Reference
+Liu, Yilin, David N. Cooper, and Haiyuan Yu. "Disease-specific variant pathogenicity prediction using multimodal biomedical language models." [bioRxiv (2025)](https://www.biorxiv.org/content/10.1101/2025.09.09.675184v1)
