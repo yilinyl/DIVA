@@ -1,7 +1,8 @@
 # :sparkles: DIVA: Disease-specific variant pathogenicity prediction using multimodal biomedical language models
 
-We released our predictions at [https://diva.yulab.org/](https://diva.yulab.org/)
+## Overview
 
+**DIVA** (<u>Di</u>sease-specific <u>va</u>riant pathogenicity prediction) is a deep learning framework that directly predicts specific types of diseases alongside the probability of deleteriousness for missense variants. It integrates information from two different modalities – protein sequence and disease-related textual annotations – encoded using two pre-trained language models and optimized within a contrastive learning paradigm designed to align variants with relevant diseases in the learned representation space. Our predictions can be accessed interactively at [https://diva.yulab.org/](https://diva.yulab.org/).
 
 ## Dependencies
 
@@ -18,6 +19,18 @@ torch==1.13.1+cu117
 transformers==4.28.1
 ```
 See `requirements.txt`
+
+## Installation
+
+```
+git clone https://github.com/haiyuan-yu-lab/DIVA.git
+cd DIVA
+
+conda create -n diva python=3.8
+conda activate diva
+
+pip install -r requirements.txt
+```
 
 ## Prepare input data
 Example inputs are provided in `example_data/`
@@ -52,18 +65,28 @@ The following scripts are intended to be run from the `dev/` directory.
 python -u disease_model_pipeline.py --config ./configs/dis_var_train_config.yaml --tensorboard True
 ```
 
-
 ### Inference
 
 ```
 python -u disease_inference.py --config ./configs/dis_var_pred_config.yaml
 ```
 
-### Inference example
+#### Inference example
+
+Please see `example_data/` directory for example data files and descriptions.
 
 ```
 python -u disease_inference.py --config ./configs/example_pred.yaml
 ```
 
+The following files will be generated in the specified output directory:
+
+* Disease specificity scores: `example_vars_pheno_score.tsv`
+* Binary deleteriousness scores: `pred_example_vars_score.txt`
+* Top-k (k=100 by default) disease-specificity predictions for input variants: `example_vars_topk.pkl`
+* Embeddings in the shared variant-disease representation space (to compute disease-specificity score):
+  * Variant embeddings `example_vars_pheno_pred_emb.npy`
+  * Disease embeddings: `phenotype_emb.npy`
+
 ## Reference
-Liu, Yilin, David N. Cooper, and Haiyuan Yu. "Disease-specific variant pathogenicity prediction using multimodal biomedical language models." [bioRxiv (2025)](https://www.biorxiv.org/content/10.1101/2025.09.09.675184v1)
+> Liu, Yilin, David N. Cooper, and Haiyuan Yu. "Disease-specific variant pathogenicity prediction using multimodal biomedical language models." [bioRxiv (2025)](https://www.biorxiv.org/content/10.1101/2025.09.09.675184v1)
