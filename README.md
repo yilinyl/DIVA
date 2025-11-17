@@ -4,6 +4,10 @@
 
 **DIVA** (**Di**sease-specific **va**riant pathogenicity prediction) is a deep learning framework that directly predicts specific types of diseases alongside the probability of deleteriousness for missense variants. It integrates information from two different modalities – protein sequence and disease-related textual annotations – encoded using two pre-trained language models and optimized within a contrastive learning paradigm designed to align variants with relevant diseases in the learned representation space. Our predictions can be accessed interactively at [https://diva.yulab.org/](https://diva.yulab.org/).
 
+## System and hardware requirements
+
+The model was trained and tested with the Linux operating system and a NVIDIA RTX A5000 GPU.
+
 ## Dependencies
 
 ```
