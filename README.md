@@ -64,6 +64,7 @@ The following scripts are intended to be run from the `dev/` directory.
 ```
 python -u disease_model_pipeline.py --config ./configs/dis_var_train_config.yaml --tensorboard True
 ```
+For reproduction, we provide model weights in the "Releases" section. Please download  `best_model.pt` and place it in the `checkpoints/` directory. The released model was trained using [ESM2-150M](https://huggingface.co/facebook/esm2_t30_150M_UR50D) and [PubMedBERT](https://huggingface.co/microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext) as pre-trained language model encoders.
 
 ### Inference
 
@@ -78,6 +79,7 @@ Please see `example_data/` directory for example data files and descriptions.
 ```
 python -u disease_inference.py --config ./configs/example_pred.yaml
 ```
+Expected running time: < 1min on single GPU (tested on NVIDIA RTX A5000)
 
 The following files will be generated in the specified output directory:
 
