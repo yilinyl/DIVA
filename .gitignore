@@ -19,5 +19,6 @@ pipeline_dx/
 logs/
 tools/
 scratch/
+checkpoints/*pt
 
 dev/archive/
